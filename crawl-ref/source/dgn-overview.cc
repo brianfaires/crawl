@@ -692,13 +692,13 @@ class dgn_overview : public formatted_scroller
 public:
     dgn_overview(const string& text = "") : formatted_scroller(FS_PREWRAPPED_TEXT, text) {};
 
-private:
-    bool process_key(int ch) override
+protected:
+    maybe_bool process_key(int ch) override
     {
         // We handle these after exiting dungeon overview window
         // to prevent menus from stacking on top of each other.
         if (ch == 'G' || ch == '_' || ch == '$' || ch =='!')
-            return false;
+            return MB_FALSE;
         else
             return formatted_scroller::process_key(ch);
     }
@@ -1156,10 +1156,10 @@ static int _prompt_annotate_branch(level_id lid)
     while (true)
     {
         int keyin = get_ch();
+        if (ui::key_exits_popup(keyin, false))
+            return ID_CANCEL;
         switch (keyin)
         {
-        CASE_ESCAPE
-            return ID_CANCEL;
         case '?':
             show_annotate_help();
             break;

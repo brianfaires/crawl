@@ -1965,6 +1965,17 @@ static void _run_time_step()
     while (--you.duration[DUR_TIME_STEP] > 0);
 }
 
+static void _cleanup_time_steps()
+{
+    you.duration[DUR_TIME_STEP] = 0;
+
+    // Noxious bog terrain gets cleaned up while stepped from time.
+    // That seems consistent with clouds, etc, so let's just make the duration
+    // match, rather than trying to persist the bog during time steps or
+    // regenerating it afterward.
+    you.duration[DUR_NOXIOUS_BOG] = 0;
+}
+
 // A low-duration step from time, allowing monsters to get closer
 // to the player safely.
 void cheibriados_temporal_distortion()
@@ -1981,7 +1992,7 @@ void cheibriados_temporal_distortion()
         you.los_noise_last_turn = 0;
     }
 
-    you.duration[DUR_TIME_STEP] = 0;
+    _cleanup_time_steps();
 
     mpr("You warp the flow of time around you!");
 }
@@ -2004,7 +2015,7 @@ void cheibriados_time_step(int pow) // pow is the number of turns to skip
 #endif
 
     }
-    you.duration[DUR_TIME_STEP] = 0;
+    _cleanup_time_steps();
 
     flash_view(UA_PLAYER, 0);
     mpr("You return to the normal time flow.");
@@ -2459,6 +2470,9 @@ spret dithmenos_shadow_step(bool fail)
     }
 
     fail_check();
+
+    if (!you.attempt_escape(2))
+        return spret::success;
 
     const coord_def old_pos = you.pos();
     // XXX: This only ever fails if something's on the landing site;
@@ -5420,7 +5434,8 @@ spret hepliaklqana_transference(bool fail)
 
     const bool victim_immovable
         = victim && (mons_is_tentacle_or_tentacle_segment(victim->type)
-                     || victim->is_stationary());
+                     || victim->is_stationary()
+                     || mons_is_projectile(victim->type));
     if (victim_visible && victim_immovable)
     {
         mpr("You can't transfer that.");
@@ -5667,7 +5682,7 @@ bool wu_jian_do_wall_jump(coord_def targ)
     auto initial_position = you.pos();
     move_player_to_grid(wall_jump_landing_spot, false);
     wu_jian_wall_jump_effects();
-    remove_water_hold();
+    you.clear_far_engulf(false, true);
 
     int wall_jump_modifier = (you.attribute[ATTR_SERPENTS_LASH] != 1) ? 2
                                                                       : 1;

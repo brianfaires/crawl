@@ -16,6 +16,7 @@
 #include "artefact.h"
 #include "art-enum.h"
 #include "describe.h"
+#include "evoke.h"
 #include "god-passive.h"
 #include "invent.h"
 #include "items.h"
@@ -275,7 +276,7 @@ static const vector<brand_weight_tuple> M_AND_F_BRANDS = {
     { SPWPN_PROTECTION,     30 },
     { SPWPN_NORMAL,         28 },
     { SPWPN_HOLY_WRATH,     15 },
-    { SPWPN_VORPAL,         14 },
+    { SPWPN_HEAVY,          14 },
     { SPWPN_DRAINING,       10 },
     { SPWPN_VENOM,           5 },
     { SPWPN_DISTORTION,      1 },
@@ -306,7 +307,7 @@ static const vector<brand_weight_tuple> DEMON_BRANDS = {
 static const vector<brand_weight_tuple> LBL_BRANDS = {
     { SPWPN_HOLY_WRATH,     23 },
     { SPWPN_NORMAL,         19 },
-    { SPWPN_VORPAL,         15 },
+    { SPWPN_HEAVY,          15 },
     { SPWPN_ELECTROCUTION,  10 },
     { SPWPN_PROTECTION,      8 },
     { SPWPN_FREEZING,        5 },
@@ -322,7 +323,7 @@ static const vector<brand_weight_tuple> LBL_BRANDS = {
 /// brand weights for axes.
 static const vector<brand_weight_tuple> AXE_BRANDS = {
     { SPWPN_NORMAL,         31 },
-    { SPWPN_VORPAL,         16 },
+    { SPWPN_HEAVY,          16 },
     { SPWPN_ELECTROCUTION,  11 },
     { SPWPN_FLAMING,        10 },
     { SPWPN_FREEZING,       10 },
@@ -340,7 +341,7 @@ static const vector<brand_weight_tuple> POLEARM_BRANDS = {
     { SPWPN_NORMAL,     36 },
     { SPWPN_VENOM,      17 },
     { SPWPN_PROTECTION, 12 },
-    { SPWPN_VORPAL,      9 },
+    { SPWPN_HEAVY,       9 },
     { SPWPN_FLAMING,     7 },
     { SPWPN_FREEZING,    7 },
     { SPWPN_VAMPIRISM,   5 },
@@ -355,7 +356,7 @@ static const vector<brand_weight_tuple> RANGED_BRANDS = {
     { SPWPN_NORMAL,        58 },
     { SPWPN_FLAMING,       11 },
     { SPWPN_FREEZING,      11 },
-    { SPWPN_VORPAL,        7 },
+    { SPWPN_HEAVY,         7 },
     { SPWPN_DRAINING,      7 },
     { SPWPN_ELECTROCUTION, 4 },
     { SPWPN_ANTIMAGIC,     2 },
@@ -412,7 +413,7 @@ static const weapon_def Weapon_prop[] =
             { SPWPN_NORMAL,         15 },
             { SPWPN_HOLY_WRATH,     15 },
             { SPWPN_DRAINING,       10 },
-            { SPWPN_VORPAL,          9 },
+            { SPWPN_HEAVY,           9 },
             { SPWPN_VENOM,           5 },
             { SPWPN_FLAMING,         4 },
             { SPWPN_FREEZING,        4 },
@@ -437,7 +438,7 @@ static const weapon_def Weapon_prop[] =
             { SPWPN_DRAINING,       19 },
             { SPWPN_HOLY_WRATH,     15 },
             { SPWPN_NORMAL,          8 },
-            { SPWPN_VORPAL,          6 },
+            { SPWPN_HEAVY,           6 },
             { SPWPN_VENOM,           6 },
             { SPWPN_FLAMING,         6 },
             { SPWPN_FREEZING,        6 },
@@ -571,7 +572,7 @@ static const weapon_def Weapon_prop[] =
         DAMV_PIERCING, 8, 10, 30, {
             { SPWPN_NORMAL,     46 },
             { SPWPN_VENOM,      17 },
-            { SPWPN_VORPAL,     12 },
+            { SPWPN_HEAVY,      12 },
             { SPWPN_FLAMING,     7 },
             { SPWPN_FREEZING,    7 },
             { SPWPN_VAMPIRISM,   5 },
@@ -614,7 +615,7 @@ static const weapon_def Weapon_prop[] =
             { SPWPN_NORMAL,     50 },
             { SPWPN_SPECTRAL,   18 },
             { SPWPN_DRAINING,    8 },
-            { SPWPN_VORPAL,      8 },
+            { SPWPN_HEAVY,       8 },
             { SPWPN_SPEED,       8 },
             { SPWPN_DISTORTION,  2 },
             { SPWPN_PAIN,        2 },
@@ -681,18 +682,18 @@ struct missile_def
 static int Missile_index[NUM_MISSILES];
 static const missile_def Missile_prop[] =
 {
-    { MI_DART,          "dart",          0, 12, 2  },
+    { MI_DART,          "dart",          0, 12, 3  },
 #if TAG_MAJOR_VERSION == 34
     { MI_NEEDLE,        "needle",        0, 12, 2  },
 #endif
     { MI_STONE,         "stone",         2, 8,  1  },
     { MI_ARROW,         "arrow",         0, 1,  2  },
     { MI_BOLT,          "bolt",          0, 1,  2  },
-    { MI_LARGE_ROCK,    "large rock",   20, 25, 7  },
+    { MI_LARGE_ROCK,    "large rock",   20, 25, 15 },
     { MI_SLING_BULLET,  "sling bullet",  0, 1,  5  },
-    { MI_JAVELIN,       "javelin",      10, 20, 8  },
+    { MI_JAVELIN,       "javelin",      10, 20, 30 },
     { MI_THROWING_NET,  "throwing net",  0, 0,  30 },
-    { MI_BOOMERANG,     "boomerang",     6, 20, 5  },
+    { MI_BOOMERANG,     "boomerang",     6, 20, 20 },
 };
 
 #if TAG_MAJOR_VERSION == 34
@@ -745,7 +746,7 @@ static const item_set_def item_sets[] =
     { "hex wand",           OBJ_WANDS,    { WAND_CHARMING, WAND_PARALYSIS } },
     { "beam wand",          OBJ_WANDS,    { WAND_ACID, WAND_LIGHT, WAND_QUICKSILVER } },
     { "blast wand",         OBJ_WANDS,    { WAND_ICEBLAST, WAND_ROOTS } },
-    { "concealment scroll", OBJ_SCROLLS,  { SCR_FOG, SCR_BUTTERFLIES } },
+    { "ally scroll",        OBJ_SCROLLS,  { SCR_SUMMONING, SCR_BUTTERFLIES } },
 };
 COMPILE_CHECK(ARRAYSZ(item_sets) == NUM_ITEM_SET_TYPES);
 
@@ -1946,6 +1947,8 @@ bool is_weapon_wieldable(const item_def &item, size_type size)
 
     const int subtype = OBJ_STAVES == item.base_type ? int{WPN_STAFF}
                                                      : item.sub_type;
+    // Check we aren't about to index with a bogus subtype for weapons
+    ASSERT(item.base_type != OBJ_WEAPONS || subtype < get_max_subtype(item.base_type));
     return Weapon_prop[Weapon_index[subtype]].min_2h_size <= size;
 }
 
@@ -2220,11 +2223,11 @@ static map<scroll_type, item_rarity_type> _scroll_rarity = {
     { SCR_MAGIC_MAPPING,  RARITY_UNCOMMON },
     { SCR_FEAR,           RARITY_UNCOMMON },
     { SCR_FOG,            RARITY_UNCOMMON },
-    { SCR_BUTTERFLIES,    RARITY_UNCOMMON },
     { SCR_BLINKING,       RARITY_UNCOMMON },
     { SCR_IMMOLATION,     RARITY_UNCOMMON },
     { SCR_POISON,         RARITY_UNCOMMON },
     { SCR_VULNERABILITY,  RARITY_UNCOMMON },
+    { SCR_BUTTERFLIES,    RARITY_RARE },
     { SCR_SUMMONING,      RARITY_RARE },
     { SCR_SILENCE,        RARITY_RARE },
     { SCR_BRAND_WEAPON,   RARITY_RARE },
@@ -2539,6 +2542,11 @@ int property(const item_def &item, int prop_type)
     switch (item.base_type)
     {
     case OBJ_ARMOUR:
+        if (prop_type == PARM_AC
+            && is_unrandom_artefact(item, UNRAND_SLICK_SLIPPERS))
+        {
+            return 0;
+        }
         return armour_prop(item.sub_type, prop_type);
 
     case OBJ_WEAPONS:
@@ -3097,9 +3105,15 @@ void initialise_item_sets()
 #endif
         const vector<int> &subtypes = item_sets[i].subtypes;
         const int chosen_idx = random2(subtypes.size());
-        _item_set_choice(iset) = subtypes[chosen_idx];
+        force_item_set_choice(iset, subtypes[chosen_idx]);
     }
     populate_sets_by_obj_type();
+}
+
+/// Force the game to generate the chosen item subtype for the given item set.
+void force_item_set_choice(item_set_type iset, int sub_type)
+{
+    _item_set_choice(iset) = sub_type;
 }
 
 /// What item for the given set is enabled for generation?

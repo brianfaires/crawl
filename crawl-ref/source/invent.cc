@@ -104,6 +104,13 @@ InvEntry::InvEntry(const item_def &i)
     quantity = i.quantity;
 }
 
+int InvEntry::highlight_colour(bool temp) const
+{
+    // XX this hardcodes the tag "inventory", but is used by all sorts of
+    // subclasses that aren't inv.
+    return menu_colour(get_text(), item_prefix(*item, temp), "inventory");
+}
+
 const string &InvEntry::get_basename() const
 {
     if (basename.empty())
@@ -500,7 +507,7 @@ string no_selectables_message(int item_selector)
             return "You aren't carrying any wearable armour.";
     }
     case OSEL_UNIDENT:
-        return "You don't have any unidentified items.";
+        return "You don't currently have any unidentified items.";
     case OSEL_ENCHANTABLE_ARMOUR:
         return "You aren't carrying any armour which can be enchanted further.";
     case OBJ_CORPSES:
@@ -529,6 +536,12 @@ string no_selectables_message(int item_selector)
 #endif
     case OSEL_WORN_ARMOUR:
         return "You aren't wearing any pieces of armour.";
+    case OSEL_WORN_JEWELLERY:
+        return "You aren't wearing any rings or amulets.";
+    case OSEL_WORN_EQUIPABLE:
+        return "You aren't wearing anything.";
+    case OSEL_EQUIPABLE:
+        return "You aren't carrying anything that can be equipped.";
     case OSEL_BRANDABLE_WEAPON:
         return "You aren't carrying any weapons that can be branded.";
     case OSEL_ENCHANTABLE_WEAPON:
@@ -1134,8 +1147,7 @@ bool item_is_selected(const item_def &i, int selector)
         return item_is_wieldable(i);
 
     case OSEL_EVOKABLE:
-        // assumes valid link...would break with evoking from floor?
-        return item_is_evokable(i);//evoke_check(i.link, true);
+        return item_is_evokable(i);
 
     case OSEL_ENCHANTABLE_ARMOUR:
         return is_enchantable_armour(i, true);
@@ -1194,6 +1206,18 @@ bool item_is_selected(const item_def &i, int selector)
         return false;
     case OSEL_QUIVER_ACTION_FORCE:
         return in_inventory(i) && quiver::slot_to_action(i.link, true)->is_valid();
+
+    case OSEL_WORN_JEWELLERY:
+        return item_is_equipped(i) && item_is_selected(i, OBJ_JEWELLERY);
+
+    case OSEL_WORN_EQUIPABLE:
+        if (!item_is_equipped(i))
+            return false;
+        // fallthrough
+    case OSEL_EQUIPABLE:
+        return item_is_selected(i, OBJ_ARMOUR)
+            || item_is_selected(i, OSEL_WIELD)
+            || item_is_selected(i, OBJ_JEWELLERY);
 
     default:
         return false;
@@ -1330,12 +1354,7 @@ static string _drop_prompt(bool as_menu_title, bool menu_autopickup_mode)
         prompt_base = "Drop what?                               ";
     else
         prompt_base = "Drop what? ";
-    return prompt_base + slot_description()
-#ifdef TOUCH_UI
-                          + " (<Enter> or tap header to drop)";
-#else
-                          + " (_ for help)";
-#endif
+    return prompt_base + slot_description() + " (_ for help)";
 }
 
 static string _drop_menu_titlefn(const Menu *m, const string &)
@@ -1399,6 +1418,25 @@ item_def *digit_inscription_to_item(char digit, operation_types oper)
     return nullptr;
 }
 
+operation_types generalize_oper(operation_types oper)
+{
+    switch (oper)
+    {
+    case OPER_EQUIP:
+    case OPER_WIELD:
+    case OPER_WEAR:
+    case OPER_PUTON:
+        return OPER_EQUIP;
+    case OPER_UNEQUIP:
+    case OPER_REMOVE:
+    case OPER_TAKEOFF:
+        return OPER_UNEQUIP;
+    default:
+        return OPER_NONE;
+    }
+}
+
+
 static bool _has_warning_inscription(const item_def& item,
                              operation_types oper)
 {
@@ -1420,6 +1458,11 @@ static bool _has_warning_inscription(const item_def& item,
             }
         }
     }
+
+    // if the inscription is wear/takeoff (etc), check equip/unequip
+    const auto gen = generalize_oper(oper);
+    if (gen != OPER_NONE && gen != oper)
+        return _has_warning_inscription(item, gen);
 
     return false;
 }
@@ -1515,8 +1558,9 @@ static string _operation_verb(operation_types oper)
     case OPER_ZAP:            return "zap";
     case OPER_FIRE:           return "fire";
     case OPER_EVOKE:          return "evoke";
-    case OPER_DESTROY:        return "destroy";
     case OPER_QUIVER:         return "quiver";
+    case OPER_EQUIP:          return "equip";
+    case OPER_UNEQUIP:        return "unequip";
     case OPER_ANY:
     default:
         return "choose";
@@ -1549,6 +1593,9 @@ bool needs_handle_warning(const item_def &item, operation_types oper,
 {
     if (_has_warning_inscription(item, oper))
         return true;
+
+    // note: equip/unequip are not handled be the following code; they should
+    // be converted to their specific oper beforehand.
 
     // Curses first. Warn if something would take off (i.e. destroy) the cursed item.
     if (item.cursed()
@@ -1656,12 +1703,6 @@ bool check_warning_inscriptions(const item_def& item,
     if (item.defined()
         && needs_handle_warning(item, oper, penance))
     {
-        // When it's about destroying an item, don't even ask.
-        // If the player really wants to do that, they'll have
-        // to remove the inscription.
-        if (oper == OPER_DESTROY)
-            return false;
-
         // Common pattern for wield/wear/put:
         // - if the player isn't capable of equipping it, return true
         //   immediately. No point warning, since the op is impossible.
@@ -1982,82 +2023,6 @@ bool prompt_failed(int retval)
 bool item_is_wieldable(const item_def &item)
 {
     return is_weapon(item) && !you.has_mutation(MUT_NO_GRASPING);
-}
-
-/// Does the item only serve to produce summons or allies?
-static bool _item_ally_only(const item_def &item)
-{
-    if (item.base_type == OBJ_WANDS)
-        return item.sub_type == WAND_CHARMING;
-    else if (item.base_type == OBJ_MISCELLANY)
-    {
-        switch (item.sub_type)
-        {
-        case MISC_PHANTOM_MIRROR:
-        case MISC_HORN_OF_GERYON:
-        case MISC_BOX_OF_BEASTS:
-            return true;
-        default:
-            return false;
-        }
-    }
-    return false;
-}
-
-/**
- * Return whether an item can be evoked.
- *
- * @param item      The item to check
- * @param msg       Whether we need to print a message.
- */
-bool item_is_evokable(const item_def &item, bool msg)
-{
-    // XX unify with evoke_check?
-    const string error = item_is_melded(item)
-            ? "Your " + item.name(DESC_QUALNAME) + " is melded into your body."
-            : "That item can only be evoked when wielded.";
-
-    const bool no_evocables = you.get_mutation_level(MUT_NO_ARTIFICE);
-    const char* const no_evocable_error = "You cannot evoke magical items.";
-
-    if (no_evocables
-        && !(item.base_type == OBJ_MISCELLANY
-             && item.sub_type == MISC_ZIGGURAT)) // zigfigs are OK.
-    {
-        // the rest are forbidden under sac evocables.
-        if (msg)
-            mpr(no_evocable_error);
-        return false;
-    }
-
-    // TODO: check other summoning constraints here?
-    if (_item_ally_only(item) && you.allies_forbidden())
-    {
-        if (msg)
-            mpr("That item cannot be used by those who cannot gain allies!");
-        return false;
-    }
-
-    switch (item.base_type)
-    {
-    case OBJ_WANDS:
-        return true;
-
-    case OBJ_MISCELLANY:
-#if TAG_MAJOR_VERSION == 34
-        if (item.sub_type != MISC_BUGGY_LANTERN_OF_SHADOWS
-            && item.sub_type != MISC_BUGGY_EBONY_CASKET)
-#endif
-        {
-            return true;
-        }
-        // removed items fallthrough to failure
-
-    default:
-        if (msg)
-            mpr("That item cannot be evoked!");
-        return false;
-    }
 }
 
 /**

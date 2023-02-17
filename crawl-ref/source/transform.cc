@@ -1463,6 +1463,10 @@ static bool _flying_in_new_form(transformation which_trans)
     if (!you.duration[DUR_FLIGHT] && !you.attribute[ATTR_PERM_FLIGHT])
         return false;
 
+    // tempflight (e.g. from potion) enabled, no need for equip check
+    if (you.duration[DUR_FLIGHT])
+        return true;
+
     // Finally, do the calculation about what would be melded: are there equip
     // sources left?
     int sources = you.equip_flight();
@@ -1535,7 +1539,7 @@ static bool _transformation_is_safe(transformation which_trans,
                                     dungeon_feature_type feat,
                                     string *fail_reason)
 {
-    if (!feat_dangerous_for_form(which_trans, feat) || you.duration[DUR_FLIGHT])
+    if (!feat_dangerous_for_form(which_trans, feat))
         return true;
 
     if (fail_reason)
@@ -1978,7 +1982,7 @@ bool transform(int pow, transformation which_trans, bool involuntary,
 
     // Update merfolk swimming for the form change.
     if (you.has_innate_mutation(MUT_MERTAIL))
-        merfolk_check_swimming(false);
+        merfolk_check_swimming(env.grid(you.pos()), false);
 
     // Update skill boosts for the current state of equipment melds
     // Must happen before the HP check!
@@ -2095,7 +2099,7 @@ void untransform(bool skip_move)
 
         // Update merfolk swimming for the form change.
         if (you.has_innate_mutation(MUT_MERTAIL))
-            merfolk_check_swimming(false);
+            merfolk_check_swimming(env.grid(you.pos()), false);
     }
 
 #ifdef USE_TILE
@@ -2153,9 +2157,10 @@ void emergency_untransform()
  * Idempotent, so can be called after position/transformation change without
  * redundantly checking conditions.
  *
- * @param stepped Whether the player is performing a normal walking move.
+ * @param old_grid The feature type that the player was previously on.
+ * @param stepped  Whether the player is performing a normal walking move.
  */
-void merfolk_check_swimming(bool stepped)
+void merfolk_check_swimming(dungeon_feature_type old_grid, bool stepped)
 {
     const dungeon_feature_type grid = env.grid(you.pos());
     if (you.ground_level()
@@ -2166,6 +2171,10 @@ void merfolk_check_swimming(bool stepped)
     }
     else
         merfolk_stop_swimming();
+
+    // Flying above water grants evasion, so redraw even if not transforming.
+    if (feat_is_water(grid) || feat_is_water(old_grid))
+        you.redraw_evasion = true;
 }
 
 void merfolk_start_swimming(bool stepped)

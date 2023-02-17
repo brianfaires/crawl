@@ -985,13 +985,7 @@ void pickup_menu(int item_link)
     auto items = const_item_list_on_square(item_link);
     ASSERT(items.size());
 
-    string prompt = "Pick up what? " + slot_description()
-#ifdef TOUCH_UI
-                  + " (<Enter> or tap header to pick up)"
-#else
-                  + " (_ for help)"
-#endif
-                  ;
+    string prompt = "Pick up what? " + slot_description() + " (_ for help)";
 
     if (items.size() == 1 && items[0]->quantity > 1)
         prompt = "Select pick up quantity by entering a number, then select the item";
@@ -2571,7 +2565,7 @@ bool drop_item(int item_dropped, int quant_drop)
     // like temporary brands. -- bwr
     if (item_dropped == you.equip[EQ_WEAPON] && quant_drop >= item.quantity)
     {
-        if (!wield_weapon(true, SLOT_BARE_HANDS, true, true, true, false))
+        if (!wield_weapon(SLOT_BARE_HANDS, false))
             return false;
         // May have been destroyed by removal. Returning true because we took
         // time to swap away.
@@ -2961,6 +2955,9 @@ static bool _is_option_autopickup(const item_def &item, bool ignore_force)
  */
 bool item_needs_autopickup(const item_def &item, bool ignore_force)
 {
+    if (crawl_state.game_is_arena())
+        return false;
+
     if (in_inventory(item))
         return false;
 
@@ -3313,7 +3310,7 @@ int get_max_subtype(object_class_type base_type)
 
 equipment_type item_equip_slot(const item_def& item)
 {
-    if (!in_inventory(item))
+    if (!item.defined() || !in_inventory(item))
         return EQ_NONE;
 
     for (int i = EQ_FIRST_EQUIP; i < NUM_EQUIP; i++)
@@ -4396,6 +4393,31 @@ bool get_item_by_name(item_def *item, const char* specs,
     return true;
 }
 
+static bool _locate_manual_by_exact_name(item_def &item, const char *lc_name)
+{
+    // lookup manual names. We need to line up pluses with names to get this
+    // right; in contrast to the regular strategy for exact name lookup, this
+    // call just checks the item name cache directly.
+
+    // preconditions: we already have a manual, just need to find the right
+    // plus value
+    if (item.base_type != OBJ_BOOKS || item.sub_type != BOOK_MANUAL)
+        return false;
+
+    // XX can/should any other name lookups be done via the item name cache?
+    // any mismatch between the name cache and the exact name lookup will lead
+    // to errors when querying by glyph.
+    auto item_kind = item_kind_by_name(lc_name);
+    if (item_kind.base_type == OBJ_UNASSIGNED // not found (here for clarity, 2nd disjunct covers this)
+        || item_kind.base_type != item.base_type // not a book
+        || item_kind.sub_type != item.sub_type) // not a manual
+    {
+        return false;
+    }
+    item.plus = item_kind.plus;
+    return true;
+}
+
 bool get_item_by_exact_name(item_def &item, const char* name)
 {
     item.clear();
@@ -4405,6 +4427,8 @@ bool get_item_by_exact_name(item_def &item, const char* name)
 
     string name_lc = lowercase_string(string(name));
 
+    // XX could we just use the item name cache instead of iterating through
+    // every name?
     for (int i = 0; i < NUM_OBJECT_CLASSES; ++i)
     {
         if (i == OBJ_RUNES) // runes aren't shown in ?/I
@@ -4419,6 +4443,9 @@ bool get_item_by_exact_name(item_def &item, const char* name)
             {
                 item.sub_type = j;
                 if (lowercase_string(item.name(DESC_DBNAME)) == name_lc)
+                    return true;
+                // if it's a manual, we also need to find the plus value:
+                if (_locate_manual_by_exact_name(item, name_lc.c_str()))
                     return true;
             }
         }

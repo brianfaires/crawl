@@ -198,7 +198,6 @@ static const vector<pop_entry> population[] =
 },
 
 { // Orcish Mines
-  {  1,  4,  384, FLAT, MONS_NO_MONSTER },
   {  1,  4,  192, FLAT, MONS_ORC_WARRIOR },
   {  1,  4,   25, FLAT, MONS_ORC_PRIEST },
   {  1,  4,   25, FLAT, MONS_ORC_WIZARD },
@@ -285,6 +284,7 @@ static const vector<pop_entry> population[] =
   {  1, 15,   70, SEMI, MONS_BOULDER_BEETLE },
   {  1, 15,   85, SEMI, MONS_TORPOR_SNAIL },
   {  2,  7,   75, SEMI, MONS_POLAR_BEAR },
+  {  2,  7,  200, SEMI, MONS_SKYSHARK },
   {  2,  9,   50, PEAK, MONS_LINDWURM },
   {  2, 10,  400, SEMI, MONS_HYDRA },
   {  3, 11,  140, SEMI, MONS_DREAM_SHEEP },
@@ -353,6 +353,7 @@ static const vector<pop_entry> population[] =
 { // Shoals
   {  0,  3,   89, SEMI, MONS_CENTAUR_WARRIOR },
   {  0,  3,  355, SEMI, MONS_FAUN },
+  {  0,  3,  400, SEMI, MONS_SKYSHARK },
   {  0,  6,  300, SEMI, MONS_WATER_NYMPH },
   {  0,  6,  170, SEMI, MONS_MERFOLK_AVATAR },
   {  0,  6,  110, SEMI, MONS_CYCLOPS },

@@ -147,6 +147,7 @@ frilled_lizard MONS_FRILLED_LIZARD
 iguana MONS_IGUANA
 %rim 0
 basilisk MONS_BASILISK
+skyshark MONS_SKYSHARK
 %rim 1
 komodo_dragon MONS_KOMODO_DRAGON
 
@@ -602,6 +603,7 @@ nikola MONS_NIKOLA
 psyche MONS_PSYCHE
 rupert MONS_RUPERT
 sigmund MONS_SIGMUND
+xmas-sigmund MONS_XMAS_SIGMUND
 zenata MONS_ZENATA
 %rim 1
 terence MONS_TERENCE

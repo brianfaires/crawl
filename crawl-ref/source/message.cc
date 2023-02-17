@@ -1645,11 +1645,7 @@ void msgwin_got_input()
 int msgwin_get_line(string prompt, char *buf, int len,
                     input_history *mh, const string &fill)
 {
-#ifdef TOUCH_UI
-    bool use_popup = true;
-#else
     bool use_popup = !crawl_state.need_save || ui::has_layout();
-#endif
 
     int ret;
     if (use_popup)
@@ -1676,11 +1672,14 @@ int msgwin_get_line(string prompt, char *buf, int len,
         vbox->add_child(input);
 
         popup->on_hotkey_event([&](const ui::KeyEvent& ev) {
-            switch (ev.key())
+            const int lastch = ev.key();
+            if (ui::key_exits_popup(lastch, false))
             {
-            CASE_ESCAPE
-                ret = CK_ESCAPE;
+                ret = CK_ESCAPE; // XX hardcoding
                 return done = true;
+            }
+            switch (lastch)
+            {
             case CK_ENTER:
                 ret = 0;
                 return done = true;
@@ -1898,11 +1897,7 @@ static void readkey_more(bool user_forced)
     while (keypress != ' ' && keypress != '\r' && keypress != '\n'
            && keypress != CK_NUMPAD_ENTER
            && !key_is_escape(keypress)
-#ifdef TOUCH_UI
-           && keypress != CK_MOUSE_CLICK);
-#else
            && (user_forced || keypress != CK_MOUSE_CLICK));
-#endif
 
     if (key_is_escape(keypress))
         set_more_autoclear(true);

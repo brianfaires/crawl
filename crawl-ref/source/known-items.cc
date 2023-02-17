@@ -80,6 +80,14 @@ protected:
         else
             num = -1;
 
+        if (ui::key_exits_popup(key))
+        {
+            if (resetting)
+                return true;
+            lastch = key;
+            return false;
+        }
+
         switch (key)
         {
         case ',':
@@ -95,10 +103,6 @@ protected:
         case '\\':
             if (all_items_known)
                 return true; // skip process_key for '-', it's confusing
-        case CK_ENTER:
-        CASE_ESCAPE
-            if (resetting)
-                return true;
             lastch = key;
             return false;
 
@@ -238,11 +242,11 @@ public:
         return make_stringf(" %c %c %s", hotkeys[0], symbol, name.c_str());
     }
 
-    virtual int highlight_colour() const override
+    virtual int highlight_colour(bool) const override
     {
         if (selected_qty >= 1)
             return WHITE;
-        else if (is_useless_item(*item))
+        else if (is_useless_item(*item, false))
             return DARKGREY;
         else
             return MENU_ITEM_STOCK_COLOUR;

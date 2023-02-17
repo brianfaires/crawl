@@ -853,19 +853,20 @@ void LookupType::display_keys(vector<string> &key_list) const
     // XXX: ugh
     const bool doing_mons = type == "monster";
     vector<monster_info> monster_list(key_list.size());
+    int letter_i = 0;
     for (unsigned int i = 0, size = key_list.size(); i < size; i++)
     {
-        const char letter = index_to_letter(i % 52);
+        const char letter = index_to_letter(letter_i % 52);
         string &key = key_list[i];
         // XXX: double ugh
-        if (doing_mons)
-        {
-            desc_menu.add_entry(_monster_menu_gen(letter,
-                                                  key_to_menu_str(key),
-                                                  monster_list[i]));
-        }
-        else
-            desc_menu.add_entry(make_menu_entry(letter, key));
+        auto *entry = doing_mons
+            ? _monster_menu_gen(letter, key_to_menu_str(key), monster_list[i])
+            : make_menu_entry(letter, key);
+
+        if (!entry)
+            continue;
+        desc_menu.add_entry(entry);
+        letter_i++;
     }
 
     desc_menu.sort();
@@ -1118,7 +1119,10 @@ static int _describe_item(const string &key, const string &suffix,
     {
         const int unrand_idx = extant_unrandart_by_exact_name(item_name);
         if (!unrand_idx)
-            die("Unable to get item %s by name", key.c_str());
+        {
+            ui::error(make_stringf("Unable to get item '%s' by name", key.c_str()));
+            return 0;
+        }
         _make_item_fake_unrandart(item, unrand_idx);
     }
     describe_item_popup(item);
@@ -1262,6 +1266,16 @@ static int _describe_branch(const string &key, const string &suffix,
     return _describe_key(key, suffix, footer, info, &tile);
 }
 
+static int _describe_mutation(const string &key, const string &suffix,
+                              string /*footer*/)
+{
+    const string mutation_name = key.substr(0, key.size() - suffix.size());
+    const mutation_type mutation = mutation_from_name(mutation_name.c_str(),
+                                                      false);
+    describe_mutation(mutation);
+    return 0;
+}
+
 /// All types of ?/ queries the player can enter.
 static const vector<LookupType> lookup_types = {
     LookupType('M', "monster", _recap_mon_keys, _monster_filter,
@@ -1299,7 +1313,7 @@ static const vector<LookupType> lookup_types = {
                _describe_generic, lookup_type::db_suffix),
     LookupType('U', "mutation", nullptr, _mutation_filter,
                nullptr, nullptr, _mut_menu_gen,
-               _describe_generic, lookup_type::db_suffix),
+               _describe_mutation, lookup_type::db_suffix),
 };
 
 /**

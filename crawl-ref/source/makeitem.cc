@@ -9,6 +9,7 @@
 
 #include <algorithm>
 
+#include "acquire.h"
 #include "art-enum.h" // unrand -> magic staff silliness
 #include "artefact.h"
 #include "colour.h"
@@ -229,8 +230,8 @@ static bool _try_make_weapon_artefact(item_def& item, int force_type,
         if (_weapon_disallows_randart(item.sub_type))
             return false;
 
-        // Mean enchantment +6.
-        item.plus = 12 - biased_random2(7,2);
+        // Mean enchantment +5.
+        item.plus = 12 - biased_random2(10,2);
         item.plus -= biased_random2(7,2);
         item.plus -= biased_random2(7,2);
 
@@ -298,7 +299,7 @@ bool is_weapon_brand_ok(int type, int brand, bool /*strict*/)
     case SPWPN_VENOM:
     case SPWPN_PROTECTION:
     case SPWPN_SPEED:
-    case SPWPN_VORPAL:
+    case SPWPN_HEAVY:
     case SPWPN_CHAOS:
     case SPWPN_HOLY_WRATH:
     case SPWPN_ELECTROCUTION:
@@ -1548,7 +1549,7 @@ static bool _try_make_jewellery_unrandart(item_def& item, int force_type,
  * GOOD_RING_PLUS.
  *
  * @param subtype       The type of ring in question.
- * @return              4 or 6.
+ * @return              4, 5 or 6.
  *                      (minor numerical variations are boring.)
  */
 static short _good_jewellery_plus(int subtype)
@@ -1559,6 +1560,8 @@ static short _good_jewellery_plus(int subtype)
         case RING_DEXTERITY:
         case RING_INTELLIGENCE:
             return GOOD_STAT_RING_PLUS;
+        case RING_EVASION:
+            return 5;
         default:
             return GOOD_RING_PLUS;
     }
@@ -2133,5 +2136,11 @@ void makeitem_tests()
                               type,
                               level);
     }
+    mpr("Running acquirement tests.");
+    // note: without char customization this won't exercise all acquirement
+    // code. But this at least gives a baseline.
+    for (i = 0; i < 500; ++i)
+        make_acquirement_items();
+
 }
 #endif

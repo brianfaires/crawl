@@ -72,7 +72,7 @@ def describe_sockets(names=False):
 
     if names:
         # this is all a bit brute-force
-        watchers = list_of_names([s for s in slist if s.watched_game and s.username])
+        watchers = list_of_names([s.username for s in slist if s.watched_game and s.username])
         if watchers:
             summary += "; Watchers: %s" % watchers
         lobby_names = list_of_names([s.username for s in lobby if s.username and not s.account_restricted()])
@@ -276,6 +276,10 @@ def admin_only(f):
     return wrapper
 
 
+# XX add defaults when we can be sure the python version supports it
+MessageBundle = collections.namedtuple('MessageBundle', ["binmsg", "compressed"])
+MessageBundle.__bool__ = lambda self: bool(self.binmsg)
+
 class CrawlWebSocket(tornado.websocket.WebSocketHandler):
     def __init__(self, app, req, **kwargs):
         tornado.websocket.WebSocketHandler.__init__(self, app, req, **kwargs)
@@ -345,6 +349,8 @@ class CrawlWebSocket(tornado.websocket.WebSocketHandler):
 
     @admin_only
     def send_socket_stats(self):
+        import webtiles.server
+        self.send_message("admin_log", text=webtiles.server.version())
         self.send_message("admin_log", text=describe_sockets(True))
 
     @admin_required
@@ -877,10 +883,12 @@ class CrawlWebSocket(tornado.websocket.WebSocketHandler):
         username, ok = auth.check_login_cookie(cookie)
         if ok:
             auth.forget_login_cookie(cookie)
-            self.logger.info("User %s logging in (via token).", username)
+            self.logger.info("User %s logging in from %s (via token).",
+                username, self.request.remote_ip)
             self.do_login(username)
         else:
-            self.logger.warning("Wrong login token for user %s.", username)
+            self.logger.warning("Wrong login token for user %s. (IP: %s)",
+                username, self.request.remote_ip)
             self.send_message("login_fail")
 
     def set_login_cookie(self):
@@ -969,6 +977,12 @@ class CrawlWebSocket(tornado.websocket.WebSocketHandler):
         if self.username and self.account_restricted():
             self.send_message("auth_error",
                         reason="Account restricted; spectating unavailable")
+            self.go_lobby()
+            return
+
+        if not self.username and not config.get('allow_anon_spectate'):
+            self.send_message("auth_error",
+                        reason="Anonymous spectating disabled")
             self.go_lobby()
             return
 
@@ -1215,30 +1229,46 @@ class CrawlWebSocket(tornado.websocket.WebSocketHandler):
                                 excerpt, trunc,
                                 exc_info=True)
 
-    def flush_messages(self):
-        # type: () -> bool
-        if self.client_closed or len(self.message_queue) == 0:
-            return False
-        msg = ("{\"msgs\":["
-                + ",".join(self.message_queue)
-                + "]}")
-        self.message_queue = []
-
+    def _encode_for_send(self, msg, deflate):
         try:
             binmsg = utf8(msg)
-            self.total_message_bytes += len(binmsg)
-            if self.deflate:
+            if deflate:
                 # Compress like in deflate-frame extension:
                 # Apply deflate, flush, then remove the 00 00 FF FF
                 # at the end
+                # note: a compressed stream is stateful, you can't use this
+                # compressobj for other sockets
                 compressed = self._compressobj.compress(binmsg)
                 compressed += self._compressobj.flush(zlib.Z_SYNC_FLUSH)
                 compressed = compressed[:-4]
-                self.compressed_bytes_sent += len(compressed)
-                f = self.write_message(compressed, binary=True)
+                return MessageBundle(binmsg, compressed)
             else:
-                self.uncompressed_bytes_sent += len(binmsg)
-                f = self.write_message(binmsg)
+                return MessageBundle(binmsg, None)
+        except:
+            # might happen with weird utf-8 stuff...can this be handled more
+            # precisely?
+            self.logger.warning("Exception trying to encode message.", exc_info = True)
+            return MessageBundle(None, None)
+
+
+    # send a single message batch, encoding and compressing it if necessary
+    def _send_raw_message(self, msg):
+        if self.client_closed or not msg:
+            return False
+
+        bundle = self._encode_for_send(msg, self.deflate)
+        if not bundle:
+            self.failed_messages += 1
+            return False
+
+        try:
+            self.total_message_bytes += len(bundle.binmsg)
+            if self.deflate:
+                self.compressed_bytes_sent += len(bundle.compressed)
+                f = self.write_message(bundle.compressed, binary=True)
+            else:
+                self.uncompressed_bytes_sent += len(bundle.binmsg)
+                f = self.write_message(bundle.binmsg)
 
             import traceback
             cur_stack = traceback.format_stack()
@@ -1285,6 +1315,18 @@ class CrawlWebSocket(tornado.websocket.WebSocketHandler):
             if self.ws_connection is not None:
                 self.ws_connection._abort()
             return False
+
+    # send anything in the per-socket queue
+    def flush_messages(self):
+        # type: () -> bool
+        if self.client_closed or len(self.message_queue) == 0:
+            return False
+
+        batch = ("{\"msgs\":["
+            + ",".join(self.message_queue)
+            + "]}")
+        self.message_queue = [] # always empty the queue
+        return self._send_raw_message(batch)
 
     # n.b. this looks a lot like superclass write_message, but has a static
     # type signature that is not compatible with it, so we do not override

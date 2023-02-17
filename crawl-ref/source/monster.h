@@ -352,6 +352,7 @@ public:
     void attacking(actor *other) override;
     bool can_go_frenzy() const;
     bool can_go_berserk() const override;
+    bool can_get_mad() const;
     bool go_berserk(bool intentional, bool potion = false) override;
     bool go_frenzy(actor *source);
     bool berserk() const override;
@@ -510,7 +511,7 @@ public:
     bool    shielded() const override;
     int     shield_bonus() const override;
     int     shield_block_penalty() const override;
-    void    shield_block_succeeded() override;
+    void    shield_block_succeeded(actor *attacker) override;
     int     shield_bypass_ability(int tohit) const override;
     bool    missile_repulsion() const override;
 
@@ -558,7 +559,7 @@ public:
     int  spell_hd(spell_type spell = SPELL_NO_SPELL) const;
     void remove_summons(bool check_attitude = false);
 
-    bool clear_far_engulf(bool force = false) override;
+    bool clear_far_engulf(bool force = false, bool /*moved*/ = false) override;
     bool search_slots(function<bool (const mon_spell_slot &)> func) const;
 
     bool has_facet(int facet) const;

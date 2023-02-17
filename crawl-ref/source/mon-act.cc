@@ -153,6 +153,8 @@ static void _monster_regenerate(monster* mons)
 
     if (mons->type == MONS_PARGHIT)
         mons->heal(27); // go whoosh
+    else if (mons->type == MONS_DEMONIC_CRAWLER)
+        mons->heal(6); // go zoom
     else if (mons_class_fast_regen(mons->type)
         || mons->has_ench(ENCH_REGENERATION)
         || _mons_natural_regen_roll(mons))
@@ -1706,7 +1708,7 @@ void handle_monster_move(monster* mons)
     if (!mons->alive())
         return;
 
-    if (env.level_state & LSTATE_SLIMY_WALL)
+    if (you.duration[DUR_OOZEMANCY] && (env.level_state & LSTATE_SLIMY_WALL))
         slime_wall_damage(mons, speed_to_duration(mons->speed));
 
     if (!mons->alive())
@@ -3569,6 +3571,9 @@ static bool _monster_move(monster* mons)
 
         if (mons->has_ench(ENCH_ROLLING))
             place_cloud(CLOUD_DUST, mons->pos(), 2, mons);
+
+        if (mons->type == MONS_BALL_LIGHTNING)
+            place_cloud(CLOUD_ELECTRICITY, mons->pos(), random_range(2, 3), mons);
 
         if (mons->type == MONS_FOXFIRE)
             check_place_cloud(CLOUD_FLAME, mons->pos(), 2, mons);

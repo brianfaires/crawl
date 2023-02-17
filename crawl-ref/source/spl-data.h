@@ -132,7 +132,7 @@ static const struct spell_desc spelldata[] =
     spflag::area,
     5,
     200,
-    5, 5,
+    1, 1,
     10,
     TILEG_ARCJOLT,
 },
@@ -1061,18 +1061,6 @@ static const struct spell_desc spelldata[] =
     -1, -1,
     0,
     TILEG_CONFUSING_TOUCH,
-},
-
-{
-    SPELL_FLAME_TONGUE, "Flame Tongue",
-    spschool::conjuration | spschool::fire,
-    spflag::dir_or_target | spflag::not_self | spflag::needs_tracer
-        | spflag::monster,
-    1,
-    40, // cap for range; damage cap is at 25
-    2, 5,
-    0,
-    TILEG_FLAME_TONGUE,
 },
 
 {
@@ -3012,7 +3000,7 @@ static const struct spell_desc spelldata[] =
 {
     SPELL_DOOM_HOWL, "Doom Howl",
     spschool::translocation | spschool::hexes,
-    spflag::dir_or_target | spflag::monster,
+    spflag::dir_or_target | spflag::monster | spflag::WL_check,
     3,
     200,
     LOS_RADIUS, LOS_RADIUS,
@@ -3156,7 +3144,7 @@ static const struct spell_desc spelldata[] =
     SPELL_BECKONING, "Lesser Beckoning",
     spschool::translocation,
     spflag::dir_or_target | spflag::not_self | spflag::needs_tracer,
-    3,
+    2,
     50,
     3, 5,
     0,
@@ -3628,6 +3616,18 @@ static const struct spell_desc spelldata[] =
     TILEG_KISS_OF_DEATH,
 },
 
+// Not an actual spell - dummy entry for (player) Green Draconian breath.
+{
+    SPELL_MEPHITIC_BREATH, "Mephitic Breath",
+    spschool::conjuration | spschool::air | spschool:: poison,
+    spflag::dir_or_target | spflag::noisy | spflag::needs_tracer,
+    5,
+    0,
+    6, 6,
+    0,
+    TILEG_ERROR,
+},
+
 {
     SPELL_NO_SPELL, "nonexistent spell",
     spschool::none,
@@ -3731,6 +3731,7 @@ AXED_SPELL(SPELL_TOMB_OF_DOROKLOHE, "Tomb of Doroklohe")
 AXED_SPELL(SPELL_EXCRUCIATING_WOUNDS, "Excruciating Wounds")
 AXED_SPELL(SPELL_CONJURE_FLAME, "Conjure Flame")
 AXED_SPELL(SPELL_CORPSE_ROT, "Corpse Rot")
+AXED_SPELL(SPELL_FLAME_TONGUE, "Flame Tongue")
 #endif
 
 };

@@ -399,9 +399,9 @@ static vector<ability_def> &_get_ability_list()
 
         // Okawaru
         { ABIL_OKAWARU_HEROISM, "Heroism",
-            2, 0, 1, -1, {fail_basis::invo, 30, 6, 20}, abflag::none },
+            2, 0, 3, -1, {fail_basis::invo, 30, 6, 20}, abflag::none },
         { ABIL_OKAWARU_FINESSE, "Finesse",
-            5, 0, 3, -1, {fail_basis::invo, 60, 4, 25}, abflag::none },
+            5, 0, 5, -1, {fail_basis::invo, 60, 4, 25}, abflag::none },
         { ABIL_OKAWARU_DUEL, "Duel",
             7, 0, 10, LOS_MAX_RANGE, {fail_basis::invo, 80, 4, 20},
             abflag::target | abflag::not_self },
@@ -453,7 +453,7 @@ static vector<ability_def> &_get_ability_list()
             1, 0, 10, -1, {fail_basis::invo, 30, 6, 20}, abflag::none },
         { ABIL_LUGONU_BANISH, "Banish",
             4, 0, generic_cost::range(3, 4), LOS_MAX_RANGE,
-            {fail_basis::invo, 85, 7, 20}, abflag::none },
+            {fail_basis::invo, 65, 7, 20}, abflag::none },
         { ABIL_LUGONU_CORRUPT, "Corrupt",
             7, scaling_cost::fixed(5), 10, -1, {fail_basis::invo, 70, 4, 25},
             abflag::none },
@@ -1340,11 +1340,7 @@ bool activate_ability()
             selected = -1;
     }
 
-#ifndef TOUCH_UI
     if (Options.ability_menu && selected == -1)
-#else
-    if (selected == -1)
-#endif
     {
         selected = choose_ability_menu(talents);
         if (selected == -1)
@@ -1354,7 +1350,6 @@ bool activate_ability()
             return false;
         }
     }
-#ifndef TOUCH_UI
     else
     {
         while (selected < 0)
@@ -1403,7 +1398,6 @@ bool activate_ability()
             }
         }
     }
-#endif
     return activate_talent(talents[selected]);
 }
 
@@ -1478,8 +1472,7 @@ static bool _check_ability_possible(const ability_def& abil, bool quiet = false)
     // dangerous.)
     if (abil.ability == ABIL_END_TRANSFORMATION)
     {
-        if (feat_dangerous_for_form(transformation::none, env.grid(you.pos()))
-            && !you.duration[DUR_FLIGHT])
+        if (feat_dangerous_for_form(transformation::none, env.grid(you.pos())))
         {
             if (!quiet)
             {
@@ -2588,8 +2581,6 @@ static spret _do_ability(const ability_def& abil, bool fail, dist *target,
     {
         spret result = spret::abort;
         int cooldown = 3 + random2(10) + random2(30 - you.experience_level);
-        if (abil.ability == ABIL_BREATHE_STEAM)
-            cooldown /= 2;
 
         static map<ability_type, string> breath_message =
         {

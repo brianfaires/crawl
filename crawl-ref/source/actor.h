@@ -248,7 +248,7 @@ public:
     virtual int shield_bonus() const = 0;
     virtual int shield_block_penalty() const = 0;
     virtual int shield_bypass_ability(int tohit) const = 0;
-    virtual void shield_block_succeeded();
+    virtual void shield_block_succeeded(actor *attacker);
     virtual bool missile_repulsion() const = 0;
 
     // Combat-related virtual class methods
@@ -408,7 +408,7 @@ public:
     virtual bool has_usable_tentacle() const = 0;
     virtual int constriction_damage(constrict_type typ) const = 0;
     virtual bool constriction_does_damage(constrict_type typ) const;
-    virtual bool clear_far_engulf(bool force = false) = 0;
+    virtual bool clear_far_engulf(bool force = false, bool moved = false) = 0;
 
     // Be careful using this, as it doesn't keep the constrictor in sync.
     void clear_constricted();
@@ -418,6 +418,7 @@ public:
     string resist_margin_phrase(int margin) const;
 
     void collide(coord_def newpos, const actor *agent, int pow);
+    bool knockback(const actor &cause, int dist, int pow, string source_name);
 
     static const actor *ensure_valid_actor(const actor *act);
     static actor *ensure_valid_actor(actor *act);

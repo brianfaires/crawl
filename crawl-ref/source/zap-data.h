@@ -267,7 +267,7 @@ static const zap_info zap_data[] =
     new tohit_calculator<5, 1, 3>,
     WHITE,
     false,
-    BEAM_ICE, // rC capped at 40%, use ZAP_FLASH_FREEZE if you don't want this
+    BEAM_ICE, // rC capped at 50%, use ZAP_FLASH_FREEZE if you don't want this
     DCHAR_FIRED_ZAP,
     false,
     false,
@@ -1202,22 +1202,6 @@ _mon_hex_zap(ZAP_BANISHMENT, BEAM_BANISH, 150),
 
 // player spellpower is capped to 50 in spl-zap.cc:spell_zap_power.
 _mon_hex_zap(ZAP_HIBERNATION, BEAM_HIBERNATION),
-
-{
-    ZAP_FLAME_TONGUE,
-    "flame tongue",
-    25,
-    new dicedef_calculator<1, 8, 1, 4>,
-    new tohit_calculator<11, 1, 6>,
-    new dicedef_calculator<3, 3, 1, 12>,
-    new tohit_calculator<7, 1, 6>,
-    RED,
-    false,
-    BEAM_FIRE,
-    DCHAR_FIRED_BOLT,
-    false,
-    false,
-},
 
 {
     ZAP_SANDBLAST,

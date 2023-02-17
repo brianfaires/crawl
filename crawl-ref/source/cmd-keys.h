@@ -41,7 +41,9 @@
 {'y', CMD_MOVE_UP_LEFT},
 // other commands
 {'a', CMD_USE_ABILITY},
+{'c', CMD_UNEQUIP}, // not a very good letter for this
 {'d', CMD_DROP},
+{'e', CMD_EQUIP},
 {'f', CMD_FIRE},
 {'g', CMD_PICKUP},
 {'i', CMD_DISPLAY_INVENTORY},
@@ -116,6 +118,10 @@
 {CONTROL('E'), CMD_MACRO_ADD},
 {'~', CMD_GAME_MENU},
 {CK_F1, CMD_GAME_MENU},
+#ifdef __ANDROID__
+{CK_F11, CMD_TOGGLE_TAB_ICONS},
+{CK_F12, CMD_TOGGLE_KEYBOARD},
+#endif
 #ifdef WIZARD
 {'&', CMD_WIZARD},
 {'+', CMD_EXPLORE_MODE},
@@ -280,6 +286,7 @@
 {CONTROL('F'), CMD_MAP_FORGET},
 {CONTROL('U'), CMD_MAP_UNFORGET},
 {CONTROL('W'), CMD_MAP_ADD_WAYPOINT},
+{'w', CMD_MAP_ADD_WAYPOINT},
 {'e', CMD_MAP_EXCLUDE_AREA},
 {CONTROL('E'), CMD_MAP_CLEAR_EXCLUDES},
 {'R', CMD_MAP_EXCLUDE_RADIUS},
@@ -386,9 +393,6 @@
 {CONTROL('F'), CMD_MENU_SEARCH},
 {CK_RIGHT, CMD_MENU_CYCLE_MODE},
 {'!', CMD_MENU_CYCLE_MODE},
-#ifdef TOUCH_UI
-{CK_TOUCH_DUMMY, CMD_MENU_CYCLE_MODE}, // is this correct??
-#endif
 {CK_LEFT, CMD_MENU_CYCLE_MODE_REVERSE},
 {',', CMD_MENU_CYCLE_HEADERS},
 {'_', CMD_MENU_HELP},
@@ -442,11 +446,7 @@
 {CONTROL('Q'), CMD_DOLL_QUIT},
 #endif
 
-#ifdef TOUCH_UI
-// zoom functions
-{CK_NUMPAD_PLUS, CMD_ZOOM_IN},
-{CK_NUMPAD_MINUS, CMD_ZOOM_OUT},
-#elif defined(USE_TILE_LOCAL)
+#if defined(USE_TILE_LOCAL)
 // no good webtiles keys available for the main view case, and browser zoom
 // already more or less accomplishes this.
 {LC_CONTROL('='), CMD_ZOOM_IN},

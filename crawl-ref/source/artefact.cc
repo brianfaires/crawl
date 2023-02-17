@@ -122,7 +122,7 @@ static bool _god_fits_artefact(const god_type which_god, const item_def &item,
 
     case GOD_TROG:
         // Limited selection of brands.
-        if (brand != SPWPN_VORPAL
+        if (brand != SPWPN_HEAVY
             && brand != SPWPN_FLAMING
             && brand != SPWPN_ANTIMAGIC)
         {
@@ -466,7 +466,7 @@ static void _add_randart_weapon_brand(const item_def &item,
             2, SPWPN_ELECTROCUTION,
             2, SPWPN_ANTIMAGIC,
             4, SPWPN_DRAINING,
-            4, SPWPN_VORPAL,
+            4, SPWPN_HEAVY,
             4, SPWPN_FLAMING,
             4, SPWPN_FREEZING);
 
@@ -490,9 +490,9 @@ static void _add_randart_weapon_brand(const item_def &item,
     else
     {
         item_props[ARTP_BRAND] = random_choose_weighted(
-            73, SPWPN_VORPAL,
-            34, SPWPN_FLAMING,
-            34, SPWPN_FREEZING,
+            47, SPWPN_HEAVY,
+            47, SPWPN_FLAMING,
+            47, SPWPN_FREEZING,
             26, SPWPN_VENOM,
             26, SPWPN_DRAINING,
             13, SPWPN_HOLY_WRATH,
@@ -612,7 +612,7 @@ struct artefact_prop_data
 };
 
 /// Generate 'good' values for stat artps (e.g. ARTP_STRENGTH)
-static int _gen_good_stat_artp() { return 1 + random2(3); }
+static int _gen_good_stat_artp() { return 1 + coinflip() + one_chance_in(4); }
 
 /// Generate 'bad' values for stat artps (e.g. ARTP_STRENGTH)
 static int _gen_bad_stat_artp() { return -2 - random2(4); }
@@ -1340,7 +1340,6 @@ static int _preferred_max_level(int unrand_index)
     case UNRAND_DELATRAS_GLOVES:
         return 6;
     case UNRAND_WOODCUTTERS_AXE:
-    case UNRAND_MORG:
     case UNRAND_THROATCUTTER:
     case UNRAND_HERMITS_PENDANT:
         return 9;
@@ -1353,6 +1352,8 @@ static int _preferred_max_level(int unrand_index)
     case UNRAND_MEEK:
     case UNRAND_ELEMENTAL_VULNERABILITY:
     case UNRAND_MISFORTUNE:
+    case UNRAND_FORCE_LANCE:
+    case UNRAND_VICTORY:
         return 11;
     default:
         return -1;
@@ -1463,7 +1464,10 @@ int extant_unrandart_by_exact_name(string name)
         {
             const int id = UNRAND_START + i;
             if (unranddata[i].flags & UNRAND_FLAG_NOGEN
-                && id != UNRAND_DRAGONSKIN /* ew */)
+                && id != UNRAND_DRAGONSKIN
+                && id != UNRAND_CEREBOV
+                && id != UNRAND_DISPATER
+                && id != UNRAND_ASMODEUS /* ew */)
             {
                 continue;
             }
@@ -1893,9 +1897,23 @@ void unrand_reacts()
         you.wield_change = true;
 }
 
-void artefact_set_property(item_def          &item,
-                            artefact_prop_type prop,
-                            int                val)
+void unrand_death_effects(monster* mons, killer_type killer)
+{
+    for (int i = 0; i < NUM_EQUIP; i++)
+    {
+        item_def* item = you.slot_item(static_cast<equipment_type>(i));
+
+        if (item && is_unrandom_artefact(*item))
+        {
+            const unrandart_entry* entry = get_unrand_entry(item->unrand_idx);
+
+            if (entry->death_effects)
+                entry->death_effects(item, mons, killer);
+        }
+    }
+}
+
+void artefact_set_property(item_def &item, artefact_prop_type prop, int val)
 {
     ASSERT(is_artefact(item));
     ASSERT(item.props.exists(ARTEFACT_PROPS_KEY));

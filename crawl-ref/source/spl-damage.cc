@@ -72,9 +72,12 @@ static bool _act_worth_targeting(const actor &caster, const actor &a)
     if (a.is_player())
         return true;
     const monster &m = *a.as_monster();
-    return !mons_is_firewood(m)
-        && !mons_is_conjured(m.type)
-        && (!caster.is_player() || !god_protects(&you, &m, true));
+    if (mons_is_firewood(m) || mons_is_conjured(m.type))
+        return false;
+    if (!caster.is_player())
+        return true;
+    return !god_protects(&you, &m, true)
+           && !testbits(m.flags, MF_DEMONIC_GUARDIAN);
 }
 
 // returns the closest target to the caster, choosing randomly if there are more
@@ -1014,6 +1017,11 @@ string describe_airstrike_dam(dice_def dice)
                         dice.size + MAX_AIRSTRIKE_BONUS);
 }
 
+string describe_resonance_strike_dam(dice_def dice)
+{
+    return make_stringf("(%d-%d)d%d", dice.num, dice.num + 4, dice.size);
+}
+
 spret cast_momentum_strike(int pow, coord_def target, bool fail)
 {
     if (cell_is_solid(target))
@@ -1036,9 +1044,11 @@ spret cast_momentum_strike(int pow, coord_def target, bool fail)
 
     bolt beam;
     zappy(ZAP_MOMENTUM_STRIKE, pow, false, beam);
+    beam.source_id    = MID_PLAYER;
+    beam.thrower      = KILL_YOU;
+    beam.attitude     = ATT_FRIENDLY;
     beam.origin_spell = SPELL_MOMENTUM_STRIKE;
-    beam.source = beam.target = target;
-    beam.attitude = ATT_FRIENDLY;
+    beam.source       = beam.target = target;
     beam.fire();
 
     if (!beam.foe_info.hurt && !beam.friend_info.hurt) // miss!
@@ -1748,10 +1758,8 @@ static void _animate_scorch(coord_def p)
 #ifdef USE_TILE
         view_add_tile_overlay(p, tileidx_zap(RED));
 #endif
-#ifndef USE_TILE_LOCAL
         view_add_glyph_overlay(p, {dchar_glyph(DCHAR_FIRED_ZAP),
                                    static_cast<unsigned short>(RED)});
-#endif
 
     animation_delay(50, true);
 }
@@ -1881,7 +1889,7 @@ static int _irradiate_cell(coord_def where, int pow, const actor &agent)
         // be nice and "only" contaminate the player a lot
         if (hitting_player)
             contaminate_player(2000 + random2(1000));
-        else
+        else if (coinflip())
             act->malmutate("");
     }
 
@@ -2450,7 +2458,7 @@ static int _discharge_monsters(const coord_def &where, int pow,
 
     int damage = 0;
     if (&agent == victim)
-        damage = 1 + random2(2 + div_rand_round(pow, 15));
+        damage = 1 + random2(1 + div_rand_round(pow, 18));
     else
     {
         damage = FLAT_DISCHARGE_ARC_DAMAGE
@@ -2610,9 +2618,8 @@ dice_def arcjolt_damage(int pow, bool random)
     return dice_def(1, random ? 10 + div_rand_round(pow, 2) : 10 + pow / 2);
 }
 
-vector<coord_def> arcjolt_targets(const actor &agent, int power, bool actual)
+vector<coord_def> arcjolt_targets(const actor &agent, bool actual)
 {
-    const int range = spell_range(SPELL_ARCJOLT, power);
     vector<coord_def> targets;
     set<coord_def> seen;
     vector<coord_def> to_check;
@@ -2625,7 +2632,7 @@ vector<coord_def> arcjolt_targets(const actor &agent, int power, bool actual)
         seen.insert(*ai);
     }
 
-    for (int dist = 0; dist < range && !to_check.empty(); ++dist)
+    while (!to_check.empty())
     {
         vector<coord_def> next_frontier;
         for (coord_def p : to_check)
@@ -2661,7 +2668,7 @@ spret cast_arcjolt(int pow, const actor &agent, bool fail)
 {
     if (agent.is_player()
         && _warn_about_bad_targets(SPELL_ARCJOLT,
-                                   arcjolt_targets(agent, pow, false)))
+                                   arcjolt_targets(agent, false)))
     {
             return spret::abort;
     }
@@ -2688,7 +2695,7 @@ spret cast_arcjolt(int pow, const actor &agent, bool fail)
                                " emits a burst of electricity!");
     }
 
-    auto targets = arcjolt_targets(agent, pow, true);
+    auto targets = arcjolt_targets(agent, true);
     for (coord_def t : targets)
     {
         if (Options.use_animations & UA_BEAM)
@@ -3764,7 +3771,8 @@ static void _hailstorm_cell(coord_def where, int pow, actor *agent)
 #ifdef USE_TILE
     beam.tile_beam  = -1;
 #endif
-    beam.draw_delay = 10;
+    beam.draw_delay = 0;
+    beam.redraw_per_cell = false;
     beam.source     = where;
     beam.target     = where;
     beam.hit_verb   = "pelts";
@@ -3824,6 +3832,9 @@ spret cast_hailstorm(int pow, bool fail, bool tracer)
 
         _hailstorm_cell(*ri, pow, &you);
     }
+
+    if (Options.use_animations & UA_BEAM)
+        animation_delay(200, true);
 
     return spret::success;
 }

@@ -91,11 +91,9 @@ void surge_power_wand(const int mp_cost);
 
 int list_spells(bool toggle_with_I = true, bool viewing = false,
                 bool allow_preselect = true,
-                const string &title = "Your Spells");
+                const string &title = "cast");
 int raw_spell_fail(spell_type spell);
-int calc_spell_power(spell_type spell, bool apply_intel,
-                     bool fail_rate_chk = false, bool cap_power = true,
-                     int scale = 1);
+int calc_spell_power(spell_type spell);
 int calc_spell_range(spell_type spell, int power = 0, bool allow_bonus = true,
                      bool ignore_shadows = false);
 
@@ -135,7 +133,8 @@ int power_to_barcount(int power);
 
 int spell_power_percent(spell_type spell);
 string spell_power_string(spell_type spell);
-string spell_damage_string(spell_type spell, bool evoked = false);
+string spell_damage_string(spell_type spell, bool evoked = false, int pow = -1);
+string spell_max_damage_string(spell_type spell);
 int spell_acc(spell_type spell);
 string spell_range_string(spell_type spell);
 string range_string(int range, int maxrange, char32_t caster_char);

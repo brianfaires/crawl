@@ -60,6 +60,7 @@
 #include "state.h"
 #include "stepdown.h"
 #include "stringutil.h"
+#include "syscalls.h"
 #include "tag-version.h"
 #include "teleport.h"
 #include "terrain.h"
@@ -920,7 +921,6 @@ static monster_type _xom_random_demon(int sever)
 static bool _player_is_dead()
 {
     return you.hp <= 0
-        || is_feat_dangerous(env.grid(you.pos()))
         || you.did_escape_death();
 }
 
@@ -3091,15 +3091,15 @@ xom_event_type xom_choose_action(bool niceness, int sever, int tension)
         return XOM_DID_NOTHING;
     }
 
-    // Bad mojo. (this loop, that is)
-    while (true)
+    // try to do something bad
+    for (int i = 0; i < 100; i++)
     {
         const xom_event_type action = _xom_choose_bad_action(sever, tension);
         if (action != XOM_DID_NOTHING)
             return action;
     }
-
-    die("This should never happen.");
+    // player got lucky
+    return XOM_DID_NOTHING;
 }
 
 /**
@@ -3652,7 +3652,7 @@ void debug_xom_effects()
         return;
     }
 
-    FILE *ostat = fopen("xom_debug.stat", "w");
+    FILE *ostat = fopen_u("xom_debug.stat", "w");
     if (!ostat)
     {
         mprf(MSGCH_ERROR, "Can't write 'xom_debug.stat'. Aborting.");

@@ -210,13 +210,8 @@ vector<string> fire_target_behaviour::get_monster_desc(const monster_info& mi)
 
     if (get_ammo_brand(*item) == SPMSL_SILVER && mi.is(MB_CHAOTIC))
         descs.emplace_back("chaotic");
-    if (item->is_type(OBJ_MISSILES, MI_THROWING_NET)
-        && (mi.body_size() >= SIZE_GIANT
-            || mons_class_is_stationary(mi.type)
-            || mons_class_flag(mi.type, M_INSUBSTANTIAL)))
-    {
+    if (item->is_type(OBJ_MISSILES, MI_THROWING_NET) && mi.net_immune())
         descs.emplace_back("immune to nets");
-    }
 
     // Display the chance for a dart of para/confuse/sleep/frenzy
     // to affect monster
@@ -751,18 +746,6 @@ void throw_it(quiver::action &a)
 
     pbolt.is_tracer = false;
 
-    bool unwielded = false;
-    if (ammo_slot == you.equip[EQ_WEAPON] && thrown.quantity == 1)
-    {
-        if (!wield_weapon(true, SLOT_BARE_HANDS, true, false, true, false))
-            return;
-
-        if (!thrown.quantity)
-            return; // destroyed when unequipped (fragile)
-
-        unwielded = true;
-    }
-
     // Now start real firing!
     origin_set_unknown(item);
 
@@ -866,8 +849,6 @@ void throw_it(quiver::action &a)
     {
         if (ammo_slot != -1)
             dec_inv_item_quantity(ammo_slot, 1);
-        if (unwielded)
-            canned_msg(MSG_EMPTY_HANDED_NOW);
     }
 
     _throw_noise(&you, thrown);

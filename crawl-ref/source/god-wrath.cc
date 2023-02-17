@@ -1110,14 +1110,12 @@ static spell_type _vehumet_wrath_type()
     const int severity = min(random_range(1 + you.experience_level / 5,
                                           1 + you.experience_level / 3),
                              9);
-    // Mostly player-castable conjurations with a couple of additions.
     switch (severity)
     {
         case 1:
             return random_choose(SPELL_MAGIC_DART,
                                  SPELL_STING,
-                                 SPELL_SHOCK,
-                                 SPELL_FLAME_TONGUE);
+                                 SPELL_SHOCK);
         case 2:
             return random_choose(SPELL_THROW_FLAME,
                                  SPELL_THROW_FROST);
@@ -1956,7 +1954,7 @@ static int _wu_jian_summon_weapons()
         const int subtype = random_choose(WPN_DIRE_FLAIL, WPN_QUARTERSTAFF,
                                           WPN_BROAD_AXE, WPN_GREAT_SWORD,
                                           WPN_RAPIER, WPN_GLAIVE);
-        const int ego = random_choose(SPWPN_VORPAL, SPWPN_FLAMING,
+        const int ego = random_choose(SPWPN_HEAVY, SPWPN_FLAMING,
                                       SPWPN_FREEZING, SPWPN_ELECTROCUTION,
                                       SPWPN_SPEED);
 

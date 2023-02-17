@@ -1077,8 +1077,9 @@ int spell_effect_noise(spell_type spell)
         expl_size = 1;
         break;
 
-    case SPELL_LRD:
-        expl_size = 2; // Can reach 3 only with crystal walls, which are rare
+    case SPELL_LRD: // Can reach 3 only with crystal walls, which are rare
+    case SPELL_FULMINANT_PRISM: // Players usually want the full size explosion
+        expl_size = 2;
         break;
 
     // worst case scenario for these
@@ -1515,7 +1516,7 @@ bool spell_no_hostile_in_range(spell_type spell)
 
     const int range = calc_spell_range(spell, 0);
     const int minRange = get_dist_to_nearest_monster();
-    const int pow = calc_spell_power(spell, true, false, true);
+    const int pow = calc_spell_power(spell);
 
     switch (spell)
     {
@@ -1613,7 +1614,7 @@ bool spell_no_hostile_in_range(spell_type spell)
              == spret::abort;
 
     case SPELL_ARCJOLT:
-        for (coord_def t : arcjolt_targets(you, pow, false))
+        for (coord_def t : arcjolt_targets(you, false))
         {
             const monster *mon = monster_at(t);
             if (mon != nullptr && !mon->wont_attack())
@@ -1676,7 +1677,7 @@ bool spell_no_hostile_in_range(spell_type spell)
     if (zap != NUM_ZAPS)
     {
         beam.thrower = KILL_YOU_MISSILE;
-        zappy(zap, calc_spell_power(spell, true, false, true), false,
+        zappy(zap, calc_spell_power(spell), false,
               beam);
         if (spell == SPELL_MEPHITIC_CLOUD)
             beam.damage = dice_def(1, 1); // so that foe_info is populated
@@ -1936,6 +1937,7 @@ const set<spell_type> removed_spells =
     SPELL_EXCRUCIATING_WOUNDS,
     SPELL_CONJURE_FLAME,
     SPELL_CORPSE_ROT,
+    SPELL_FLAME_TONGUE,
 #endif
 };
 

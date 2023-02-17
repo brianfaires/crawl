@@ -79,7 +79,7 @@ void maybe_melt_player_enchantments(beam_type flavour, int damage)
             if (!you.duration[DUR_ICEMAIL_DEPLETED])
             {
                 if (you.has_mutation(MUT_ICEMAIL))
-                    mprf(MSGCH_DURATION, "Your icy defenses dissipate!");
+                    mprf(MSGCH_DURATION, "Your icy defences dissipate!");
                 else
                     mprf(MSGCH_DURATION, "Your condensation shield dissipates!");
             }
@@ -345,10 +345,9 @@ void lose_level()
     calc_hp();
     calc_mp();
 
-    char buf[200];
-    sprintf(buf, "HP: %d/%d MP: %d/%d",
-            you.hp, you.hp_max, you.magic_points, you.max_magic_points);
-    take_note(Note(NOTE_XP_LEVEL_CHANGE, you.experience_level, 0, buf));
+    take_note(Note(NOTE_XP_LEVEL_CHANGE, you.experience_level, 0,
+        make_stringf("HP: %d/%d MP: %d/%d",
+                you.hp, you.hp_max, you.magic_points, you.max_magic_points)));
 
     you.redraw_title = true;
     you.redraw_experience = true;

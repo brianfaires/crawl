@@ -596,6 +596,7 @@ public:
     int         tile_window_width;
     int         tile_window_height;
     int         tile_window_ratio;
+    bool        tile_window_limit_size;
     maybe_bool  tile_use_small_layout;
 #endif
     int         tile_sidebar_pixels;
@@ -626,6 +627,7 @@ public:
     tileidx_t   tile_player_tile;
     pair<int, int> tile_weapon_offsets;
     pair<int, int> tile_shield_offsets;
+    bool        tile_grinch;
 #ifdef USE_TILE_WEB
     bool        tile_realtime_anim;
     bool        tile_level_map_hide_messages;

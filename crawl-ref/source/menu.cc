@@ -544,6 +544,11 @@ public:
         m_text += fs;
         _expose();
         m_wrapped_size = Size(-1);
+        // XX this doesn't handle height changes. I think it's partly a
+        // sequencing issue: previous code will correctly invalidate on a
+        // height change, but m_region isn't updated until later, so you get
+        // the wrong wrapping behavior + a lack of reflowing until the next
+        // update.
         wrap_text_to_size(m_region.width, m_region.height);
     }
 
@@ -1381,18 +1386,6 @@ void Menu::do_menu()
         done = !process_key(key);
         return true;
     });
-#ifdef TOUCH_UI
-    auto menu_wrap_click = [this, &done](const MouseEvent& ev) {
-        if (!m_filter && ev.button() == MouseEvent::Button::Left)
-        {
-            done = !process_key(CK_TOUCH_DUMMY);
-            return true;
-        }
-        return false;
-    };
-    m_ui.title->on_mousedown_event(menu_wrap_click);
-    m_ui.more->on_mousedown_event(menu_wrap_click);
-#endif
 
     update_menu();
     ui::push_layout(m_ui.popup, m_kmc);
@@ -1831,22 +1824,11 @@ bool Menu::process_key(int keyin)
     case CK_REDRAW:
     case CK_RESIZE:
         return true;
-#ifndef TOUCH_UI
     case 0:
         return true;
-#endif
     case CK_MOUSE_CLICK:
         // click event from ui.cc
         break;
-
-#ifdef TOUCH_UI
-    case CK_TOUCH_DUMMY:  // mouse click in top/bottom region of menu
-    case 0:               // do the same as <enter> key
-        if (!(flags & MF_MULTISELECT)) // bail out if not a multi-select
-            return true;
-        return process_command(CMD_MENU_SELECT); // TODO: is this right??
-        // seemingly intentional fallthrough
-#endif
     default:
         // Even if we do return early, lastch needs to be set first,
         // as it's sometimes checked when leaving a menu.
@@ -3425,12 +3407,7 @@ void ToggleableMenu::add_toggle_from_command(command_type cmd)
 // needed?
 int ToggleableMenu::pre_process(int key)
 {
-#ifdef TOUCH_UI
-    if (find(toggle_keys.begin(), toggle_keys.end(), key) != toggle_keys.end()
-        || key == CK_TOUCH_DUMMY)
-#else
     if (find(toggle_keys.begin(), toggle_keys.end(), key) != toggle_keys.end())
-#endif
     {
         // Toggle all menu entries
         for (MenuEntry *item : items)
@@ -3456,11 +3433,7 @@ int ToggleableMenu::pre_process(int key)
         }
 
         // Don't further process the key
-#ifdef TOUCH_UI
-        return CK_TOUCH_DUMMY;
-#else
         return 0;
-#endif
     }
     return key;
 }

@@ -615,7 +615,7 @@ monster_info::monster_info(const monster* m, int milev)
         mb.set(MB_DISTRACTED);
     if (m->liquefied_ground())
         mb.set(MB_SLOW_MOVEMENT);
-    if (!actor_is_susceptible_to_vampirism(*m))
+    if (!actor_is_susceptible_to_vampirism(*m, true))
         mb.set(MB_CANT_DRAIN);
     if (m->res_water_drowning())
         mb.set(MB_RES_DROWN);
@@ -722,7 +722,10 @@ monster_info::monster_info(const monster* m, int milev)
     if (m->has_ghost_brand())
         props[SPECIAL_WEAPON_KEY] = m->ghost_brand();
 
-    ghost_colour = m->ghost ? m->ghost->colour : COLOUR_INHERIT;
+    // m->ghost->colour is unsigned (8 bit), but COLOUR_INHERIT is -1 and
+    // ghost_colour is an int. (...why)
+    ghost_colour = m->ghost ? static_cast<int>(m->ghost->colour)
+                            : static_cast<int>(COLOUR_INHERIT);
 
     // book loading for player ghost and vault monsters
     spells.clear();
@@ -968,7 +971,7 @@ string monster_info::_core_name() const
         switch (type)
         {
         case MONS_SLIME_CREATURE:
-            ASSERT((size_t) slime_size <= ARRAYSZ(slime_sizes));
+            ASSERT((size_t) slime_size < ARRAYSZ(slime_sizes));
             s = slime_sizes[slime_size] + s;
             break;
         case MONS_UGLY_THING:
@@ -1646,6 +1649,20 @@ size_type monster_info::body_size() const
     }
 
     return class_size;
+}
+
+bool monster_info::net_immune() const
+{
+    // too big
+    return body_size() >= SIZE_GIANT
+    // nets go right through (but weapons don't..?)
+        || mons_class_flag(type, M_INSUBSTANTIAL)
+    // tentacles are too weird. don't mess with em
+        || mons_is_tentacle_or_tentacle_segment(type)
+    // if you net something that doesn't move (positionally or attacking),
+    // it seems like that does nothing, right? the net just hangs there
+        || attack[0].type == AT_NONE
+           && mons_class_is_stationary(base_type);
 }
 
 bool monster_info::cannot_move() const

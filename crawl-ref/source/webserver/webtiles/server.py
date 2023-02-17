@@ -16,10 +16,11 @@ import tornado.ioloop
 import tornado.template
 import tornado.web
 from tornado.ioloop import IOLoop
+# do not add tornado.platform here without changing do_chroot()
 
 import webtiles
 from webtiles import auth, load_games, process_handler, userdb, config
-from webtiles import game_data_handler, util, ws_handler
+from webtiles import game_data_handler, util, ws_handler, status
 
 class MainHandler(tornado.web.RequestHandler):
     def get(self):
@@ -48,6 +49,28 @@ class NoCacheHandler(tornado.web.StaticFileHandler):
         self.set_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.set_header("Pragma", "no-cache")
         self.set_header("Expires", "0")
+
+
+_crawl_version = "unknown"
+
+def load_version():
+    global _crawl_version
+    try:
+        # this is the "bad" way to do this. However, the supposedly good ways
+        # to do this are all insanely complicated in ways that are irrelevant
+        # to webtiles.
+        with open(os.path.join(os.path.dirname(__file__), 'version.txt')) as f:
+            _crawl_version = f.readline().strip()
+    except:
+        _crawl_version = "unknown"
+
+
+def version():
+    return "Webtiles (%s) running with Tornado %s and Python %d.%d.%d" % (
+        _crawl_version,
+        tornado.version,
+        sys.version_info[0], sys.version_info[1], sys.version_info[2])
+
 
 def err_exit(errmsg, exc_info=False):
     if exc_info or config.get('logging_config').get('filename'):
@@ -168,7 +191,9 @@ def bind_server():
     handlers = [
             (r"/", MainHandler),
             (r"/socket", ws_handler.CrawlWebSocket),
-            (r"/gamedata/([0-9a-f]*\/.*)", game_data_handler.GameDataHandler)]
+            (r"/gamedata/([0-9a-f]*\/.*)", game_data_handler.GameDataHandler),
+            (r"/status/lobby/", status.LobbyHandler),
+            ]
 
     try:
         # this is somewhat atrocious; the point is so that tornado slow
@@ -277,15 +302,18 @@ def monkeypatch_tornado24():
     IOLoop.current = staticmethod(IOLoop.instance)
 
 
-def ensure_tornado_current():
+def ensure_tornado_current(exit=True):
     try:
         tornado.ioloop.IOLoop.current()
     except AttributeError:
         monkeypatch_tornado24()
         tornado.ioloop.IOLoop.current()
-        logging.error(
-            "You are running a deprecated version of tornado; please update"
-            " to at least version 4.")
+        err = ("You are running a deprecated version of tornado; please update"
+               " to a current version.")
+        if exit:
+            sys.err(err)
+        else:
+            logging.error(err)
 
 
 def usr1_handler(signum, frame):
@@ -601,10 +629,28 @@ def parse_args_util():
     return result, help_fun
 
 
-def run_util():
-    args, help_fun = parse_args_util()
+def do_chroot():
     if config.get('chroot'):
         os.chroot(config.get('chroot'))
+        try:
+            # try to fail early, with an informative message, if this is not
+            # going to work
+            # the choice of tornado.platform is a bit heuristic, but it is
+            # currently where the webserver seems to fail on import after a chroot.
+            # If it is ever imported at the top of this file, something else would
+            # be needed.
+            import tornado.platform
+        except:
+            # no logging available yet
+            print("Error: can't import `tornado.platform` in chroot. Did you copy"
+                " the python library for this version of python into the chroot?",
+                file=sys.stderr)
+            raise
+
+
+def run_util():
+    args, help_fun = parse_args_util()
+    do_chroot()
 
     if config.source_file is None:
         sys.exit("No configuration provided!")
@@ -644,8 +690,7 @@ def run_util():
 # ../server.py in the official repository for an example.
 def run():
     args = parse_args_main()
-    if config.get('chroot'):
-        os.chroot(config.get('chroot'))
+    do_chroot()
 
     if config.source_file is None:
         # we could try to automatically figure this out from server_path, if
@@ -732,8 +777,8 @@ def run():
         ws_handler.do_periodic_lobby_updates()
         webtiles.config.init_config_timeouts()
 
-        logging.info("DCSS Webtiles server started with Tornado %s! (PID: %s)" %
-                                                    (tornado.version, os.getpid()))
+        logging.info("DCSS Webtiles server started! (PID: %s)" % os.getpid())
+        logging.info(version())
 
         IOLoop.current().start()
 
@@ -746,6 +791,8 @@ def run():
     finally:
         remove_pidfile()
 
+
+load_version()
 
 # TODO: it might be nice to simply make this module runnable, but that would
 # need some way of specifying the config source and `config.server_path`.

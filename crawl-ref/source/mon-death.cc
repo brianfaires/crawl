@@ -399,7 +399,7 @@ static void _gold_pile(item_def &corpse, monster_type corpse_class)
     item_colour(corpse);
 
     // Apply the gold aura effect to the player.
-    const int dur = corpse.quantity * 2;
+    const int dur = 6 + random2avg(14, 2);
     if (dur > you.duration[DUR_GOZAG_GOLD_AURA])
         you.set_duration(DUR_GOZAG_GOLD_AURA, dur);
 
@@ -1544,11 +1544,6 @@ static void _fire_kill_conducts(monster &mons, killer_type killer,
     if (mons.is_holy())
         did_kill_conduct(DID_KILL_HOLY, mons);
 
-    // Fedhas shrooms cause confusion which leads to subsequent
-    // confusion kills, sometimes of the player's own plants
-    if (fedhas_protects(&mons) && killer != KILL_YOU_CONF)
-        did_kill_conduct(DID_KILL_PLANT, mons);
-
     // Cheibriados hates fast monsters.
     if (cheibriados_thinks_mons_is_fast(mons) && !mons.cannot_act())
         did_kill_conduct(DID_KILL_FAST, mons);
@@ -2013,6 +2008,9 @@ item_def* monster_die(monster& mons, killer_type killer,
                 mpr("You feel a bit better.");
         }
     }
+
+    // Apply unrand effects.
+    unrand_death_effects(&mons, killer);
 
     switch (killer)
     {

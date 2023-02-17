@@ -51,11 +51,11 @@ static const char *features[] =
 #endif
 
 #ifdef USE_TILE_LOCAL
-    "Tile support",
+    "Tiles support",
 #endif
 
 #ifdef USE_TILE_WEB
-    "Web Tile support",
+    "Webtiles support",
 #endif
 
 #ifdef WIZARD
@@ -85,7 +85,8 @@ static const char *features[] =
 
 static string _get_version_information()
 {
-    string result = string("This is <w>" CRAWL " ") + Version::Long + "</w>";
+    string result = string("This is <w>" CRAWL " ") + Version::Long
+        + " (" CRAWL_BUILD_NAME ")</w>";
     return result;
 }
 
@@ -110,6 +111,8 @@ static string _get_version_features()
         result += Version::history();
         result += "\n\n";
     }
+
+    result += "Report bugs to: <w>" CRAWL_BUG_REPORT "</w>\n\n";
 
     result += "<w>Features</w>\n"
                  "--------\n";
@@ -793,9 +796,20 @@ static void _add_formatted_help_menu(column_composer &cols)
         "aspect of Dungeon Crawl.\n"
 
         "<w>?</w>: List of commands\n"
-        "<w>^</w>: Quickstart Guide\n"
-        "<w>:</w>: Browse character notes\n"
-        "<w>#</w>: Browse character dump\n"
+        "<w>^</w>: Quickstart Guide");
+    if (!crawl_state.game_started)
+    {
+        cols.add_formatted(0,
+            "<darkgrey>:: Browse character notes</darkgrey>\n"
+            "<darkgrey>#: Browse character dump</darkgrey>", false);
+    }
+    else
+    {
+        cols.add_formatted(0,
+            "<w>:</w>: Browse character notes\n"
+            "<w>#</w>: Browse character dump", false);
+    }
+    cols.add_formatted(0,
         "<w>~</w>: Macros help\n"
         "<w>&</w>: Options help\n"
         "<w>%</w>: Table of aptitudes\n"
@@ -806,7 +820,21 @@ static void _add_formatted_help_menu(column_composer &cols)
 #endif
         "<w>V</w>: Version information\n"
         "<w>!</w>: Display diagnostics\n"
-        "<w>Home</w>: This screen\n");
+        "<w>Home</w>: This screen\n"
+#ifdef __ANDROID__
+        // XX is this the bet place for this? It should at least be duplicated
+        // in `??`.
+        "\n"
+        "<h>Android Controls\n"
+        "\n"
+        "<w>Back key</w>: Alias for escape\n"
+        "<w>Volume keys</w>: Zoom dungeon & map\n"
+        "Long press for right click.\n"
+        "Touch with two fingers for scrolling.\n"
+        "Toggle keyboard icon controls the\n"
+        "virtual keyboard visibility.\n"
+#endif
+        , false);
 
     // TODO: generate this from the manual somehow
     cols.add_formatted(
@@ -1082,6 +1110,8 @@ static void _add_formatted_keyhelp(column_composer &cols)
     _add_command(cols, 1, CMD_PRIMARY_ATTACK, "attack with wielded item", 2);
     _add_command(cols, 1, CMD_EVOKE, "eVoke wand and miscellaneous item", 2);
 
+    _add_insert_commands(cols, 1, "<w>%</w>/<w>%</w> : Equip or Unequip an item",
+                         { CMD_EQUIP, CMD_UNEQUIP });
     _add_insert_commands(cols, 1, "<w>%</w>/<w>%</w> : Wear or Take off armour",
                          { CMD_WEAR_ARMOUR, CMD_REMOVE_ARMOUR });
     _add_insert_commands(cols, 1, "<w>%</w>/<w>%</w> : Put on or Remove jewellery",
@@ -1352,7 +1382,7 @@ public:
         process_key(key);
     };
 private:
-    bool process_key(int ch) override
+    maybe_bool process_key(int ch) override
     {
         int key = toalower(ch);
 
@@ -1366,9 +1396,18 @@ private:
         formatted_string header_text, help_text;
         switch (key)
         {
-            case CK_ESCAPE: case ':': case '#': case '/': case 'q': case 'v': case '!':
-                return false;
+            case ':':
+            case '#':
+                // disable these if there's no character to view
+                if (!crawl_state.game_started)
+                    return MB_MAYBE;
+                // falltrough
+            case CK_ESCAPE: case '/': case 'q': case 'v': case '!':
+                // exit the UI, these help screens are activated outside of
+                // the scroller popup
+                return MB_FALSE;
             default:
+                // try to process help section hotkeys
                 if (!(page = _get_help_section(key, header_text, help_text, scroll)))
                     break;
                 if (page != prev_page)
@@ -1379,7 +1418,7 @@ private:
                 }
                 scroll = scroll ? (scroll-2)*line_height : 0;
                 set_scroll(scroll);
-                return true;
+                return MB_TRUE;
         }
 
         return formatted_scroller::process_key(ch);

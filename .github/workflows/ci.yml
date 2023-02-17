@@ -7,8 +7,12 @@ on:
     types:
       - created
 
+permissions: {}
 jobs:
   linting:
+    permissions:
+      contents: read #  to fetch code (actions/checkout)
+
     name: Code Linting
     runs-on: ubuntu-latest
     steps:
@@ -21,6 +25,9 @@ jobs:
         working-directory: crawl-ref/source
 
   build_linux:
+    permissions:
+      contents: read #  to fetch code (actions/checkout)
+
     name: Linux ${{ matrix.compiler }} ${{ matrix.build_opts }} ${{ matrix.debug }} ${{ matrix.build_all }} tag_upgrade=${{ matrix.tag_upgrade }}
     runs-on: ubuntu-latest
     strategy:
@@ -41,6 +48,9 @@ jobs:
         build_all:
           - ""
         exclude:
+          - compiler: gcc
+            build_opts: WEBTILES=1 USE_DGAMELAUNCH=1
+            debug: FULLDEBUG=1
           # Limit Clang jobs:
           # 1. Only build fulldebug
           - compiler: clang
@@ -59,11 +69,6 @@ jobs:
             build_all: ""
           - compiler: gcc
             build_opts: WEBTILES=1 USE_DGAMELAUNCH=1
-            debug: FULLDEBUG=1
-            tag_upgrade: true
-            build_all: ""
-          - compiler: gcc
-            build_opts: TILES=1
             debug: FULLDEBUG=1
             tag_upgrade: true
             build_all: ""
@@ -103,7 +108,7 @@ jobs:
       - name: Cache compilation
         uses: actions/cache@v3
         with:
-          path: ~/.ccache
+          path: ~/.cache/ccache
           key: ccache-linux-${{ matrix.compiler }}-${{ matrix.tag_upgrade }}-${{ matrix.build_opts }}-${{ matrix.debug }}-${{ matrix.build_all }}-${{ github.sha }}
           restore-keys: |
             ccache-linux-${{ matrix.compiler }}-${{ matrix.tag_upgrade }}-${{ matrix.build_opts }}-${{ matrix.debug }}-${{ matrix.build_all }}-
@@ -139,9 +144,12 @@ jobs:
         env:
           TERM: dumb
       - name: Print ccache stats
-        run: ccache -s
+        run: ccache -p -s
 
   build_appimage:
+    permissions:
+      contents: write #  for release creation (svenstaro/upload-release-action)
+
     name: Linux AppImage ${{ matrix.build_type }}
     runs-on: ubuntu-latest
     if: github.event.release.tag_name != null
@@ -170,7 +178,7 @@ jobs:
       - name: Cache compilation
         uses: actions/cache@v3
         with:
-          path: ~/.ccache
+          path: ~/.cache/ccache
           key: ccache-appimage-${{ matrix.build_type }}-${{ github.sha }}
           restore-keys: |
             ccache-appimage-${{ matrix.build_type }}-
@@ -186,7 +194,7 @@ jobs:
       - run: make -j$(nproc) ${{ matrix.build_opts }} appimage
         working-directory: crawl-ref/source
       - name: Print ccache stats
-        run: ccache -s
+        run: ccache -p -s
       - name: Add build to release
         uses: svenstaro/upload-release-action@v2
         with:
@@ -196,6 +204,9 @@ jobs:
           asset_name: dcss-$tag-linux-${{ matrix.build_type }}.x86_64.AppImage
 
   build_debian:
+    permissions:
+      contents: write #  for release creation (svenstaro/upload-release-action)
+
     name: Debian Packages ${{ matrix.arch }}
     runs-on: ubuntu-latest
     if: github.event.release.tag_name != null
@@ -244,6 +255,9 @@ jobs:
           overwrite: true # there are common packages in i386 and amd64
 
   build_macos:
+    permissions:
+      contents: write #  for release creation (svenstaro/upload-release-action)
+
     name: macOS ${{ matrix.build_type }}
     runs-on: macos-latest
     strategy:
@@ -286,7 +300,7 @@ jobs:
       - name: Cache compilation
         uses: actions/cache@v3
         with:
-          path: ~/.ccache
+          path: ~/Library/Caches/ccache
           key: ccache-macos-clang-${{ matrix.build_type }}-${{ github.sha }}
           restore-keys: |
             ccache-macos-clang-${{ matrix.build_type }}-
@@ -300,7 +314,7 @@ jobs:
       - run: make -j$(sysctl -n hw.ncpu) mac-app-${{ matrix.build_type }} ${{matrix.build_opts }}
         working-directory: crawl-ref/source
       - name: Print ccache stats
-        run: ccache -s
+        run: ccache -p -s
       - name: Add build to release
         if: github.event.release.tag_name != null
         uses: svenstaro/upload-release-action@v2
@@ -311,6 +325,9 @@ jobs:
           asset_name: dcss-$tag-macos-${{ matrix.build_type}}.zip
 
   build_mingw64_crosscompile:
+    permissions:
+      contents: write #  for release creation (svenstaro/upload-release-action)
+
     name: mingw64 ${{ matrix.build_type }}
     runs-on: ubuntu-latest
     strategy:
@@ -345,7 +362,7 @@ jobs:
       - name: Cache compilation
         uses: actions/cache@v3
         with:
-          path: ~/.ccache
+          path: ~/.cache/ccache
           key: ccache-key2-mingw64-${{ matrix.build_type }}-${{ github.sha }}
           restore-keys: |
             ccache-key2-mingw64-${{ matrix.build_type }}-
@@ -361,7 +378,7 @@ jobs:
       - run: make -j$(nproc) CROSSHOST=i686-w64-mingw32 package-windows-${{ matrix.build_type }}
         working-directory: crawl-ref/source
       - name: Print ccache stats
-        run: ccache -s
+        run: ccache -p -s
       # The zip & installer targets create different sorts of names, so we need
       # a little shell script magic here.
       - name: Determine release file names
@@ -387,6 +404,9 @@ jobs:
           asset_name: ${{ steps.release-names.outputs.dest }}
 
   codecov_catch2:
+    permissions:
+      contents: read #  to fetch code (actions/checkout)
+
     name: Catch2 (GCC/Linux) + Codecov
     runs-on: ubuntu-latest
     steps:
@@ -409,7 +429,7 @@ jobs:
       - name: Cache compilation
         uses: actions/cache@v3
         with:
-          path: ~/.ccache
+          path: ~/.cache/ccache
           key: ccache-catch2-${{ github.sha }}
           restore-keys: |
             ccache-catch2-
@@ -424,7 +444,7 @@ jobs:
       - run: make -j$(nproc) catch2-tests
         working-directory: crawl-ref/source
       - name: Print ccache stats
-        run: ccache -s
+        run: ccache -p -s
       - name: Generate LCOV data
         working-directory: crawl-ref/source
         run: >
@@ -443,7 +463,10 @@ jobs:
           fail_ci_if_error: false
 
   webserver:
-    runs-on: ubuntu-latest
+    permissions:
+      contents: read #  to fetch code (actions/checkout)
+
+    runs-on: ubuntu-20.04 # TODO: go back to ubuntu-latest
     strategy:
       matrix:
         python-version: [3.6, 3.7, 3.8]
@@ -469,6 +492,9 @@ jobs:
       run: python -m unittest webtiles.userdb
 
   build_headers:
+    permissions:
+      contents: read #  to fetch code (actions/checkout)
+
     name: Build headers ${{ matrix.compiler }} ${{ matrix.build_opts }} ${{ matrix.debug }}
     runs-on: ubuntu-latest
     strategy:
@@ -503,7 +529,7 @@ jobs:
       - name: Cache compilation
         uses: actions/cache@v3
         with:
-          path: ~/.ccache
+          path: ~/.cache/ccache
           key: ccache-build-headers-${{ matrix.compiler }}-${{ matrix.build_opts }}-${{ matrix.debug }}-${{ github.sha }}
           restore-keys: |
             ccache-build-headers-${{ matrix.compiler }}-${{ matrix.build_opts }}-${{ matrix.debug }}-
@@ -521,7 +547,50 @@ jobs:
       - run: make -j$(nproc) header-build-tests
         working-directory: crawl-ref/source
       - name: Print ccache stats
-        run: ccache -s
+        run: ccache -p -s
+
+  build_android:
+    name: Android
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        build_opts:
+          - ANDROID=1
+    env:
+      USE_CCACHE: 1
+      CCACHE_EXEC: /usr/bin/ccache
+      NDK_CCACHE: /usr/bin/ccache
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0 # all history
+          submodules: true
+      - run: git fetch --depth=1 origin +refs/tags/*:refs/tags/*
+      - name: Install dependencies
+        run: ./deps.py --build-opts "${{ matrix.build_opts }}"
+        working-directory: .github/workflows
+      - name: Cache compilation
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/ccache
+          key: ccache-android-${{ github.sha }}
+          restore-keys: |
+            ccache-android-
+      - name: Setup ccache
+        uses: alexjurkiewicz/setup-ccache@master
+      - name: "Setup ccache: prepend path"
+        run: "echo /usr/lib/ccache >> $GITHUB_PATH"
+      - name: "Setup ccache: update symlinks"
+        run: "/usr/sbin/update-ccache-symlinks"
+      - name: "Setup ccache: clear stats"
+        run: ccache --zero-stats
+      - run: make -j$(nproc) ${{ matrix.build_opts }} android
+        working-directory: crawl-ref/source
+      - name: Run gradle
+        run: gradle :app:assembleBuildTest
+        working-directory: crawl-ref/source/android-project
+      - name: Print ccache stats
+        run: ccache -p -s
 
   notify_irc:
     name: "Notify #crawl-dev of build failure"
