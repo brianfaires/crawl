@@ -17,6 +17,8 @@ _armour_animal_
 # microorganisms
 Amoeba
 
+Tardigrade
+
 # insects
 Ant
 
@@ -81,6 +83,8 @@ Turtle
 Barracuda
 
 Catfish
+
+Cichlid
 
 Mackerel
 
@@ -157,14 +161,112 @@ Circus Animal
 
 Monkey's Uncle
 
-#classical mythical animals
+# classical mythical animals
+Centaur
+
 Cockatrice
+
+Chimera
 
 Dragon
 
 Griffon
 
+Hecatoncheires
+
+Hippogriff
+
 Kraken
+
+Leogriff
+
+Pooka
+
+Skiapode
+
+Unicorn
+
+# Iapon
+
+Akabeko
+
+Baku
+
+Byakko
+
+Ikuchi
+
+Kappa
+
+Kitsune
+
+Kodama
+
+Oni
+
+Shishi
+
+Tsukumogami
+
+# South America
+
+Carbunclo
+
+Cherruve
+
+Cuero
+
+Curupira
+
+Ebigane
+
+Gasogonaga
+
+Mpinguari
+
+Tapire-iauara
+
+# Africa
+
+Biloko
+
+Guiamala
+
+Impundulu
+
+Isitwalangcengce
+
+Nkala
+
+Zankallala
+
+# South East Asia
+
+Bakunawa
+
+Minokawa
+
+# Unlikely hybrids
+
+Giraffataur
+
+Elephantaur
+
+Mertaur
+
+Merwolf
+
+Platytaur
+
+Rhinotaur
+
+Taurataur
+
+Treeataur
+
+Wereyak
+
+Zebrataur
 
 # modern mythical animals
 Chupacabra
@@ -172,6 +274,14 @@ Chupacabra
 Dropbear
 
 Jackalope
+
+Jersey Devil
+
+Skvader
+
+Snallygaster
+
+Tatzelwurm
 
 Wild Haggis
 
@@ -185,9 +295,17 @@ Daisies
 
 Lilacs
 
+Periwinkles
+
+Purple Dead-Nettles
+
 Tulips
 
+Violets
+
 the Garden
+
+the Horehound
 
 the Lily
 
@@ -265,32 +383,6 @@ Omission
 Restlessness
 
 the Doldrums
-
-%%%%
-_mental_illness_armour_
-Agoraphobia
-
-Catatonia
-
-Claustrophobia
-
-Depression
-
-Dyspraxia
-
-Hysteria
-
-Kleptomania
-
-Masochism
-
-Melancholy
-
-Mental Paralysis
-
-Narcissism
-
-Paranoia
 
 %%%%
 _good_or_divine_
@@ -980,6 +1072,28 @@ the Slightly Bent
 
 the Storm King
 
+#pasta
+Ravioli
+
+Spaghetti
+
+Tortelloni
+
+Farfalle
+
+Rotini
+
+Vermicelli
+
+Macaroni
+
+Strozzapreti
+
+w:1
+the Pastamancer
+
+# sometimes pasta-adjacent
+Meatballs
 %%%%
 _card_
 

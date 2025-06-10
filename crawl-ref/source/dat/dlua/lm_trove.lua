@@ -166,7 +166,7 @@ function TroveMarker:debug_diag (marker)
     self:search_for_item(marker, nil, items.inventory(), true)
   end
 
-  if crawl.yesno("Run diagonstic on floor?", true, "n") then
+  if crawl.yesno("Run diagnostic on floor?", true, "n") then
     local _x, _y = marker:pos()
     self:search_for_item(marker, nil, dgn.items_at(_x, _y), true)
   end
@@ -399,7 +399,7 @@ function TroveMarker:search_for_item(marker, pname, iter_table, dry_run)
     else -- Most of the loop's body is in this block.
     if dry_run ~= nil then crawl.mpr("Checking item: " .. it.name()) end
 
-    if not it.identified("type properties pluses") then
+    if not it.is_identified then
       if dry_run ~= nil then crawl.mpr("Item not identified.") end
       this_item = false
     end
@@ -484,7 +484,7 @@ function TroveMarker:item_with_lowest_pluses(marker, pname, dry_run, items)
       titem = it
       titem_p1 = titem.pluses()
       --crawl.mpr("Picking " .. titem.name() ..
-      --          " instead (lesser pluses instad)")
+      --          " instead (lesser pluses instead)")
       --crawl.mpr("This item p1: " .. titem_p1 .. ")
     elseif this_p1 == item.plus1 then
       titem = it

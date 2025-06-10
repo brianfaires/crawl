@@ -107,9 +107,8 @@ paralysis.
 %%%%
 rain cloud
 
-An extremely localized rainstorm. It may produce pools of shallow water, or
-temporarily deepen existing pools. Beings made entirely out of fire are averse
-to spending much time in the rain.
+An extremely localised rainstorm. It may produce short-lived pools of shallow
+water. Beings made of fire are averse to spending much time in the rain.
 %%%%
 mutagenic fog cloud
 
@@ -147,11 +146,11 @@ thunder cloud
 A dark storm cloud. It will intermittently strike those within with lightning,
 dealing severe damage to those without resistance to electricity.
 %%%%
-negative energy cloud
+excruciating misery cloud
 
-A cloud of necromantic energy. Living creatures trapped within will find
-themselves drained of their life energies, though protection from negative
-energy will mitigate the effects.
+A cloud of lingering despair and necromantic energy. Living creatures trapped
+within will repeatedly lose small fractions of their maximum health, though
+protection from negative energy will mitigate the effects.
 %%%%
 white fluffiness cloud
 
@@ -177,13 +176,39 @@ wisps of flame cloud
 
 A trail of sparks and wisps of flame. Atmospheric, but harmless.
 %%%%
-degeneration cloud
+alcoholic mist cloud
 
-A cloud formed from concentrated potions of degeneration. Creatures that venture
-into one will rapidly lose strength, dexterity, and intelligence.
+A haze of aerosolised moonshine so thick that creatures can become drunk just
+walking through it.
 %%%%
-blastsparks cloud
+blastmotes cloud
 
-A cloud of volatile blastsparks. These explode when exposed to open flame or when
-anything disturbs them by moving into them. The explosion is concussive, knocking
-adjacent creatures away.
+A cloud of volatile blastmotes. These explode on contact with flame or creatures.
+The explosion is concussive, knocking adjacent creatures away.
+%%%%
+sparks cloud
+
+A trail of electric sparks. Atmospheric, but harmless.
+%%%%
+faint pestilence cloud
+
+The faintest hint of foul pestilence, seeping out from somewhere. While not
+dense enough to be harmful yet, it is thickening rapidly.
+%%%%
+magnetised fragments cloud
+
+A cloud of countless tiny fragments of magnetised metal, still vibrating
+slightly from a recent electrical discharge. They will function as an attractor
+for the Magnavolt spell until they dissipate.
+%%%%
+bats cloud
+
+A swarm of tiny vampire bats, so dense that it is impossible to count them all.
+They will relentlessly assail anything but the undead who stands in their midst,
+gradually lulling them to sleep with their soporific bites - and continuing to
+feed off their helpless body, once they fall.
+%%%%
+rust cloud
+
+A cloud of oxidising vapour that continuously corrodes and weakens the attacks
+of whatever stands inside it (but does only minimal damage).

@@ -107,7 +107,7 @@ bool positioned_monster_picker::veto(monster_type mon)
 {
     // Actually pick a monster that is happy where we want to put it.
     // Fish zombies on land are helpless and uncool.
-    if (in_bounds(pos) && !monster_habitable_grid(mon, env.grid(pos)))
+    if (in_bounds(pos) && !monster_habitable_grid(mon, pos))
         return true;
     // Optional positional veto
     if (posveto && posveto(mon, pos))
@@ -270,7 +270,7 @@ static bool _not_skeletonable(monster_type mt)
         return true;
     if (!(mons_class_holiness(mt) & MH_NATURAL))
         return true;
-    return !mons_skeleton(mt);
+    return !mons_has_skeleton(mt);
 }
 
 void debug_monpick()

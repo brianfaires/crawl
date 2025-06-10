@@ -155,6 +155,12 @@ static int dgn_has_tag(lua_State *ls)
     PLUARET(boolean, map->has_tag(luaL_checkstring(ls, 2)));
 }
 
+static int dgn_uniq_tag_used(lua_State *ls)
+{
+    const char *tag = luaL_checkstring(ls, 1);
+    PLUARET(boolean, get_uniq_map_tags().count(tag) > 0);
+}
+
 static int dgn_tags_remove(lua_State *ls)
 {
     MAP(ls, 1, map);
@@ -1100,7 +1106,7 @@ static int dgn_random_walk(lua_State *ls)
     if (!in_bounds(x, y))
     {
         char buf[80];
-        sprintf(buf, "Point (%d,%d) isn't in bounds.", x, y);
+        snprintf(buf, sizeof(buf), "Point (%d,%d) isn't in bounds.", x, y);
         luaL_argerror(ls, 1, buf);
         return 0;
     }
@@ -1151,7 +1157,7 @@ static int dgn_apply_area_cloud(lua_State *ls)
     if (!in_bounds(x, y))
     {
         char buf[80];
-        sprintf(buf, "Point (%d,%d) isn't in bounds.", x, y);
+        snprintf(buf, sizeof(buf), "Point (%d,%d) isn't in bounds.", x, y);
         luaL_argerror(ls, 1, buf);
         return 0;
     }
@@ -1251,7 +1257,7 @@ static int dgn_place_cloud(lua_State *ls)
     if (!in_bounds(x, y))
     {
         char buf[80];
-        sprintf(buf, "Point (%d,%d) isn't in bounds.", x, y);
+        snprintf(buf, sizeof(buf), "Point (%d,%d) isn't in bounds.", x, y);
         luaL_argerror(ls, 1, buf);
         return 0;
     }
@@ -1774,6 +1780,12 @@ LUAFN(dgn_fill_grd_area)
 
 LUAWRAP(dgn_apply_tide, shoals_apply_tides(0, true))
 
+LUAFN(dgn_state_is_descent)
+{
+    lua_pushboolean(ls, crawl_state.game_is_descent());
+    return 1;
+}
+
 const struct luaL_reg dgn_dlib[] =
 {
 { "reset_level", _dgn_reset_level },
@@ -1786,6 +1798,7 @@ const struct luaL_reg dgn_dlib[] =
 { "order", dgn_order },
 { "tags",  dgn_tags },
 { "has_tag", dgn_has_tag },
+{ "uniq_tag_used", dgn_uniq_tag_used },
 { "tags_remove", dgn_tags_remove },
 { "chance", dgn_chance },
 { "depth_chance", dgn_depth_chance },
@@ -1889,6 +1902,8 @@ const struct luaL_reg dgn_dlib[] =
 { "fill_grd_area", dgn_fill_grd_area },
 
 { "apply_tide", dgn_apply_tide },
+
+{ "is_descent", dgn_state_is_descent },
 
 { nullptr, nullptr }
 };

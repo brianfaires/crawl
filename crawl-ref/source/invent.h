@@ -10,7 +10,6 @@
 #include <vector>
 
 #include "enum.h"
-#include "equipment-type.h"
 #include "item-name.h"
 #include "item-prop-enum.h"
 #include "menu.h"
@@ -103,10 +102,7 @@ public:
     bool         is_art() const;
     bool         is_equipped() const;
 
-    virtual int highlight_colour() const override
-    {
-        return menu_colour(get_text(), item_prefix(*item), "inventory");
-    }
+    virtual int highlight_colour(bool temp=false) const override;
 
     virtual void select(int qty = -1) override;
     void set_star(bool);
@@ -147,12 +143,14 @@ public:
     // NOTE: Does not set menu title, ever! You *must* set the title explicitly
     menu_letter load_items(const vector<const item_def*> &items,
                            function<MenuEntry* (MenuEntry*)> procfn = nullptr,
-                           menu_letter ckey = 'a', bool sort = true);
+                           menu_letter ckey = 'a', bool sort = true,
+                           bool subkeys = false);
 
     // Make sure this menu does not outlive items, or mayhem will ensue!
     menu_letter load_items(const vector<item_def>& items,
                            function<MenuEntry* (MenuEntry*)> procfn = nullptr,
-                           menu_letter ckey = 'a', bool sort = true);
+                           menu_letter ckey = 'a', bool sort = true,
+                           bool subkeys = false);
 
     // Loads items from the player's inventory into the menu, and sets the
     // title to the stock title. If "procfn" is provided, it'll be called for
@@ -218,12 +216,11 @@ bool in_inventory(const item_def &i);
 void identify_inventory();
 
 const char *item_class_name(int type, bool terse = false);
-const char *item_slot_name(equipment_type type);
+const char* equip_slot_name(equipment_slot type, bool terse = false);
 
 bool get_tiles_for_item(const item_def &item, vector<tile_def>& tileset, bool show_background);
 
-bool check_old_item_warning(const item_def& item, operation_types oper,
-                            bool check_melded = false);
+bool maybe_warn_about_removing(const item_def& item);
 bool check_warning_inscriptions(const item_def& item, operation_types oper);
 
 void init_item_sort_comparators(item_sort_comparators &list,
@@ -234,8 +231,8 @@ bool prompt_failed(int retval);
 void list_charging_evokers(FixedVector<item_def*, NUM_MISCELLANY> &evokers);
 
 bool item_is_wieldable(const item_def &item);
-bool item_is_evokable(const item_def &item, bool msg = false);
 bool needs_notele_warning(const item_def &item, operation_types oper);
 bool needs_handle_warning(const item_def &item, operation_types oper,
-                          bool &penance);
+                          bool &penance, bool check_inscriptions = true);
 item_def *digit_inscription_to_item(char digit, operation_types oper);
+operation_types generalize_oper(operation_types oper);

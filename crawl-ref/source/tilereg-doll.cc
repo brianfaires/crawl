@@ -159,10 +159,10 @@ void DollEditRegion::render()
     m_shape_buf.add(left_gutter + 7, edit_doll_line, left_gutter + 8, edit_doll_line + 1, grey);
     {
         // Describe the three middle tiles.
-        float tile_name_x = (left_gutter + 2.7) * 32.0f;
+        float tile_name_x = (left_gutter + 2.7f) * 32.0f;
         float tile_name_y = (edit_doll_line + 1) * 32.0f;
         m_font_buf.add("Custom", VColour::white, tile_name_x, tile_name_y);
-        tile_name_x = (left_gutter + 4.7) * 32.0f;
+        tile_name_x = (left_gutter + 4.7f) * 32.0f;
         tile_name_y = (edit_doll_line + 1) * 32.0f;
         m_font_buf.add("Default", VColour::white, tile_name_x, tile_name_y);
         tile_name_x = (left_gutter + 7) * 32.0f;
@@ -256,6 +256,7 @@ void DollEditRegion::render()
         "Body",
         "Gloves",
         "LHand",
+        "RHandWpn",
         "RHand",
         "Hair",
         "Beard",
@@ -389,9 +390,9 @@ void DollEditRegion::run()
     vbox->set_cross_alignment(Widget::CENTER);
     auto title = make_shared<Text>(formatted_string("Doll Editor", YELLOW));
     title->set_margin_for_sdl(0, 0, 20, 0);
-    vbox->add_child(move(title));
+    vbox->add_child(std::move(title));
     vbox->add_child(doll_ui);
-    auto popup = make_shared<ui::Popup>(move(vbox));
+    auto popup = make_shared<ui::Popup>(std::move(vbox));
 
     popup->on_keydown_event([this, &done, &doll_ui, &update_part_idx](const KeyEvent& ev) {
         const auto key = ev.key();
@@ -500,7 +501,7 @@ void DollEditRegion::run()
         return true;
     });
 
-    ui::push_layout(move(popup), KMC_DOLL);
+    ui::push_layout(std::move(popup), KMC_DOLL);
     while (!done && !crawl_state.seen_hups)
     {
         if (update_part_idx)

@@ -76,6 +76,10 @@ A mechanical trap
 Un dispositivo mecánico diseñado para causar daño a los invasores. No obstante,
 un aventurero habilidoso puede intentar desarmarlo.
 %%%%
+A rock wall
+
+Una pared de roca sencilla.
+%%%%
 A crystal clear mirror
 
 Un espejo reluciente, que refleja todo a su alrededor.
@@ -118,8 +122,4 @@ A large window
 
 Una ventana empotrada en el lateral de una enorme tubería metálica, que permite
 observar el flujo del agua en su interior.
-%%%%
-A glass window
-
-Un ventana picada y con cristales extremadamente duros.
 %%%%

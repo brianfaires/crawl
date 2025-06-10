@@ -34,17 +34,58 @@ import yaml
 # Where to look for `games.d/`, `config.yml`, and other things.
 server_path = os.path.dirname(os.path.abspath(__file__))
 
-# dgl_mode = True
+# Set to False to enable `local webtiles` mode: the regular webtiles lobby
+# is disabled, and opening webtiles loads the game main menu. (default: True)
+# dgl_mode = False
 
-bind_nonsecure = True # Set to false to only use SSL
+# to enable ttyrec writing at the server level:
+# enable_ttyrecs = False
+
+# set `bind_nonsecure` to False to use only SSL. Set to `"redirect"` to bind
+# the nonsecure ports as indicated, but redirect them to an SSL port.
+bind_nonsecure = True
 bind_address = ""
 bind_port = 8080
+
 # Or listen on multiple address/port pairs (overriding the above) with:
 # bind_pairs = (
 #     ("127.0.0.1", 8080),
 #     ("localhost", 8082),
 #     ("", 8180), # All addresses
 # )
+
+# set `ssl_options` to Tornado ssl options in order to use ssl on the specified
+# port. For a real deployment, in addition to certfile/keyfile as below, you
+# will probably need to provide "ca_certs" with your full CA cert chain.
+# The server needs read access to keyfile when accepting new connections, so
+# it should be readable by the user running the server (not just root).
+#
+# For local testing, you can generate a self-signed cert with a command like:
+# ```
+# openssl req -x509 -out localhost.crt -keyout localhost.key \
+#   -newkey rsa:2048 -nodes -sha256 \
+#   -subj '/CN=localhost' -extensions EXT -config <( \
+#    printf "[dn]\nCN=localhost\n[req]\ndistinguished_name = dn\n[EXT]\nsubjectAltName=DNS:localhost\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth")
+# ```
+# (this sort of cert will generate security warnings in modern browsers, so it
+# is appropriate only for development use)
+
+ssl_options = None # No SSL
+# ssl_options = {
+#    "certfile": "./webserver/localhost.crt",
+#    "keyfile": "./webserver/localhost.key"
+# }
+
+ssl_address = ""
+ssl_port = 8443
+
+# Or listen on multiple address/port pairs (overriding the above) with:
+# ssl_bind_pairs = (
+#     ("127.0.0.1", 8081),
+#     ("localhost", 8083),
+# )
+
+
 
 # to log to a file directly, uncomment and add something like:
 #    "filename": "webtiles.log",
@@ -76,17 +117,42 @@ game_data_no_cache = True
 # Watch socket dirs for games not started by the server
 # watch_socket_dirs = False
 
+################
 # Game configs
+################
+#
+# The webtiles server needs some game modes configured in order to run. The
+# default in-repo configuration enables regular mode, seeded, tutorial, and
+# sprint for the `crawl` binary as built in the repository. (Build with
+# `WEBTILES=y`.)
+#
 # You can define game configs in two ways:
 # 1. As *.yml files in `games.d/`. (default; see games.d/base.yml)
-# 2. With a dictionary `games` in this file (not recommended except for dgamelaunch-config servers).
+# 2. With a dictionary `games` in this file
+#
+# Both of these formats are essentially the same. See the commented examples
+# below, as well as the comments and examples in games.d/base.yml for more
+# information on the format and how it is used. Examples from production
+# servers are also available in branches of the repository:
+#   https://github.com/crawl/dgamelaunch-config
+# (These are further templated using the scripts in that package.)
 
-# to override 1, simply set `games` in this file to something non-empty; see
-# the below example. To force using both, set `use_game_yaml` to True. Games
-# defined in this file will precede games defined in games.d.
+# to override yml loading, simply set `games` in this file; see the example
+# below. To force using both sources, set `use_game_yaml` to True. Games
+# defined in this file will precede games defined in games.d. Templates
+# defined in this file are always loaded.
 # use_game_yaml = True
 
-# Templating:
+# Templating game configurations:
+# You can define a set of parameters to use as a template across multiple
+# game configs. To use a template by name, use the `template` parameter.
+# Recursive templating is supported. If a template named `default` is defined,
+# it will be used as the template for any game definitions that specify no
+# template at all (see example below). If `default` is defined, it can be
+# explicitly overridden by using the template name `base` (which cannot be
+# redefined).
+
+# Templating string values:
 # if the `version` key is set, most game parameters will support templating
 # with %v, %V, and %r.
 #   %v: the version value as-is
@@ -101,13 +167,61 @@ game_data_no_cache = True
 # not socket_path) also support templating with %n, which gives the player's
 # username.
 #
+# The bare minimum necessary fields are what it takes to get the crawl binary
+# running. Games are called with the following argv; some of these fields can
+# be inferred when not set.
+# [
+#   $crawl_binary,
+#   *$pre_options,
+#   "-name", "%n",
+#   "-rc", "$rcfile_path/%n.rc",
+#   "-macro", "$macro_path/%n.macro",
+#   "-morgue", "$morgue_path,"
+#   *$options,
+#   "-dir", "$dir_path"
+#   "-webtiles-socket", "$socket_path/%n:$timestamp.sock",
+#   "-await-connection"
+# ]
+#
 # The example below illustrates basic uses of both of these.
 
-# Example of defining `games` directly via a dictionary.
-# This setting to be an OrderedDict pre python 3.6, so this example uses that
-# for compatibility:
+# Example of defining `games` directly via a default template and a dictionary,
+# and sets all the required paths:
+# templates = dict(
+#     default = dict(
+#         crawl_binary = "./crawl", # relative paths are relative to CWD from running server.py
+#         rcfile_path = "./rcs/",
+#         macro_path = "./rcs/",
+#         morgue_path = "./rcs/%n",
+#         inprogress_path = "./rcs/running",
+#         ttyrec_path = "./rcs/ttyrecs/%n",
+#         socket_path = "./rcs",
+#         client_path = "./webserver/game_data/",
+#         morgue_url = "http://crawl.akrasiac.org/rawdata/%n/",
+#         # the `dir_path` field uses local crawl defaults when unset. This
+#         # should almost always be set on a production server, but not for
+#         # development.
+#         # dir_path = ".",
+#         # cwd = ".", # override the CWD inherited when starting the server
+#         # morgue_url = None, # public-facing URL, if set
+#         show_save_info = True,
+#         allowed_with_hold = True,
+#         # milestone_path = "./rcs/milestones",
+#         # env = {"LANG": "en_US.UTF8"},
+#         ),
+#     )
 
+# # `games` needs to be an OrderedDict pre python 3.6, so this example uses that
+# # for compatibility. Needs the default template above.
 # import collections
+# games = collections.OrderedDict([
+#     ("dcss-web-trunk",   dict(version = "trunk", name="Play %v",)),
+#     ("seeded-web-trunk", dict(version = "trunk", name="Seeded", options=["-seed"])),
+#     ("tut-web-trunk",    dict(version = "trunk", name="Tutorial", options=["-tutorial"])),
+#     ("sprint-web-trunk", dict(version = "trunk", name="Sprint %v", options=["-sprint"])),
+# ])
+#
+# Non-templated example: it's possible just to set every field directly.
 # games = collections.OrderedDict([
 #     ("dcss-web-trunk", dict(
 #         version = "trunk",
@@ -120,14 +234,10 @@ game_data_no_cache = True
 #         ttyrec_path = "./rcs/ttyrecs/%n",
 #         socket_path = "./rcs",
 #         client_path = "./webserver/game_data/",
-#         # dir_path = ".",
-#         # cwd = ".",
 #         morgue_url = None,
 #         show_save_info = True,
 #         allowed_with_hold = True,
 #         # milestone_path = "./rcs/milestones",
-#         send_json_options = True,
-#         # env = {"LANG": "en_US.UTF8"},
 #         )),
 # ])
 
@@ -138,7 +248,7 @@ dgl_status_file = "./rcs/status"
 # (This setting can be a string or list of strings.)
 # milestone_file = ["./milestones"]
 
-# status_file_update_rate = 5
+# status_file_update_rate = 30
 # lobby_update_rate = 2
 
 # recording_term_size = (80, 24)
@@ -150,26 +260,29 @@ dgl_status_file = "./rcs/status"
 # at the moment. This value
 init_player_program = "./util/webtiles-init-player.sh"
 
-ssl_options = None # No SSL
-#ssl_options = {
-#    "certfile": "./webserver/localhost.crt",
-#    "keyfile": "./webserver/localhost.key"
-#}
-ssl_address = ""
-ssl_port = 8081
-# Or listen on multiple address/port pairs (overriding the above) with:
-# ssl_bind_pairs = (
-#     ("127.0.0.1", 8081),
-#     ("localhost", 8083),
-# )
+# how often to check for an active connection while playing; this has an effect
+# on how often a connection is checked for basic life, as well as the following
+# two idle timer settings.
+# connection_timeout = 10 * 60
 
-# connection_timeout = 600
+# the maximum allowed idle time while playing. This timer is checked in
+# intervals determined by `connection_timout`, so values will essentially be
+# rounded up to that setting
 # max_idle_time = 5 * 60 * 60
+
+# the maximum allowed idle time in the lobby. Negative values will disable the
+# lobby idle timer. This timer is rounded up to the value of the
+# `connection_timeout` setting, similar to `max_idle_time`.
+# max_lobby_idle_time = 3 * 60 * 60
 
 # use_gzip = True
 
 # Seconds until stale HTTP connections are closed
-# This needs a patch currently not in mainline tornado.
+# This corresponds to the tornado parameter `idle_connection_timeout`, which
+# will automatically close idle http connections that do not respond after a
+# period of time. Setting this to `None` gives the tornado default (1 hour).
+# This setting usually does not affect websockets connections, which use the
+# above webtiles-internal timeouts.
 # http_connection_timeout = None
 
 # Set this to true if you are behind a reverse proxy
@@ -202,7 +315,7 @@ ssl_port = 8081
 #
 # 2. `nick_check_fun` if defined, is a function that returns true on valid
 # nicknames. You can use this for arbitrary custom nick checks in a server
-# config. You will need to do case management manually in this funciton.
+# config. You will need to do case management manually in this function.
 # def nick_check_fun(s):
 #     return s.lower() != "plog" and s.lower() != "muggle"
 #
@@ -264,7 +377,7 @@ lobby_url = None
 # TODO: set_blocking_log_threshold is deprecated in tornado 5+...
 # Ideally, test out these settings carefully in a non-production setting
 # before enabling this, as there's a bunch of ways for this to go wrong and you
-# don't want to get your SMTP server blacklisted.
+# don't want to get your SMTP server blocklisted.
 smtp_host = "localhost"
 smtp_port = 25
 smtp_use_ssl = False
@@ -309,6 +422,9 @@ player_url = None
 # play. (Of course, they can still log out and spectate as anon.)
 # new_accounts_disabled = True
 # new_accounts_hold = True
+
+# customize chat limits. Set to 0 or False to disable chat. Value in characters.
+# max_chat_length = 1000
 
 # If set to True, a SIGHUP triggers an attempt to reload the config and game
 # data. Some values cannot be reloaded (including this one), and to reset a

@@ -100,7 +100,15 @@ end
 function rr_add_message(s, v, mode)
     local channel, str = rr_split_channel(s)
     if channel == nil then
-        crawl.mpr("Bad channel name for runrest: '" .. s .. "'", "error")
+        local chi = string.find(s, ':')
+        if chi < 1 then
+            -- I think this shouldn't be reachable? channel should be -1 if
+            -- unset
+            crawl.mpr("Missing channel name for runrest: '" .. s .. "'", "error")
+        else
+            local chstr = string.sub(s, 1, chi - 1)
+            crawl.mpr("Bad channel name '" .. chstr .. "' for runrest: '" .. s .. "'", "error")
+        end
         return -- skip entirely
     end
     local filter = crawl.message_filter(str, channel)
@@ -211,7 +219,7 @@ function rr_add_monsters(key, value, mode)
     end
 end
 
-function ch_mon_is_safe(mon, default_is_safe, moving, dist)
+function ch_mon_is_safe(mon_name, default_is_safe, moving, dist)
     if default_is_safe then
         return true
     end
@@ -228,7 +236,7 @@ function ch_mon_is_safe(mon, default_is_safe, moving, dist)
             local m        = mons_table[1][i]
             local min_dist = mons_table[2][i]
 
-            if m:matches(mon:desc()) then
+            if m:matches(mon_name) then
                 return min_dist <= dist
             end
         end
@@ -246,7 +254,7 @@ function ch_mon_is_safe(mon, default_is_safe, moving, dist)
         local m        = mons_table[1][i]
         local min_dist = mons_table[2][i]
 
-        if m:matches(mon:desc()) then
+        if m:matches(mon_name) then
             return min_dist <= dist
         end
     end

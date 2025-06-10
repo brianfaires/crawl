@@ -18,17 +18,8 @@
 #  endif
 #  include <GLES/gl.h>
 # else
-#  ifdef __ANDROID__
-#   include <SDL.h>
-#   include <GLES/gl.h>
-#  else
-#   include <SDL_opengl.h>
-#   if defined(__MACOSX__)
-#    include <OpenGL/glu.h>
-#   else
-#    include <GL/glu.h>
-#   endif
-#  endif
+#  include <SDL_opengl.h>
+#  include <SDL_video.h>
 # endif
 #endif
 
@@ -71,8 +62,10 @@ namespace opengl
             return "GL_INVALID_VALUE";
         case GL_INVALID_OPERATION:
             return "GL_INVALID_OPERATION";
+#ifndef __ANDROID__
         case GL_INVALID_FRAMEBUFFER_OPERATION:
             return "GL_INVALID_FRAMEBUFFER_OPERATION";
+#endif
         case GL_OUT_OF_MEMORY:
             return "GL_OUT_OF_MEMORY (fatal)";
         case GL_STACK_UNDERFLOW:
@@ -149,10 +142,69 @@ OGLStateManager::OGLStateManager()
     glClearColor(0.0, 0.0, 0.0, 1.0f);
     glDepthFunc(GL_LEQUAL);
 
-#ifdef __ANDROID__
-    m_last_tex = 0;
-#endif
     m_window_height = 0;
+#ifndef USE_GLES
+    // TODO: we probably can do this for GLES TOO, but maybe requires tweaks?
+
+    // OpenGL doesn't specify what the GetProcAddress function returns
+    // if the implementation does not support a function
+    // (e.g. because it doesn't support the OpenGL version in question)
+    // So we need to check the version before we try to get the
+    // glGenerateMipmap function.
+    const GLubyte* versionString = glGetString(GL_VERSION);
+    if (versionString == nullptr)
+    {
+        mprf("Mipmap Setup: Failed to load OpenGL version.");
+        return;
+    }
+    // We will never see 2 digit OpenGL major versions - 4.6 came out in 2016,
+    // and Vulkan is carrying the torch now
+    //
+    // It's doubtful we'll even see an OpenGL 5.
+    // But we'll be paranoid. We'll consider OpenGL 3.X - 9.X as all fine
+    bool supported_first_digit = ('3' <= versionString[0]) &&
+                                 (versionString[0] <= '9');
+    // Anything other than X.Y would be very weird.
+    // It's incredibly unlikely OpenGL 10 will ever exist.
+    bool second_character_is_dot = versionString[1] == '.';
+    if (!supported_first_digit || !second_character_is_dot)
+    {
+        mprf("Mipmap Setup: Disabled because OpenGL version: %s does not "
+             "provide glGenerateMipmap.", versionString);
+        return;
+    }
+
+    // We have to load the library dynamically before we can load the function
+    // from the library via GetProcAddress.
+    // That's how dynamic loading works.
+    // It's possible the library is already loaded anyway,
+    // but we're being careful here.
+    if (SDL_GL_LoadLibrary(NULL) != 0)
+    {
+        // success == 0 for this API.
+        // If we can't load it, we probably wouldn't get this far at all.
+        // But just in case, we'll handle it.
+        mprf("Mipmap Setup: Disabled because SDL_GL_LoadLibrary failed.");
+        return;
+    }
+
+    // Because we already checked the version is higher enough,
+    // SDL_GL_GetProcAddress should always get a non-null pointer back.
+    // But we'll log in case this does somehow happen.
+    m_mipmapFn = SDL_GL_GetProcAddress("glGenerateMipmap");
+    if (m_mipmapFn == nullptr)
+    {
+        mprf("Mipmap Setup: Failed to load glGenerateMipmap function.");
+        return;
+    }
+    else
+    {
+        mprf("Mipmap Setup: success, loaded with OpenGL version: %s",
+             versionString);
+    }
+#else
+    mprf("Mipmap Setup: skipped, not supported in this build configuration.");
+#endif
 }
 
 void OGLStateManager::set(const GLState& state)
@@ -364,9 +416,6 @@ void OGLStateManager::bind_texture(unsigned int texture)
 {
     glBindTexture(GL_TEXTURE_2D, texture);
     glDebug("glBindTexture");
-#ifdef __ANDROID__
-    m_last_tex = texture;
-#endif
 }
 
 void OGLStateManager::load_texture(unsigned char *pixels, unsigned int width,
@@ -400,11 +449,21 @@ void OGLStateManager::load_texture(unsigned char *pixels, unsigned int width,
     {
         // TODO: should min react to Options.tile_filter_scaling?
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                        GL_LINEAR_MIPMAP_NEAREST);
+                        m_mipmapFn != nullptr ? GL_LINEAR_MIPMAP_NEAREST :
+                        Options.tile_filter_scaling ? GL_LINEAR :
+                        GL_NEAREST);
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
                         Options.tile_filter_scaling ? GL_LINEAR : GL_NEAREST);
-        gluBuild2DMipmaps(GL_TEXTURE_2D, bpp, width, height,
-                          texture_format, format, pixels);
+        glTexImage2D(GL_TEXTURE_2D, 0, bpp, width, height, 0,
+                     texture_format, format, pixels);
+        // TODO: possibly restructure this into the main block below
+        // so that we support mipmapping when glTexSubImage2D should be called.
+        if (m_mipmapFn != nullptr)
+        {
+            PFNGLGENERATEMIPMAPPROC mipmapFn =
+                    reinterpret_cast<PFNGLGENERATEMIPMAPPROC>(m_mipmapFn);
+            mipmapFn(GL_TEXTURE_2D);
+        }
     }
     else
 #endif
@@ -437,102 +496,6 @@ void OGLStateManager::reset_view_for_redraw()
     glTranslatef(0.0f, 0.0f, 1.0f);
     glDebug("glTranslatef");
 }
-
-#ifdef __ANDROID__
-void OGLStateManager::fixup_gl_state()
-{
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glClearColor(0.0, 0.0, 0.0, 1.0f);
-    glDepthFunc(GL_LEQUAL);
-
-    glEnable(GL_TEXTURE_2D);
-    glBindTexture(GL_TEXTURE_2D, m_last_tex);
-    glDebug("glBindTexture (REBIND)");
-    glTexEnvf(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
-    glDebug("glTexEnvf (REBIND)");
-
-    if (m_current_state.array_vertex)
-    {
-        glEnableClientState(GL_VERTEX_ARRAY);
-        glDebug("glEnableClientState(GL_VERTEX_ARRAY)");
-    }
-    else
-    {
-        glDisableClientState(GL_VERTEX_ARRAY);
-        glDebug("glDisableClientState(GL_VERTEX_ARRAY)");
-    }
-    if (m_current_state.array_texcoord)
-    {
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glDebug("glEnableClientState(GL_TEXTURE_COORD_ARRAY)");
-    }
-    else
-    {
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-        glDebug("glDisableClientState(GL_TEXTURE_COORD_ARRAY)");
-    }
-    if (m_current_state.array_colour)
-    {
-        glEnableClientState(GL_COLOR_ARRAY);
-        glDebug("glEnableClientState(GL_COLOR_ARRAY)");
-        glColor4f(m_current_state.colour.r, m_current_state.colour.g,
-                  m_current_state.colour.b, m_current_state.colour.a);
-        glDebug("glColor4f");
-    }
-    else
-    {
-        glDisableClientState(GL_COLOR_ARRAY);
-        glDebug("glDisableClientState(GL_COLOR_ARRAY)");
-
-        // [enne] This should *not* be necessary, but the Linux OpenGL
-        // driver that I'm using sets this to the last colour of the
-        // colour array. So, we need to unset it here.
-        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-        glDebug("glColor4f(1.0f, 1.0f, 1.0f, 1.0f)");
-    }
-    if (m_current_state.texture)
-    {
-        // glEnable(GL_TEXTURE_2D);
-        // glDebug("glEnable(GL_TEXTURE_2D)");
-    }
-    else
-    {
-        glDisable(GL_TEXTURE_2D);
-        glDebug("glDisable(GL_TEXTURE_2D)");
-    }
-    if (m_current_state.blend)
-    {
-        glEnable(GL_BLEND);
-        glDebug("glEnable(GL_BLEND)");
-    }
-    else
-    {
-        glDisable(GL_BLEND);
-        glDebug("glDisable(GL_BLEND)");
-    }
-    if (m_current_state.depthtest)
-    {
-        glEnable(GL_DEPTH_TEST);
-        glDebug("glEnable(GL_DEPTH_TEST)");
-    }
-    else
-    {
-        glDisable(GL_DEPTH_TEST);
-        glDebug("glEnable(GL_DEPTH_TEST)");
-    }
-    if (m_current_state.alphatest)
-    {
-        glEnable(GL_ALPHA_TEST);
-        glAlphaFunc(GL_NOTEQUAL, m_current_state.alpharef);
-        glDebug("glAlphaFunc(GL_NOTEQUAL, state.alpharef)");
-    }
-    else
-    {
-        glDisable(GL_ALPHA_TEST);
-        glDebug("glDisable(GL_ALPHA_TEST)");
-    }
-}
-#endif
 
 bool OGLStateManager::glDebug(const char* msg) const
 {

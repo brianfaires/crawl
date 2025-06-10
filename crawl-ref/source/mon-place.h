@@ -13,12 +13,14 @@
 #include "dungeon-feature-type.h"
 #include "level-id.h"
 #include "mgen-enum.h"
+#include "mon-enum.h"
 #include "monster-type.h"
 #include "tag-version.h"
 #include "trap-type.h"
 
 using std::vector;
 
+class actor;
 class monster;
 class mons_spec;
 struct mgen_data;
@@ -28,7 +30,7 @@ struct mgen_data;
  * a "puff of smoke" message if the monster cannot be placed. This is usually
  * used for summons and other monsters that want to appear near a given
  * position like a summon.
- * Returns -1 on failure, index into env.mons otherwise.
+ * Returns null on failure, the monster otherwise.
  * *********************************************************************** */
 monster* create_monster(mgen_data mg, bool fail_msg = true);
 
@@ -64,7 +66,7 @@ monster* place_monster(mgen_data mg, bool force_pos = false, bool dont_place = f
  * Returns a monster class type of a zombie for generation
  * on the player's current level.
  * cs:         Restrict to monster types that fit this zombie type
- *             (e.g. monsters with skeletons for MONS_SKELETON_SMALL)
+ *             (e.g. monsters with skeletons for MONS_SKELETON)
  * pos:        Check habitat at position.
  * for_corpse: Whether this monster is intended only for use as a potentially
  *             zombifiable corpse. (I.e., whether we care about its speed when
@@ -94,17 +96,27 @@ bool mons_can_hate(monster_type type);
 void check_lovelessness(monster &mon);
 
 bool find_habitable_spot_near(const coord_def& where, monster_type mon_type,
-                              int radius, bool allow_centre, coord_def& empty);
+                              int radius, coord_def& result, int exclude_radius = -1,
+                              const actor* in_sight_of = nullptr);
+bool you_can_see_habitable_spot_near(coord_def pos, habitat_type habitat,
+                                     int max_radius, int exclude_radius = 0);
+bool you_can_see_habitable_spot_near(habitat_type habitat, int max_radius,
+                                     int exclude_radius = 0);
 
 monster_type random_demon_by_tier(int tier);
 monster_type summon_any_demon(monster_type dct, bool use_local_demons = false);
 
-bool monster_habitable_grid(const monster* mon,
-                            dungeon_feature_type actual_grid);
-bool monster_habitable_grid(monster_type mt, dungeon_feature_type actual_grid,
-                            dungeon_feature_type wanted_grid = DNGN_UNSEEN);
-bool monster_can_submerge(const monster* mon, dungeon_feature_type grid);
-coord_def find_newmons_square(monster_type mons_class, const coord_def &p);
+habitat_type habitat_for_any(const vector<monster_type>& mon_types);
+
+bool monster_habitable_feat(const monster* mon,
+                            dungeon_feature_type feat);
+bool monster_habitable_feat(monster_type mt, dungeon_feature_type feat);
+bool monster_habitable_grid(const monster* mon, const coord_def& pos);
+bool monster_habitable_grid(monster_type mt, const coord_def& pos);
+coord_def find_newmons_square(monster_type mons_class, const coord_def &p,
+                              int preferred_radius = 2, int max_radius = 2,
+                              int exclude_radius = -1,
+                              const actor* in_sight_of = nullptr);
 coord_def find_newmons_square_contiguous(monster_type mons_class,
                                          const coord_def &start,
                                          int maxdistance = 3,
@@ -118,7 +130,7 @@ void setup_vault_mon_list();
 
 monster* get_free_monster();
 
-void mons_add_blame(monster* mon, const string &blame_string);
+void mons_add_blame(monster* mon, const string &blame_string, bool at_front = false);
 
 void debug_bands();
 

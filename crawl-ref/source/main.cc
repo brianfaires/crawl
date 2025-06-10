@@ -23,9 +23,7 @@
 #endif
 
 #ifndef TARGET_OS_WINDOWS
-# ifndef __ANDROID__
-#  include <langinfo.h>
-# endif
+# include <langinfo.h>
 #endif
 #ifdef USE_UNIX_SIGNALS
 #include <csignal>
@@ -122,7 +120,9 @@
 #include "spl-cast.h"
 #include "spl-clouds.h"
 #include "spl-damage.h"
+#include "spl-monench.h"
 #include "spl-summoning.h"
+#include "spl-transloc.h"
 #include "spl-util.h"
 #include "stairs.h"
 #include "startup.h"
@@ -147,8 +147,8 @@
 #include "viewgeom.h"
 #include "view.h"
 #include "viewmap.h"
-#ifdef TOUCH_UI
-#include "windowmanager.h"
+#ifdef __ANDROID__
+#include "syscalls.h"
 #endif
 #include "wiz-you.h" // FREEZE_TIME_KEY
 #include "wizard.h" // handle_wizard_command() and enter_explore_mode()
@@ -193,7 +193,6 @@ static void _launch_game_loop();
 NORETURN static void _launch_game();
 
 static void _do_berserk_no_combat_penalty();
-static void _do_wait_spells();
 
 static void _input();
 
@@ -238,13 +237,11 @@ __attribute__((externally_visible))
 #endif
 int main(int argc, char *argv[])
 {
-#ifndef __ANDROID__
-# ifdef DGAMELAUNCH
+#ifdef DGAMELAUNCH
     // avoid commas instead of dots, etc, on CDO
     setlocale(LC_CTYPE, "");
-# else
+#else
     setlocale(LC_ALL, "");
-# endif
 #endif
 #ifdef USE_TILE_WEB
     if (strcasecmp(nl_langinfo(CODESET), "UTF-8"))
@@ -263,7 +260,7 @@ int main(int argc, char *argv[])
 #endif
     // do this explicitly so that static initialization order woes can be
     // ignored.
-    msg::force_stderr echo(MB_MAYBE);
+    msg::force_stderr echo(maybe_bool::maybe);
 
     init_crash_handler();
 
@@ -309,7 +306,7 @@ int main(int argc, char *argv[])
 
         // TODO: would be simpler to just never echo? Do other builds really
         // need this outside of debugging contexts?
-        msg::force_stderr suppress_log_stderr(MB_FALSE);
+        msg::force_stderr suppress_log_stderr(false);
 #endif
         read_init_file();
     }
@@ -336,6 +333,12 @@ int main(int argc, char *argv[])
         return -1;
 #endif
 
+#ifdef USE_TILE_LOCAL
+    // Hook up text colour redefinitions
+    for (auto col : Options.custom_text_colours)
+        term_colours[col.colour_index] = col.colour_def;
+#endif
+
     _launch_game_loop();
     if (crawl_state.last_game_exit.message.size())
         end(0, false, "%s\n", crawl_state.last_game_exit.message.c_str());
@@ -352,6 +355,7 @@ static void _reset_game()
     crawl_state.reset_game();
     clear_message_store();
     macro_clear_buffers();
+    crawl_state.show_more_prompt = true;
     the_lost_ones.clear();
     shopping_list = ShoppingList();
     you = player();
@@ -387,7 +391,7 @@ static void _launch_game_loop()
             game_ended = false;
             _launch_game();
         }
-        catch (game_ended_condition &ge)
+        catch (const game_ended_condition &ge)
         {
             game_ended = true;
             crawl_state.last_game_exit = ge;
@@ -398,11 +402,11 @@ static void _launch_game_loop()
             if (ge.exit_reason == game_exit::save)
                 crawl_state.last_type = GAME_TYPE_UNSPECIFIED;
         }
-        catch (ext_fail_exception &fe)
+        catch (const ext_fail_exception &fe)
         {
             end(1, false, "%s", fe.what());
         }
-        catch (short_read_exception &E)
+        catch (const short_read_exception&)
         {
             end(1, false, "Error: truncation inside the save file.\n");
         }
@@ -431,11 +435,17 @@ NORETURN static void _launch_game()
         msg::stream << "<yellow>Welcome" << (game_start? "" : " back") << ", "
                     << you.your_name << " the "
                     << species::name(you.species)
-                    << " " << get_job_name(you.char_class) << ".</yellow>"
-                    << endl;
+                    << " " << get_job_name(you.char_class) << ".</yellow>";
         // TODO: seeded sprint?
         if (crawl_state.type == GAME_TYPE_CUSTOM_SEED)
-            msg::stream << "<white>" << seed_description() << "</white>" << endl;
+            msg::stream << endl << "<white>" << seed_description() << "</white>";
+        else
+        {
+            const string type_name = crawl_state.game_type_name();
+            if (!type_name.empty())
+                msg::stream << "<white> [" << type_name << "]</white>";
+        }
+        msg::stream << endl;
     }
 
 #ifdef USE_TILE
@@ -489,6 +499,17 @@ static void _show_commandline_options_help()
     string help;
 # define puts(x) (help += x, help += '\n')
 #endif
+    if (in_headless_mode())
+    {
+        // TODO: derive exact list from initfile.cc
+#ifdef USE_TILE_LOCAL
+        puts("Headless crawl tiles build: requires -objstat or -mapstat.");
+#else
+        puts("Headless crawl: requires -test, -script, -objstat, -builddb, or other similar parameter.");
+        puts("A single argument will be interpreted as a script name.");
+#endif
+        puts("");
+    }
 
     puts("Command line options:");
     puts("  -help                 prints this list of options");
@@ -513,6 +534,7 @@ static void _show_commandline_options_help()
     puts("  -no-throttle          disable throttling of user Lua scripts");
 #else
     puts("  -throttle             enable throttling of user Lua scripts");
+    puts("  -lua-max-memory       max memory in MB allowed for user Lua scripts");
     puts("  -seed <number>        specify a game seed to use when creating a new game");
 #endif
 
@@ -542,8 +564,10 @@ static void _show_commandline_options_help()
     puts("  -test               run all test cases in test/ except test/big/");
     puts("  -test foo,bar       run only tests \"foo\" and \"bar\"");
     puts("  -test list          list available tests");
-    puts("  -script <name>      run script matching <name> in ./scripts");
 #endif
+    // XX should this really be advertised outside of debug builds?
+    puts("  -headless           force headless mode (no pty)");
+    puts("  -script <name>      run script matching <name> in ./scripts");
 #ifdef DEBUG_STATISTICS
 #ifndef DEBUG_DIAGNOSTICS
     puts("");
@@ -561,11 +585,13 @@ static void _show_commandline_options_help()
     puts("      Defaults to entire dungeon; same level syntax as -mapstat.");
     puts("  -iters <num>        For -mapstat and -objstat, set the number of "
          "iterations");
-    puts("  -force-map <map>    For -mapstat and -objstat, alway choose the "
+    puts("  -force-map <map>    For -mapstat and -objstat, always choose the "
          "      given map on every level.");
 #endif
     puts("");
     puts("Miscellaneous options:");
+    puts("  -builddb         don't start the game; rebuild the .des cache and exit");
+    puts("  -reset-cache     force a full rebuild of the .des cache");
     puts("  -dump-maps       write map Lua to stderr when parsing .des files");
 #ifndef TARGET_OS_WINDOWS
     puts("  -gdb/-no-gdb     produce gdb backtrace when a crash happens (default:on)");
@@ -776,20 +802,6 @@ static void _start_running(int dir, int mode)
         return;
     }
 
-    const coord_def next_pos = you.pos() + Compass[dir];
-
-    if (!have_passive(passive_t::slime_wall_immune)
-        && (dir == RDIR_REST || you.is_habitable_feat(env.grid(next_pos)))
-        && count_adjacent_slime_walls(next_pos))
-    {
-        mprf(MSGCH_WARN, "You're about to run into a slime covered wall!");
-        return;
-    }
-
-    string wall_jump_err;
-    if (wu_jian_can_wall_jump(next_pos, wall_jump_err))
-       return; // Do not wall jump while running.
-
     you.running.initialise(dir, mode);
 }
 
@@ -837,12 +849,15 @@ static bool _cmd_is_repeatable(command_type cmd, bool is_again = false)
     case CMD_MEMORISE_SPELL:
     case CMD_EXPLORE:
     case CMD_INTERLEVEL_TRAVEL:
+    case CMD_UNEQUIP:
+    case CMD_REMOVE_ARMOUR:
+    case CMD_EQUIP:
+    case CMD_WEAR_ARMOUR:
         mpr("You can't repeat multi-turn commands.");
         return false;
 
     // Miscellaneous non-repeatable commands.
     case CMD_TOGGLE_AUTOPICKUP:
-    case CMD_TOGGLE_TRAVEL_SPEED:
     case CMD_TOGGLE_SOUND:
     case CMD_ADJUST_INVENTORY:
     case CMD_QUIVER_ITEM:
@@ -1067,6 +1082,10 @@ static void _input()
         update_screen();
     }
 
+    if (you.props.exists(DREAMSHARD_KEY))
+        you.props.erase(DREAMSHARD_KEY);
+    crawl_state.potential_pursuers.clear();
+
     apply_exp();
 
     // Unhandled things that should have caused death.
@@ -1081,7 +1100,6 @@ static void _input()
                                       "repetition.");
         crawl_state.prev_cmd = CMD_NO_CMD;
         flush_prev_message();
-        getchm();
         return;
     }
 
@@ -1098,11 +1116,14 @@ static void _input()
 
     hints_new_turn();
 
-    if (you.cannot_act())
+    if (you.duration[DUR_VEXED])
+        do_vexed_attack(you);
+
+    if (you.cannot_act() || you.duration[DUR_VEXED])
     {
         if (crawl_state.repeat_cmd != CMD_WIZARD)
         {
-            crawl_state.cancel_cmd_repeat("Cannot move, cancelling command "
+            crawl_state.cancel_cmd_repeat("Cannot control self, cancelling command "
                                           "repetition.");
         }
         world_reacts();
@@ -1129,7 +1150,7 @@ static void _input()
     if (you_are_delayed()
         && !dynamic_cast<MacroProcessKeyDelay*>(current_delay().get()))
     {
-        end_wait_spells();
+        stop_channelling_spells();
         handle_delay();
 
         // Some delays set you.turn_is_over.
@@ -1278,7 +1299,7 @@ static void _input()
         if (you.apply_berserk_penalty)
             _do_berserk_no_combat_penalty();
 
-        _do_wait_spells();
+        handle_channelled_spell();
 
         world_reacts();
     }
@@ -1296,7 +1317,6 @@ static void _input()
     _update_replay_state();
 
     crawl_state.clear_god_acting();
-
 }
 
 static bool _can_take_stairs(dungeon_feature_type ftype, bool down,
@@ -1335,6 +1355,11 @@ static bool _can_take_stairs(dungeon_feature_type ftype, bool down,
     // not when otherwise unable to move.
     if (ftype == DNGN_PASSAGE_OF_GOLUBRIA || ftype == DNGN_TRANSPORTER)
         return true;
+    else if (you.duration[DUR_VAINGLORY])
+    {
+        mpr("It simply wouldn't do to leave so soon after announcing yourself.");
+        return false;
+    }
 
     // Mesmerised
     if (you.beheld() && !you.confused())
@@ -1373,26 +1398,23 @@ static bool _can_take_stairs(dungeon_feature_type ftype, bool down,
     }
 
     // Rune locks
-    int min_runes = 0;
-    for (branch_iterator it; it; ++it)
+    switch (ftype)
     {
-        if (ftype != it->entry_stairs)
-            continue;
-
-        if (!you.level_visited(level_id(it->id, 1)))
+    case DNGN_EXIT_VAULTS:
+        if (runes_in_pack() < 1)
         {
-            min_runes = runes_for_branch(it->id);
-            if (runes_in_pack() < min_runes)
-            {
-                if (min_runes == 1)
-                    mpr("You need a rune to enter this place.");
-                else
-                    mprf("You need at least %d runes to enter this place.",
-                         min_runes);
-                return false;
-            }
+            mpr("You need a rune to leave the Vaults.");
+            return false;
         }
-
+        break;
+    case DNGN_ENTER_ZOT:
+        if (runes_in_pack() < 3 && !crawl_state.game_is_descent())
+        {
+            mpr("You need at least three runes to enter the Realm of Zot.");
+            return false;
+        }
+        break;
+    default:
         break;
     }
 
@@ -1416,9 +1438,9 @@ static bool _prompt_unique_pan_rune(dungeon_feature_type ygrd)
     item_def* rune = find_floor_item(OBJ_RUNES);
     if (rune && item_is_unique_rune(*rune))
     {
-        return yes_or_no("A rune of Zot still resides in this realm, "
-                         "and once you leave you can never return. "
-                         "Are you sure you want to leave?");
+        return confirm_prompt("yes", "A rune of Zot still resides in this realm, "
+                                     "and once you leave you can never return. "
+                                     "Are you sure you want to leave?");
     }
     return true;
 }
@@ -1427,6 +1449,13 @@ static bool _prompt_stairs(dungeon_feature_type ygrd, bool down, bool shaft)
 {
     // Certain portal types always carry warnings.
     if (!prompt_dangerous_portal(ygrd))
+    {
+        canned_msg(MSG_OK);
+        return false;
+    }
+
+    // Descent mode prompts for "atypical" branch order that skips content
+    if (crawl_state.game_is_descent() && !prompt_descent_shortcut(ygrd))
     {
         canned_msg(MSG_OK);
         return false;
@@ -1484,7 +1513,8 @@ static bool _prompt_stairs(dungeon_feature_type ygrd, bool down, bool shaft)
         return false;
     }
 
-    if (!down && player_in_branch(BRANCH_ZOT) && you.depth == 5
+    if (!down && player_in_branch(BRANCH_ZOT)
+        && you.depth == brdepth[BRANCH_ZOT]
         && you.chapter == CHAPTER_ANGERED_PANDEMONIUM)
     {
         if (!yesno("Really leave the Orb behind?", false, 'n'))
@@ -1508,6 +1538,12 @@ static bool _prompt_stairs(dungeon_feature_type ygrd, bool down, bool shaft)
         }
     }
 
+    if (ygrd != DNGN_TRANSPORTER && ygrd != DNGN_PASSAGE_OF_GOLUBRIA
+        && beogh_cancel_leaving_floor())
+    {
+        return false;
+    }
+
     if (Options.warn_hatches)
     {
         if (feat_is_escape_hatch(ygrd))
@@ -1526,6 +1562,17 @@ static bool _prompt_stairs(dungeon_feature_type ygrd, bool down, bool shaft)
                 canned_msg(MSG_OK);
                 return false;
             }
+        }
+    }
+
+    if (down && ygrd == DNGN_ENTER_VAULTS && !runes_in_pack())
+    {
+        if (!confirm_prompt("yes", "You cannot leave the Vaults without holding a Rune of "
+                                   "Zot, and the runes within are jealously guarded."
+                                   " Continue?"))
+        {
+            canned_msg(MSG_OK);
+            return false;
         }
     }
 
@@ -1627,6 +1674,8 @@ static void _take_stairs(bool down)
         tag_followers(); // Only those beside us right now can follow.
         if (down)
             start_delay<DescendingStairsDelay>(1);
+        else if (crawl_state.game_is_descent())
+            up_stairs();
         else
             start_delay<AscendingStairsDelay>(1);
         id_floor_items();
@@ -1669,7 +1718,7 @@ static void _experience_check()
         you.lives < 2 ?
              mprf("You'll get an extra life in %d.%02d levels' worth of XP.", perc / 100, perc % 100) :
              mprf("If you died right now, you'd get an extra life in %d.%02d levels' worth of XP.",
-             (perc / 100) + 1 , perc % 100);
+             perc / 100 , perc % 100);
     }
 
     handle_real_time();
@@ -1689,25 +1738,13 @@ static void _experience_check()
                         << " turns if you stay in this branch and explore no"
                         << " new floors.";
         }
-        msg::stream << endl;
+        msg::stream << endl << gem_status();
     }
 
 #ifdef DEBUG_DIAGNOSTICS
     mprf(MSGCH_DIAGNOSTICS, "Turns spent on this level: %d",
          env.turns_on_level);
 #endif
-}
-
-static void _toggle_travel_speed()
-{
-    you.travel_ally_pace = !you.travel_ally_pace;
-    if (you.travel_ally_pace)
-        mpr("You pace your travel speed to your slowest ally.");
-    else
-    {
-        mpr("You travel at normal speed.");
-        you.running.travel_speed = 0;
-    }
 }
 
 static void _do_rest()
@@ -1721,7 +1758,7 @@ static void _do_rest()
     }
 #endif
 
-    if (bezotted() && !yesno("Really rest while Zot is near?", false, 'n'))
+    if (should_fear_zot() && !yesno("Really rest while Zot is near?", false, 'n'))
     {
         canned_msg(MSG_OK);
         return;
@@ -1793,7 +1830,12 @@ static void _do_cycle_quiver(int dir)
 static void _do_list_gold()
 {
     if (shopping_list.empty())
+    {
         mprf("You have %d gold piece%s.", you.gold, you.gold != 1 ? "s" : "");
+        int vouchers = you.attribute[ATTR_VOUCHER];
+        if (vouchers > 0)
+            mprf("You also have %d voucher%s.", vouchers, vouchers > 1 ? "s" : "");
+    }
     else
         shopping_list.display();
 }
@@ -1974,6 +2016,10 @@ public:
         add_entry(new CmdMenuEntry("Show options file in finder",
             MEL_ITEM, 'O', CMD_REVEAL_OPTIONS));
 #endif
+#ifdef __ANDROID__
+        add_entry(new CmdMenuEntry("Toggle on-screen keyboard",
+            MEL_ITEM, CK_F12, CMD_TOGGLE_KEYBOARD));
+#endif
         add_entry(new CmdMenuEntry("", MEL_SUBTITLE));
         add_entry(new CmdMenuEntry(
                             "Quit and <lightred>abandon character</lightred>",
@@ -2098,8 +2144,6 @@ void process_command(command_type cmd, command_type prev_cmd)
         break;
 #endif
 
-    case CMD_TOGGLE_TRAVEL_SPEED:        _toggle_travel_speed(); break;
-
         // Map commands.
     case CMD_CLEAR_MAP:       clear_map_or_travel_trail(); break;
     case CMD_DISPLAY_OVERMAP: display_overview(); break;
@@ -2147,16 +2191,19 @@ void process_command(command_type cmd, command_type prev_cmd)
     case CMD_FIRE:                 you.quiver_action.target(); break;
     case CMD_FORCE_CAST_SPELL:     do_cast_spell_cmd(true);  break;
     case CMD_LOOK_AROUND:          do_look_around();         break;
-    case CMD_QUAFF:                drink();                  break;
-    case CMD_READ:                 read();                   break;
-    case CMD_REMOVE_ARMOUR:        takeoff_armour();         break;
-    case CMD_REMOVE_JEWELLERY:     remove_ring();            break;
+    case CMD_QUAFF:                use_an_item(OPER_QUAFF);  break;
+    case CMD_READ:                 use_an_item(OPER_READ);   break;
+    case CMD_UNEQUIP:              use_an_item(OPER_UNEQUIP); break;
+    case CMD_REMOVE_ARMOUR:        use_an_item(OPER_TAKEOFF); break;
+    case CMD_REMOVE_JEWELLERY:     use_an_item(OPER_REMOVE); break;
     case CMD_SHOUT:                issue_orders();           break;
     case CMD_FIRE_ITEM_NO_QUIVER:  fire_item_no_quiver();    break;
-    case CMD_WEAPON_SWAP:          wield_weapon(true);       break;
-    case CMD_WEAR_ARMOUR:          wear_armour();            break;
-    case CMD_WEAR_JEWELLERY:       puton_ring();             break;
-    case CMD_WIELD_WEAPON:         wield_weapon(false);      break;
+    case CMD_WEAPON_SWAP:          auto_wield();             break;
+    case CMD_EQUIP:                use_an_item(OPER_EQUIP);  break;
+    case CMD_WEAR_ARMOUR:          use_an_item(OPER_WEAR);   break;
+    case CMD_WEAR_JEWELLERY:       use_an_item(OPER_PUTON);  break;
+    case CMD_WIELD_WEAPON:         use_an_item(OPER_WIELD);  break;
+    case CMD_EVOKE:                use_an_item(OPER_EVOKE);  break;
     case CMD_ZAP_WAND:             zap_wand();               break;
     case CMD_DROP:
         drop();
@@ -2164,11 +2211,6 @@ void process_command(command_type cmd, command_type prev_cmd)
 
     case CMD_DROP_LAST:
         drop_last();
-        break;
-
-    case CMD_EVOKE:
-        if (!evoke_item())
-            flush_input_buffer(FLUSH_ON_FAILURE);
         break;
 
     case CMD_PRIMARY_ATTACK:
@@ -2372,7 +2414,7 @@ void process_command(command_type cmd, command_type prev_cmd)
     {
         // TODO: msg whether this will start a new game? not very important
         if (crawl_state.disables[DIS_CONFIRMATIONS]
-            || yes_or_no("Are you sure you want to abandon this character%s?",
+            || confirm_prompt("quit", "Are you sure you want to abandon this character%s?",
                 Options.newgame_after_quit ? "" : // hard to predict this case
                 (crawl_should_restart(game_exit::quit)
                                             ? " and return to the main menu"
@@ -2389,10 +2431,13 @@ void process_command(command_type cmd, command_type prev_cmd)
         debug_terp_dlua(clua);
         break;
 
-#ifdef TOUCH_UI
-    case CMD_SHOW_KEYBOARD:
-        ASSERT(wm);
-        wm->show_keyboard();
+#ifdef __ANDROID__
+    case CMD_TOGGLE_TAB_ICONS:
+        tiles.toggle_tab_icons();
+        break;
+
+    case CMD_TOGGLE_KEYBOARD:
+        jni_keyboard_control(true);
         break;
 #endif
 
@@ -2424,7 +2469,10 @@ static void _prep_input()
 
     you.redraw_status_lights = true;
     if (you.running == 0)
+    {
         you.quiver_action.set_needs_redraw();
+        you.refresh_rampage_hints();
+    }
     print_stats();
     update_screen();
 
@@ -2443,23 +2491,6 @@ static void _prep_input()
             mprf(MSGCH_GOD, "You have a vision of multiple gates.");
 
         you.seen_portals = 0;
-    }
-}
-
-static void _check_banished()
-{
-    if (you.banished)
-    {
-        you.banished = false;
-        ASSERT(brdepth[BRANCH_ABYSS] != -1);
-        if (!player_in_branch(BRANCH_ABYSS))
-            mprf(MSGCH_BANISHMENT, "You are cast into the Abyss!");
-        else if (you.depth < brdepth[BRANCH_ABYSS])
-            mprf(MSGCH_BANISHMENT, "You are cast deeper into the Abyss!");
-        else
-            mprf(MSGCH_BANISHMENT, "The Abyss bends around you!");
-        // these are included in default force_more_message
-        banished(you.banished_by, you.banished_power);
     }
 }
 
@@ -2513,18 +2544,12 @@ static void _update_still_winds()
     end_still_winds();
 }
 
-static void _check_spectral_weapon()
-{
-    if (!you.triggered_spectral)
-        if (monster* sw = find_spectral_weapon(&you))
-            end_spectral_weapon(sw, false, true);
-    you.triggered_spectral = false;
-}
-
 void world_reacts()
 {
     // All markers should be activated at this point.
     ASSERT(!env.markers.need_activate());
+
+    you.rampage_hints.clear(); // only draw on your turn
 
     fire_final_effects();
 
@@ -2545,6 +2570,9 @@ void world_reacts()
 
     crawl_state.clear_mon_acting();
 
+    if (you.time_taken)
+        descent_crumble_stairs();
+
     if (!crawl_state.game_is_arena())
     {
         you.turn_is_over = true;
@@ -2560,10 +2588,10 @@ void world_reacts()
     }
 #endif
 
-    _check_banished();
+    check_banished();
     _check_sanctuary();
     _check_trapped();
-    _check_spectral_weapon();
+    check_spectral_weapon(you);
 
     run_environment_effects();
 
@@ -2578,7 +2606,7 @@ void world_reacts()
     // (mostly by exploding)
     fire_final_effects();
 
-    _check_banished();
+    check_banished();
 
     ASSERT(you.time_taken >= 0);
     you.elapsed_time += you.time_taken;
@@ -2609,6 +2637,8 @@ void world_reacts()
         _update_still_winds();
     if (!crawl_state.game_is_arena())
         player_reacts_to_monsters();
+
+    clear_monster_flags();
 
     add_auto_excludes();
 
@@ -2741,6 +2771,13 @@ static void _swing_at_target(coord_def move)
 {
     dist target;
     target.target = you.pos() + move;
+
+    if (never_harm_monster(&you, monster_at(target.target), true))
+        return;
+
+    // Don't warn the player "too injured to fight recklessly" when they
+    // explicitly request an attack.
+    unwind_bool autofight_ok(crawl_state.skip_autofight_check, true);
     // this lets ranged weapons work via this command also -- good or bad?
     quiver::get_primary_action()->trigger(target);
 }
@@ -2785,22 +2822,13 @@ static void _do_berserk_no_combat_penalty()
     return;
 }
 
-/**
- * Update damaging spells that are channeled by waiting.
- * These only update when the player actively waits with CMD_WAIT,
- * so should not be moved to world_reacts().
- */
-static void _do_wait_spells()
-{
-    handle_searing_ray();
-    handle_maxwells_coupling();
-    handle_flame_wave();
-}
-
 static void _safe_move_player(coord_def move)
 {
-    if (!i_feel_safe(true))
+    if (!i_feel_safe(true)) {
+        // Clear out other queued up commands.
+        macro_clear_buffers();
         return;
+    }
     move_player_action(move);
 }
 

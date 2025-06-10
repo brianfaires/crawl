@@ -5,7 +5,6 @@
 #include "beam.h"
 #include "coordit.h"
 #include "los-type.h"
-#include "reach-type.h"
 
 using std::vector;
 
@@ -53,12 +52,14 @@ public:
 
     virtual bool set_aim(coord_def a);
     virtual bool valid_aim(coord_def a) = 0;
+    virtual bool preferred_aim(coord_def a);
     virtual bool can_affect_outside_range();
     virtual bool can_affect_walls();
 
     virtual aff_type is_affected(coord_def loc) = 0;
     virtual bool can_affect_unseen();
     virtual bool affects_monster(const monster_info& mon);
+    virtual bool harmful_to_player();
 
     targeting_iterator affected_iterator(aff_type threshold = AFF_YES);
 protected:
@@ -76,6 +77,7 @@ public:
     bool can_affect_outside_range() override;
     virtual aff_type is_affected(coord_def loc) override;
     virtual bool affects_monster(const monster_info& mon) override;
+    bool harmful_to_player() override;
 protected:
     vector<coord_def> path_taken; // Path beam took.
     void set_explosion_aim(bolt tempbeam);
@@ -99,21 +101,37 @@ class targeter_smite : public targeter
 {
 public:
     targeter_smite(const actor *act, int range = LOS_RADIUS,
-                    int exp_min = 0, int exp_max = 0, bool wall_ok = false,
+                    int exp_min = 0, int exp_max = 0,
+                    bool harmless_to_player = false,
+                    bool wall_ok = false, bool monster_okay = true,
                     bool (*affects_pos_func)(const coord_def &) = 0);
     virtual bool set_aim(coord_def a) override;
     virtual bool valid_aim(coord_def a) override;
     virtual bool can_affect_outside_range() override;
     bool can_affect_walls() override;
     aff_type is_affected(coord_def loc) override;
+    bool harmful_to_player() override;
 protected:
     // assumes exp_map is valid only if >0, so let's keep it private
     int exp_range_min, exp_range_max;
     explosion_map exp_map_min, exp_map_max;
     int range;
 private:
+    bool cannot_harm_player;
     bool affects_walls;
+    bool can_target_monsters;
     bool (*affects_pos)(const coord_def &);
+};
+
+class targeter_permafrost : public targeter_smite
+{
+public:
+    targeter_permafrost(const actor &act, int power);
+    aff_type is_affected(coord_def loc) override;
+private:
+    set<coord_def> targets;
+    set<coord_def> possible_centres;
+    bool single_target;
 };
 
 class targeter_walljump : public targeter_smite
@@ -129,6 +147,7 @@ class targeter_transference : public targeter_smite
 public:
     targeter_transference(const actor *act, int aoe);
     bool valid_aim(coord_def a) override;
+    bool affects_monster(const monster_info& mon) override;
 };
 
 class targeter_inner_flame : public targeter_smite
@@ -184,8 +203,8 @@ public:
 class targeter_reach : public targeter
 {
 public:
-    targeter_reach(const actor* act, reach_type ran = REACH_NONE);
-    reach_type range;
+    targeter_reach(const actor* act, int ran = 1);
+    int range;
     bool valid_aim(coord_def a) override;
     aff_type is_affected(coord_def loc) override;
 };
@@ -205,17 +224,18 @@ private:
 class targeter_cloud : public targeter
 {
 public:
-    targeter_cloud(const actor* act, int range = LOS_RADIUS,
-                    int count_min = 8, int count_max = 10);
+    targeter_cloud(const actor* act, cloud_type ctype, int range = LOS_RADIUS,
+                   int count_min = 8, int count_max = 10);
     bool set_aim(coord_def a) override;
     bool valid_aim(coord_def a) override;
     bool can_affect_outside_range() override;
     aff_type is_affected(coord_def loc) override;
+    bool harmful_to_player() override;
+    cloud_type ctype;
     int range;
     int cnt_min, cnt_max;
     map<coord_def, aff_type> seen;
     vector<vector<coord_def> > queue;
-    bool avoid_clouds;
 };
 
 class targeter_splash : public targeter_beam
@@ -273,6 +293,13 @@ public:
     aff_type is_affected(coord_def loc) override;
 };
 
+class targeter_siphon_essence : public targeter_radius
+{
+public:
+    targeter_siphon_essence();
+    aff_type is_affected(coord_def loc) override;
+};
+
 class targeter_thunderbolt : public targeter
 {
 public:
@@ -285,37 +312,6 @@ public:
     FixedVector<int, LOS_RADIUS + 1> arc_length;
 private:
     coord_def prev;
-    int range;
-};
-
-enum class shadow_step_blocked
-{
-    none,
-    occupied,
-    move,
-    path,
-    no_target,
-};
-
-class targeter_shadow_step : public targeter
-{
-public:
-    targeter_shadow_step(const actor* act, int r);
-
-    bool valid_aim(coord_def a) override;
-    bool set_aim(coord_def a) override;
-    bool step_is_blocked;
-    aff_type is_affected(coord_def loc) override;
-    bool has_additional_sites(coord_def a);
-    set<coord_def> additional_sites;
-    coord_def landing_site;
-private:
-    void set_additional_sites(coord_def a);
-    void get_additional_sites(coord_def a);
-    bool valid_landing(coord_def a, bool check_invis = true);
-    shadow_step_blocked no_landing_reason;
-    shadow_step_blocked blocked_landing_reason;
-    set<coord_def> temp_sites;
     int range;
 };
 
@@ -399,8 +395,6 @@ private:
     vector<coord_def> path_taken; // Path the charge took.
 };
 
-string bad_charge_target(coord_def a);
-
 // a fixed los targeter matching how it is called for shatter, with a custom
 // tweak to affect walls.
 class targeter_shatter : public targeter_radius
@@ -426,6 +420,7 @@ public:
 
     void add_position(const coord_def &c, bool force=false);
     bool valid_aim(coord_def) override { return true; }
+    bool can_affect_walls() override { return true; }
     aff_type is_affected(coord_def loc) override;
 
 protected:
@@ -569,5 +564,208 @@ class targeter_poisonous_vapours : public targeter_smite
 public:
     targeter_poisonous_vapours(const actor *act, int range);
     bool affects_monster(const monster_info& mon) override;
+    bool valid_aim(coord_def a) override;
+};
+
+class targeter_boulder : public targeter_beam
+{
+public:
+    targeter_boulder(const actor* caster, int boulder_hp);
+    bool valid_aim(coord_def a) override;
+    bool set_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+private:
+    int hp;
+    map<coord_def, aff_type> boulder_sim;
+};
+
+class targeter_chain : public targeter_beam
+{
+public:
+    targeter_chain(const actor *act, int r, zap_type ztype);
+    bool set_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+
+private:
+    set<coord_def> chain_targ;
+};
+
+class targeter_bind_soul : public targeter_smite
+{
+public:
+    targeter_bind_soul();
+    bool valid_aim(coord_def a) override;
+};
+
+class targeter_explosive_beam : public targeter_beam
+{
+public:
+    targeter_explosive_beam(const actor *act, zap_type ztype,
+                            int pow, int range,
+                            bool explode_on_monsters = true,
+                            bool always_explode = false);
+    bool set_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+private:
+    explosion_map exp_map;
+    bool explode_on_monsters;
+    bool always_explode;
+};
+
+class targeter_galvanic : public targeter_beam
+{
+public:
+    targeter_galvanic(const actor *act, int pow, int range);
+    bool set_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+private:
+    vector<coord_def> jolt_targets;
+};
+
+class targeter_gavotte : public targeter_beam
+{
+public:
+    targeter_gavotte(const actor* caster);
+    bool valid_aim(coord_def a) override;
+    bool set_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+    bool harmful_to_player() override { return false; };
+private:
+    vector<coord_def> affected_monsters;
+};
+
+class targeter_magnavolt : public targeter_smite
+{
+public:
+    targeter_magnavolt(const actor *act, int range);
+    bool valid_aim(coord_def a) override;
+    bool preferred_aim(coord_def a) override;
+    bool set_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+private:
+    vector<coord_def> beam_targets;
+    vector<coord_def> beam_paths;
+};
+
+class targeter_mortar : public targeter_beam
+{
+public:
+    targeter_mortar(const actor* act, int max_range);
+    bool valid_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+    bool can_affect_unseen() override;
+    bool can_affect_walls() override;
+    bool affects_monster(const monster_info& mon) override;
+};
+
+class targeter_slouch : public targeter_radius
+{
+public:
+    targeter_slouch();
+    virtual aff_type is_affected(coord_def loc) override;
+};
+
+class targeter_marionette : public targeter_smite
+{
+public:
+    targeter_marionette();
+    bool valid_aim(coord_def a) override;
+};
+
+class targeter_putrefaction : public targeter_smite
+{
+public:
+    targeter_putrefaction(int range);
+    bool valid_aim(coord_def a) override;
+};
+
+class targeter_soul_splinter : public targeter_beam
+{
+public:
+    targeter_soul_splinter(const actor *act, int r);
+    bool affects_monster(const monster_info& mon) override;
+};
+
+class targeter_surprising_crocodile : public targeter_smite
+{
+public:
+    targeter_surprising_crocodile(const actor* caster);
+    bool valid_aim(coord_def a) override;
+    bool set_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+private:
+    vector<coord_def> landing_spots;
+};
+
+class targeter_wall_arc : public targeter_smite
+{
+public:
+    targeter_wall_arc(const actor* caster, int num_walls);
+    bool set_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+private:
+    vector<coord_def> spots;
+    int num_walls;
+};
+
+class targeter_tempering : public targeter_smite
+{
+public:
+    targeter_tempering();
+    bool valid_aim(coord_def a) override;
+    bool preferred_aim(coord_def a) override;
+};
+
+class targeter_piledriver : public targeter_smite
+{
+public:
+    targeter_piledriver();
+    bool valid_aim(coord_def a) override;
+    bool set_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+
+private:
+    int piledriver_lengths[8];
+    vector<coord_def> spots;
+};
+
+class targeter_teleport_other : public targeter_smite
+{
+public:
+    targeter_teleport_other(const actor *act, int range);
+    bool valid_aim(coord_def a) override;
+};
+
+class targeter_malign_gateway : public targeter
+{
+public:
+    targeter_malign_gateway(actor& caster);
+    aff_type is_affected(coord_def loc) override;
+    bool valid_aim(coord_def) override { return true; }
+};
+
+class targeter_watery_grave : public targeter_radius
+{
+public:
+    targeter_watery_grave();
+    aff_type is_affected(coord_def loc) override;
+};
+
+class targeter_bestial_takedown : public targeter_smite
+{
+public:
+    targeter_bestial_takedown();
+    bool valid_aim(coord_def a) override;
+    bool set_aim(coord_def a) override;
+    aff_type is_affected(coord_def loc) override;
+
+private:
+    vector<coord_def> landing_spots;
+};
+
+class targeter_paragon_deploy : public targeter_smite
+{
+public:
+    targeter_paragon_deploy(int range);
     bool valid_aim(coord_def a) override;
 };

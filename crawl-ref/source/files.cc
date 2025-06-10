@@ -48,6 +48,7 @@
 #include "directn.h"
 #include "dungeon.h"
 #include "end.h"
+#include "english.h"
 #include "tile-env.h"
 #include "errors.h"
 #include "player-save-info.h"
@@ -74,6 +75,7 @@
 #include "notes.h"
 #include "place.h"
 #include "prompt.h"
+#include "religion.h"
 #include "skills.h"
 #include "species.h"
 #include "spl-summoning.h"
@@ -102,6 +104,7 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
+#define VERSIONED_CACHE_DIR
 #endif
 
 #ifndef F_OK // MSVC for example
@@ -423,8 +426,7 @@ static vector<string> _get_base_dirs()
         SysEnv.crawl_base + "../Resources/",
 #endif
 #ifdef __ANDROID__
-        ANDROID_ASSETS,
-        "/sdcard/Android/data/org.develz.crawl/files/",
+        ANDROID_ASSETS
 #endif
 #ifdef __HAIKU__
         std::string(path),
@@ -471,8 +473,8 @@ static vector<string> _get_base_dirs()
 /**
  * check if `d` is a complete crawl data directory.
  *
- * @return MB_TRUE if yes, otherwise no. Returns MB_FALSE if there are some
- * but not all data subfolders.
+ * @return true if yes; returns maybe if there are some
+ * but not all data subfolders; otherwise, false.
  */
 maybe_bool validate_data_dir(const string &d)
 {
@@ -491,7 +493,7 @@ maybe_bool validate_data_dir(const string &d)
     };
 
     if (!dir_exists(d))
-        return MB_FALSE;
+        return false;
 
     bool everything = true;
     bool something = false;
@@ -502,7 +504,7 @@ maybe_bool validate_data_dir(const string &d)
         else
             everything = false;
     }
-    return everything ? MB_TRUE : something ? MB_MAYBE : MB_FALSE;
+    return everything ? true : something ? maybe_bool::maybe : false;
 }
 
 void validate_basedirs()
@@ -516,9 +518,9 @@ void validate_basedirs()
     for (const string &d : bases)
     {
         maybe_bool status = validate_data_dir(d);
-        if (status == MB_FALSE)
+        if (!status)
             continue; // empty or non-existent, ignore
-        else if (status == MB_MAYBE)
+        else if (status == maybe_bool::maybe)
         {
             // give an error for this case because this incomplete data
             // directory will be checked before others, possibly leading
@@ -530,7 +532,7 @@ void validate_basedirs()
                             d.c_str());
             }
         }
-        else // MB_TRUE -- found a complete data directory
+        else // true -- found a complete data directory
         {
             if (!found)
                 mprf(MSGCH_PLAIN, "Data directory '%s' found.", d.c_str());
@@ -559,9 +561,6 @@ string datafile_path(string basename, bool croak_on_fail, bool test_base_path,
     for (const string &basedir : _get_base_dirs())
     {
         string name = basedir + basename;
-#ifdef __ANDROID__
-        __android_log_print(ANDROID_LOG_INFO,"Crawl","Looking for %s as '%s'",basename.c_str(),name.c_str());
-#endif
         if (thing_exists(name))
             return name;
     }
@@ -780,6 +779,9 @@ static vector<player_save_info> _find_saved_characters()
             }
             catch (ext_fail_exception &E)
             {
+#ifndef DEBUG_DIAGNOSTICS
+                UNUSED(E);
+#endif
                 dprf("%s: %s", filename.c_str(), E.what());
             }
             catch (game_ended_condition &E) // another process is using the save
@@ -1152,7 +1154,6 @@ static bool _shaft_safely()
             || cloud_at(pos) // XXX: ignore if is_harmless_cloud?
             || monster_at(pos)
             || env.pgrid(pos) & FPROP_NO_TELE_INTO
-            || slime_wall_neighbour(pos)
             || _nonfriendly_nearby(pos))
         {
             continue;
@@ -1191,31 +1192,8 @@ static void _clear_env_map()
     env.map_forgotten.reset();
 }
 
-static bool _grab_follower_at(const coord_def &pos, bool can_follow)
+static void _grab_follower(monster* fol)
 {
-    if (pos == you.pos())
-        return false;
-
-    monster* fol = monster_at(pos);
-    if (!fol || !fol->alive() || fol->incapacitated())
-        return false;
-
-    // only H's ancestors can follow into portals & similar.
-    if (!can_follow && !mons_is_hepliaklqana_ancestor(fol->type))
-        return false;
-
-    // The monster has to already be tagged in order to follow.
-    if (!testbits(fol->flags, MF_TAKING_STAIRS))
-        return false;
-
-    // If a monster that can't use stairs was marked as a follower,
-    // it's because it's an ally and there might be another ally
-    // behind it that might want to push through.
-    // This means we don't actually send it on transit, but we do
-    // return true, so adjacent real followers are handled correctly. (jpeg)
-    if (!mons_can_use_stairs(*fol))
-        return true;
-
     level_id dest = level_id::current();
 
     dprf("%s is following to %s.", fol->name(DESC_THE, true).c_str(),
@@ -1225,26 +1203,48 @@ static bool _grab_follower_at(const coord_def &pos, bool can_follow)
     fol->destroy_inventory();
     monster_cleanup(fol);
     if (could_see)
-        view_update_at(pos);
-    return true;
+        view_update_at(fol->pos());
 }
 
-static void _grab_followers()
+// Expire all friendly summons / zombies / etc. when the player is leaving a floor.
+static void _expire_temporary_allies()
 {
-    const bool can_follow = branch_allows_followers(you.where_are_you);
+    for (auto &mons : menv_real)
+    {
+        if (!mons.alive())
+            continue;
 
+        if (mons.was_created_by(you))
+            monster_die(mons, KILL_TIMEOUT, NON_MONSTER, true);
+    }
+}
+
+static void _grab_followers_and_expire_summons()
+{
     int non_stair_using_allies = 0;
+    int non_stair_using_undead = 0;
     int non_stair_using_summons = 0;
 
     monster* dowan = nullptr;
     monster* duvessa = nullptr;
 
-    // Handle some hacky cases
-    for (adjacent_iterator ai(you.pos()); ai; ++ai)
+    // Do a first pass to account for Dowan/Duvessa refusing to leave a floor
+    // without the other, as well as printing a message if the player is leaving
+    // summoned allies behind.
+    for (radius_iterator ri(you.pos(), 3, C_SQUARE, LOS_NO_TRANS, true); ri; ++ri)
     {
-        monster* fol = monster_at(*ai);
+        monster* fol = monster_at(*ri);
         if (fol == nullptr)
             continue;
+
+        // Hostile monsters can only follow while adjacent and incapacitated
+        // monsters cannot follow at all. (We already checked this when flagging
+        // them, but it may have changed in the meantime)
+        if (!fol->alive() || fol->incapacitated()
+            || (!fol->friendly() && grid_distance(*ri, you.pos()) > 1))
+        {
+            fol->flags &= ~MF_TAKING_STAIRS;
+        }
 
         if (mons_is_mons_class(fol, MONS_DUVESSA) && fol->alive())
             duvessa = fol;
@@ -1252,10 +1252,14 @@ static void _grab_followers()
         if (mons_is_mons_class(fol, MONS_DOWAN) && fol->alive())
             dowan = fol;
 
-        if (fol->wont_attack() && !mons_can_use_stairs(*fol))
+        // Note friendlies that are being left behind because they can't take stairs.
+        if (fol->friendly() && !mons_can_use_stairs(*fol))
         {
-            non_stair_using_allies++;
-            if (fol->is_summoned() || mons_is_conjured(fol->type))
+            if (!fol->is_peripheral())
+                non_stair_using_allies++;
+            if (fol->holiness() & MH_UNDEAD)
+                non_stair_using_undead++;
+            else if (fol->is_abjurable())
                 non_stair_using_summons++;
         }
     }
@@ -1281,7 +1285,7 @@ static void _grab_followers()
             duvessa->flags &= ~MF_TAKING_STAIRS;
     }
 
-    if (can_follow && non_stair_using_allies > 0)
+    if (non_stair_using_allies > 0)
     {
         // Summons won't follow and will time out.
         if (non_stair_using_summons > 0)
@@ -1291,33 +1295,30 @@ static void _grab_followers()
         }
         else
         {
+            const bool all_dead = non_stair_using_undead == non_stair_using_allies;
             // Permanent undead are left behind but stay.
-            mprf("Your mindless puppet%s behind to rot.",
-                 non_stair_using_allies > 1 ? "s stay" : " stays");
+            mprf("Your mindless puppet%s behind%s.",
+                 non_stair_using_allies > 1 ? "s stay" : " stays",
+                 all_dead ? " to rot" : "");
         }
     }
 
-    bool visited[GXM][GYM];
-    memset(&visited, 0, sizeof(visited));
+    // Kill friendly summons before moving off-floor.
+    // (Helps with bookkeeping in some cases).
+    _expire_temporary_allies();
 
-    vector<coord_def> places[2] = { { you.pos() }, {} };
-    int place_set = 0;
-    while (!places[place_set].empty())
+    for (radius_iterator ri(you.pos(), 3, C_SQUARE, LOS_NO_TRANS, true); ri; ++ri)
     {
-        for (const coord_def &p : places[place_set])
-        {
-            for (adjacent_iterator ai(p); ai; ++ai)
-            {
-                if (visited[ai->x][ai->y])
-                    continue;
+        monster* fol = monster_at(*ri);
+        if (!fol)
+            continue;
 
-                visited[ai->x][ai->y] = true;
-                if (_grab_follower_at(*ai, can_follow))
-                    places[!place_set].push_back(*ai);
-            }
-        }
-        places[place_set].clear();
-        place_set = !place_set;
+        // Only grab monsters who were flagged when the player started their
+        // stair delay.
+        if (!testbits(fol->flags, MF_TAKING_STAIRS))
+            continue;
+
+        _grab_follower(fol);
     }
 
     // Clear flags of monsters that didn't follow.
@@ -1325,10 +1326,7 @@ static void _grab_followers()
     {
         if (!mons.alive())
             continue;
-        if (mons.type == MONS_BATTLESPHERE)
-            end_battlesphere(&mons, false);
-        if (mons.type == MONS_SPECTRAL_WEAPON)
-            end_spectral_weapon(&mons, false);
+
         mons.flags &= ~MF_TAKING_STAIRS;
     }
 }
@@ -1459,15 +1457,23 @@ static void _place_player(dungeon_feature_type stair_taken,
         _place_player_on_stair(stair_taken, dest_pos, hatch_name);
 
     // Don't return the player into walls, deep water, or a trap.
-    for (distance_iterator di(you.pos(), true, false); di; ++di)
-        if (you.is_habitable_feat(env.grid(*di))
-            && !is_feat_dangerous(env.grid(*di), true)
-            && !feat_is_trap(env.grid(*di)))
-        {
-            if (you.pos() != *di)
-                you.moveto(*di);
-            break;
-        }
+    if (!you.is_habitable_feat(env.grid(you.pos()))
+        || is_feat_dangerous(env.grid(you.pos()), true)
+        || feat_is_trap(env.grid(you.pos())))
+    {
+        for (distance_iterator di(you.pos(), true, false); di; ++di)
+            if (you.is_habitable_feat(env.grid(*di))
+                && !is_feat_dangerous(env.grid(*di), true)
+                && !feat_is_trap(env.grid(*di))
+                && !(env.pgrid(*di) & FPROP_NO_TELE_INTO))
+            {
+                if (you.pos() != *di)
+                    you.moveto(*di);
+                break;
+            }
+    }
+
+
 
     // This should fix the "monster occurring under the player" bug.
     monster *mon = monster_at(you.pos());
@@ -1484,8 +1490,27 @@ static void _place_player(dungeon_feature_type stair_taken,
 
         dprf("%s under player and can't be moved anywhere; killing",
              mon->name(DESC_PLAIN).c_str());
-        monster_die(*mon, KILL_DISMISSED, NON_MONSTER);
+        monster_die(*mon, KILL_RESET_KEEP_ITEMS, NON_MONSTER);
         // XXX: do we need special handling for uniques...?
+    }
+
+    // Dump all arena contents on the player's feet when exiting the arena
+    if (stair_taken == DNGN_EXIT_ARENA && you.props.exists(OKAWARU_DUEL_ITEMS_KEY))
+    {
+        // If the player has emerged over deep water / lava, put something solid
+        // under us so that items from the duel are not lost
+        if ((env.grid(you.pos()) == DNGN_DEEP_WATER && !player_likes_water(true)
+             || env.grid(you.pos()) == DNGN_LAVA))
+        {
+            env.grid(you.pos()) = DNGN_ALTAR_OKAWARU;
+            set_terrain_changed(you.pos());
+        }
+
+        CrawlVector& vec = you.props[OKAWARU_DUEL_ITEMS_KEY].get_vector();
+        for (CrawlStoreValue value : vec)
+            copy_item_to_grid(value.get_item(), you.pos());
+
+        you.props.erase(OKAWARU_DUEL_ITEMS_KEY);
     }
 }
 
@@ -1519,7 +1544,7 @@ static const string VISITED_LEVELS_KEY = "visited_levels";
 // needs to happen.
 // before pregeneration, whether the level had been visited was synonymous with
 // whether it had been visited, but after, we need to track this information
-// more directly. It is also inferrable from turns_on_level, but you can't get
+// more directly. It is also inferable from turns_on_level, but you can't get
 // at that very easily without fully loading the level.
 // no need for a minor version here, though there will be a brief window of
 // offline pregen games that this doesn't handle right -- they will get things
@@ -1568,7 +1593,7 @@ static void _generic_level_reset()
 {
     // TODO: can more be pulled into here?
 
-    you.prev_targ = MHITNOT;
+    you.prev_targ = MID_NOBODY;
     you.prev_grd_targ.reset();
 
     // Lose all listeners.
@@ -1611,7 +1636,8 @@ void update_portal_entrances()
             level_id whither = stair_destination(feat, "", false);
             if (whither.branch == BRANCH_ZIGGURAT // not (quite) pregenerated
                 || whither.branch == BRANCH_TROVE // not pregenerated
-                || whither.branch == BRANCH_BAZAAR) // multiple bazaars possible
+                || whither.branch == BRANCH_BAZAAR // multiple bazaars possible
+                || whither.branch == BRANCH_NECROPOLIS) // multiple possible
             {
                 continue; // handle these differently
             }
@@ -2008,6 +2034,40 @@ static void _rescue_player_from_wall()
     }
 }
 
+#if TAG_MAJOR_VERSION == 34
+static void _fixup_transmuters()
+{
+    vector<pair<spell_type, talisman_type>> forms = {
+        { SPELL_BEASTLY_APPENDAGE, TALISMAN_QUILL },
+        { SPELL_SPIDER_FORM,       TALISMAN_SPIDER },
+        { SPELL_ICE_FORM,          TALISMAN_SERPENT },
+        { SPELL_BLADE_HANDS,       TALISMAN_BLADE },
+        { SPELL_STATUE_FORM,       TALISMAN_STATUE },
+        { SPELL_DRAGON_FORM,       TALISMAN_DRAGON },
+        { SPELL_STORM_FORM,        TALISMAN_STORM },
+        { SPELL_NECROMUTATION,     TALISMAN_DEATH },
+    };
+    for (auto &p : forms) {
+        if (!you.has_spell(p.first))
+            continue;
+        int obj = items(false, OBJ_TALISMANS, p.second, 0);
+        if (obj == NON_ITEM)
+            continue;
+        // Funny but tragic if the player is over red or blue lava.
+        move_item_to_grid(&obj, you.pos(), true);
+        del_spell_from_memory(p.first);
+    }
+}
+#endif
+
+/// Learn where each transporter on the current level goes.
+static void _learn_transporters()
+{
+    auto li = travel_cache.find_level_info(level_id::current());
+    for (auto &tp : li->get_transporters())
+        li->update_transporter(tp.position, get_transporter_dest(tp.position));
+}
+
 /**
  * Load the current level.
  *
@@ -2073,7 +2133,8 @@ bool load_level(dungeon_feature_type stair_taken, load_mode_type load_mode,
         // games.
         if (old_level.depth != -1)
         {
-            _grab_followers();
+            if (!crawl_state.game_is_descent())
+                _grab_followers_and_expire_summons();
 
             if (env.level_state & LSTATE_DELETED)
                 delete_level(old_level), dprf("<lightmagenta>Deleting level.</lightmagenta>");
@@ -2161,19 +2222,31 @@ bool load_level(dungeon_feature_type stair_taken, load_mode_type load_mode,
 
     // Shouldn't happen, but this is too unimportant to assert.
     deleteAll(env.final_effects);
+    env.final_effect_monster_cache.clear();
 
     los_changed();
 
     if (load_mode != LOAD_VISITOR)
         you.set_level_visited(level_id::current());
 
+    const bool descent_downclimb = crawl_state.game_is_descent()
+                                   && feat_stair_direction(stair_taken) == CMD_GO_DOWNSTAIRS
+                                   && !feat_is_descent_exitable(stair_taken);
+    const bool descent_peek = descent_downclimb
+                              && !feat_is_escape_hatch(stair_taken)
+                              && stair_taken != DNGN_TRAP_SHAFT
+                              && old_level.branch == you.where_are_you;
+
     // Markers must be activated early, since they may rely on
     // events issued later, e.g. DET_ENTERING_LEVEL or
     // the DET_TURN_ELAPSED from update_level.
     if (make_changes || load_mode == LOAD_RESTART_GAME)
-        env.markers.activate_all();
+    {
+        bool message = !(load_mode == LOAD_RESTART_GAME && descent_peek);
+        env.markers.activate_all(message);
+    }
 
-    if (make_changes && env.elapsed_time && !just_created_level)
+    if (make_changes && env.elapsed_time && !just_created_level && !descent_peek)
         update_level(you.elapsed_time - env.elapsed_time);
 
     // Apply all delayed actions, if any. TODO: logic for marshalling this is
@@ -2207,6 +2280,9 @@ bool load_level(dungeon_feature_type stair_taken, load_mode_type load_mode,
     if (just_created_level && make_changes)
         replace_boris();
 
+    if (descent_peek && just_created_level)
+        descent_reveal_stairs();
+
     if (make_changes)
     {
         // Tell stash-tracker and travel that we've changed levels.
@@ -2229,17 +2305,27 @@ bool load_level(dungeon_feature_type stair_taken, load_mode_type load_mode,
     // Things to update for player entering level
     if (load_mode == LOAD_ENTER_LEVEL)
     {
-        // new stairs have less wary monsters, and we don't
-        // want them to attack players quite as soon.
-        // (just_created_level only relevant if we crashed.)
-        you.time_taken *= fast || just_created_level ? 1 : 2;
-
-        you.time_taken = div_rand_round(you.time_taken * 3, 4);
-
-        dprf("arrival time: %d", you.time_taken);
+        if (descent_downclimb)
+        {
+            you.time_taken = 0; // free takebacks
+            if (!descent_peek)
+                descent_crumble_stairs(); // no sense waiting
+        }
+        else
+        {
+            // new stairs have less wary monsters, and we don't
+            // want them to attack players quite as soon.
+            // (just_created_level only relevant if we crashed.)
+            const bool fast_entry = fast || just_created_level;
+            you.time_taken *= fast_entry ? 1 : 2;
+            you.time_taken = div_rand_round(you.time_taken * 3, 4);
+        }
 
         if (just_created_level)
             run_map_epilogues();
+
+        // no cross-level pursuits
+        crawl_state.potential_pursuers.clear();
     }
 
     // Save the created/updated level out to disk:
@@ -2328,7 +2414,25 @@ bool load_level(dungeon_feature_type stair_taken, load_mode_type load_mode,
     if (just_created_level && make_changes)
     {
         you.attribute[ATTR_ABYSS_ENTOURAGE] = 0;
-        gozag_detect_level_gold(true);
+        gozag_count_level_gold();
+        if (branches[you.where_are_you].branch_flags & brflag::fully_map)
+        {
+            magic_mapping(GDM, 100, true, false, false, true, false, coord_def(), true);
+            _learn_transporters();
+            for (rectangle_iterator ri(BOUNDARY_BORDER - 1); ri; ++ri)
+            {
+                if (env.map_knowledge(*ri).seen())
+                {
+                    force_show_update_at(*ri);
+#ifdef USE_TILE
+                    tiles.update_minimap(*ri);
+                    tile_draw_map_cell(*ri, true);
+#elif defined(USE_TILE_WEB)
+                    tiles.mark_for_redraw(*ri);
+#endif
+                }
+            }
+        }
     }
 
 
@@ -2377,11 +2481,8 @@ bool load_level(dungeon_feature_type stair_taken, load_mode_type load_mode,
             xom_new_level_noise_or_stealth();
     }
 
-    if (just_created_level && (load_mode == LOAD_ENTER_LEVEL
-                               || load_mode == LOAD_START_GAME))
-    {
+    if (just_created_level && make_changes)
         decr_zot_clock();
-    }
 
     // Initialize halos, etc.
     invalidate_agrid(true);
@@ -2399,6 +2500,9 @@ bool load_level(dungeon_feature_type stair_taken, load_mode_type load_mode,
     if (make_changes && you.position != env.old_player_pos)
        shake_off_monsters(you.as_player());
 
+    if (make_changes)
+        maybe_break_floor_gem();
+
 #if TAG_MAJOR_VERSION == 34
     if (make_changes && you.props.exists("zig-fixup")
         && you.where_are_you == BRANCH_TOMB
@@ -2413,6 +2517,9 @@ bool load_level(dungeon_feature_type stair_taken, load_mode_type load_mode,
         }
         you.props.erase("zig-fixup");
     }
+
+    if (load_mode == LOAD_RESTART_GAME)
+        _fixup_transmuters();
 #endif
 
     return just_created_level;
@@ -2535,6 +2642,14 @@ void save_game(bool leave_game, const char *farewellmsg)
     // If just save, early out.
     if (!leave_game)
     {
+#ifdef __ANDROID__
+        // Save everything before pause
+        clua.save_persist();
+        if (crawl_state.unsaved_macros)
+            macro_save();
+        if (!you.entering_level)
+            save_level(level_id::current());
+#endif
         if (!crawl_state.disables[DIS_SAVE_CHECKPOINTS])
         {
             you.save->commit();
@@ -2559,28 +2674,32 @@ void save_game_state()
         save_game(true);
 }
 
-static bool _bones_save_individual_levels(bool store)
+static bool _bones_save_individual_levels(branch_type branch, bool store)
 {
     // Only use level-numbered bones files for places where players die a lot.
     // For the permastore, go even coarser (just D and Lair use level numbers).
     // n.b. some branches here may not currently generate ghosts.
     // TODO: further adjustments? Make Zot coarser?
-    return store ? player_in_branch(BRANCH_DUNGEON) ||
-                   player_in_branch(BRANCH_LAIR)
-                 : !(player_in_branch(BRANCH_ZIGGURAT) ||
-                     player_in_branch(BRANCH_CRYPT) ||
-                     player_in_branch(BRANCH_TOMB) ||
-                     player_in_branch(BRANCH_ABYSS) ||
-                     player_in_branch(BRANCH_SLIME));
+    return store ? branch == BRANCH_DUNGEON ||
+                   branch == BRANCH_LAIR
+                 : !(branch == BRANCH_ZIGGURAT ||
+                     branch ==BRANCH_CRYPT ||
+                     branch == BRANCH_TOMB ||
+                     branch == BRANCH_ABYSS ||
+                     branch == BRANCH_SLIME);
 }
 
 static string _make_ghost_filename(bool store=false)
 {
-    const bool with_number = _bones_save_individual_levels(store);
+    const level_id lvl = player_in_branch(BRANCH_NECROPOLIS)
+                            ? !you.level_stack.empty() ? you.level_stack.back().id
+                                                       : level_id(BRANCH_DUNGEON, 15)
+                            : level_id::current();
+    const bool with_number = _bones_save_individual_levels(lvl.branch, store);
     // Players die so rarely in hell in practice that it doesn't even make
     // sense to have per-hell bones. (Maybe vestibule should be separate?)
-    const string level_desc = player_in_hell(true) ? "Hells" :
-        replace_all(level_id::current().describe(false, with_number), ":", "-");
+    const string level_desc = is_hell_branch(lvl.branch) ? "Hells" :
+        replace_all(lvl.describe(false, with_number), ":", "-");
     return string("bones.") + (store ? "store." : "") + level_desc;
 }
 
@@ -2599,7 +2718,7 @@ static string _bones_permastore_file()
     // no matching permastore is in the player's bones file, but one exists in
     // the crawl distribution. Install it.
 
-    FILE *src = fopen(dist_full_path.c_str(), "rb");
+    FILE *src = fopen_u(dist_full_path.c_str(), "rb");
     if (!src)
     {
         mprf(MSGCH_ERROR, "Bones file exists but can't be opened: %s",
@@ -2792,7 +2911,7 @@ save_version read_ghost_header(reader &inf)
         // Discard three more 32-bit words of padding.
         inf.read(nullptr, 3*4);
     }
-    catch (short_read_exception &E)
+    catch (const short_read_exception&)
     {
         mprf(MSGCH_ERROR,
              "Ghost file \"%s\" seems to be invalid (short read); deleting it.",
@@ -2834,7 +2953,7 @@ vector<ghost_demon> load_bones_file(string ghost_filename, bool backup)
         result = tag_read_ghosts(inf);
         inf.fail_if_not_eof(ghost_filename);
     }
-    catch (short_read_exception &short_read)
+    catch (const short_read_exception&)
     {
         string error = "Broken bones file: " + ghost_filename;
         throw corrupted_save(error, version);
@@ -3102,8 +3221,8 @@ static bool _restore_game(const string& filename)
     if (!crawl_state.bypassed_startup_menu
         && menu_game_type != crawl_state.type)
     {
-        if (!yesno(("You already have a "
-                        + _type_name_processed(save_info.saved_game_type) +
+        auto atype = article_a(_type_name_processed(save_info.saved_game_type));
+        if (!yesno(("You already have " + atype +
                     " game saved under the name '" + save_info.name + "';\n"
                     "do you want to load that instead?").c_str(),
                    true, 'n'))
@@ -3165,7 +3284,7 @@ static bool _restore_game(const string& filename)
 
     if (you.save->has_chunk(CHUNK("kil", "kills")))
     {
-        reader inf(you.save, CHUNK("kil", "kills"),minorVersion);
+        reader inf(you.save, CHUNK("kil", "kills"), minorVersion);
         you.kills.load(inf);
     }
 
@@ -3266,6 +3385,16 @@ void delete_level(const level_id &level)
         save_abyss_uniques();
         destroy_abyss();
     }
+    // Since Pandemonium is internally all the same floor, we need to actually
+    // clean up our torch status whenever we leave a Pan floor so that the player
+    // will be able to use it on the next one. Do the same for portals as well
+    // (for the few cases of repeatable portals, like Necropolis).
+    else if (!is_connected_branch(level) && you.props.exists(YRED_TORCH_USED_KEY))
+    {
+        CrawlHashTable &levels = you.props[YRED_TORCH_USED_KEY].get_table();
+        levels.erase(level.describe());
+    }
+
     _do_lost_monsters();
     _do_lost_items();
 }
@@ -3364,7 +3493,7 @@ save_version get_save_version(reader &file)
         if (minor == UINT8_MAX)
             minor = unmarshallInt(file);
     }
-    catch (short_read_exception& E)
+    catch (const short_read_exception&)
     {
         // Empty file?
         return save_version(-1, -1);
@@ -3392,7 +3521,7 @@ static bool _convert_obsolete_species()
     {
         if (!yesno(
             "This Lava Orc save game cannot be loaded as-is. If you load it now,\n"
-            "your character will be converted to a Hill Orc. Continue?",
+            "your character will be converted to a Mountain Dwarf. Continue?",
                        false, 'N'))
         {
             you.save->abort(); // don't even rewrite the header
@@ -3402,7 +3531,7 @@ static bool _convert_obsolete_species()
                 "Please load the save in an earlier version "
                 "if you want to keep it as a Lava Orc.");
         }
-        change_species_to(SP_HILL_ORC);
+        change_species_to(SP_MOUNTAIN_DWARF);
         // No need for conservation
         you.innate_mutation[MUT_CONSERVE_SCROLLS]
                                 = you.mutation[MUT_CONSERVE_SCROLLS] = 0;
@@ -3411,6 +3540,23 @@ static bool _convert_obsolete_species()
         // addition, even if the player isn't over lava, they might still get
         // trapped.
         fly_player(100);
+        return true;
+    }
+    else if (you.species == SP_VAMPIRE)
+    {
+        if (!yesno(
+            "This Vampire save game cannot be loaded as-is. If you load it now,\n"
+            "your character will be converted to a Human. Continue?",
+                       false, 'N'))
+        {
+            you.save->abort(); // don't even rewrite the header
+            delete you.save;
+            you.save = 0;
+            game_ended(game_exit::abort,
+                "Please load the save in an earlier version "
+                "if you want to remain a Vampire.");
+        }
+        change_species_to(SP_HUMAN);
         return true;
     }
 #endif
@@ -3468,7 +3614,7 @@ static player_save_info _read_character_info(package *save)
         result.save_loadable = _loadable_save_ver(major, minor);
         return result;
     }
-    catch (short_read_exception &E)
+    catch (const short_read_exception &)
     {
         fail("Save file `%s` corrupted (short read)", save->get_filename().c_str());
     };
@@ -3544,7 +3690,7 @@ static bool _restore_tagged_chunk(package *save, const string &name,
     {
         tag_read(inf, tag);
     }
-    catch (short_read_exception &E)
+    catch (const short_read_exception&)
     {
         fail("truncated save chunk (%s)", name.c_str());
     };
@@ -3605,7 +3751,7 @@ static FILE* _make_bones_file(string * return_gfilename)
 
 static size_t _ghost_permastore_size()
 {
-    if (_bones_save_individual_levels(true))
+    if (_bones_save_individual_levels(you.where_are_you, true))
         return GHOST_PERMASTORE_SIZE;
     else
         return GHOST_PERMASTORE_SIZE * 2;

@@ -11,11 +11,14 @@
 #include <algorithm>
 #include <cmath>
 
+#include "act-iter.h" // buff trap monster finding
 #include "areas.h"
+#include "art-enum.h"
 #include "bloodspatter.h"
 #include "branch.h"
 #include "cloud.h"
 #include "coordit.h"
+#include "database.h" // harlequin trap lines
 #include "delay.h"
 #include "describe.h"
 #include "dungeon.h"
@@ -34,7 +37,6 @@
 #include "mon-place.h"
 #include "nearby-danger.h"
 #include "orb.h"
-#include "player-stats.h" // lose_stat for zot traps
 #include "random.h"
 #include "religion.h"
 #include "shout.h"
@@ -45,10 +47,21 @@
 #include "state.h"
 #include "stringutil.h"
 #include "tag-version.h"
+#include "rltiles/tiledef-gui.h"
 #include "teleport.h"
 #include "terrain.h"
 #include "travel.h"
+#include "view.h"
 #include "xom.h"
+
+static string _net_immune_reason()
+{
+    if (you.unrand_equipped(UNRAND_SLICK_SLIPPERS))
+        return "You slip through the net.";
+    else if (you.is_insubstantial() || you.is_amorphous())
+        return "The net passes straight through you.";
+    return "";
+}
 
 static const string TRAP_PROJECTILE_KEY = "trap_projectile";
 
@@ -82,8 +95,7 @@ void trap_def::prepare_ammo(int charges)
     {
     case TRAP_GOLUBRIA:
         // really, time until it vanishes
-        ammo_qty = (orb_limits_translocation() ? 10 + random2(10)
-                                               : 30 + random2(20));
+        ammo_qty = 10 + random2(10);
         break;
     case TRAP_TELEPORT:
         ammo_qty = 1;
@@ -124,7 +136,12 @@ bool trap_def::is_bad_for_player() const
     return type == TRAP_ALARM
            || type == TRAP_DISPERSAL
            || type == TRAP_ZOT
-           || type == TRAP_NET;
+           || type == TRAP_NET
+           || type == TRAP_PLATE
+           || type == TRAP_TYRANT
+           || type == TRAP_ARCHMAGE
+           || type == TRAP_HARLEQUIN
+           || type == TRAP_DEVOURER;
 }
 
 bool trap_def::is_safe(actor* act) const
@@ -155,11 +172,81 @@ bool trap_def::is_safe(actor* act) const
     if (type == TRAP_GOLUBRIA || type == TRAP_SHAFT)
         return true;
 
+    if (type == TRAP_NET && !_net_immune_reason().empty())
+        return true;
+
     // Let players specify traps as safe via lua.
     if (clua.callbooleanfn(false, "c_trap_is_safe", "s", trap_name(type).c_str()))
         return true;
 
     return false;
+}
+
+// When giving AF_CHAOTIC to monsters, skip holy monsters due to potential vamp
+// or draining attacks. They also need attacks that aren't already chaos brand.
+bool chaos_lace_criteria (monster* mon) {
+    return mons_has_attacks(*mon) && !(mon->is_peripheral())
+            && !(mon->is_holy()) && !(is_good_god(mon->god))
+            && (mons_attack_spec(*mon, 0, true).flavour != AF_CHAOTIC);
+}
+
+// Used for tyrant's traps, archmage's traps, and harlequin's traps:
+// get a buff, look for the two or three highest-HD valid monsters without the
+// buff, then give it to each of them. Returns the affected monsters the
+// player can see for messaging purposes per-trap afterwards.
+static vector<monster*> _find_and_buff_trap_targets(enchant_type enchant,
+                                                    coord_def pos, int time)
+{
+    vector<monster*> options;
+    vector<monster*> buffed;
+
+    for (monster_near_iterator mi(pos, LOS_NO_TRANS); mi; ++mi)
+    {
+        if (!(mi->has_ench(enchant)) && !(mi->wont_attack())
+             && !(mi->is_peripheral()))
+        {
+            if (enchant == ENCH_MIGHT && mons_has_attacks(**mi))
+                options.push_back(*mi);
+            else if (enchant == ENCH_EMPOWERED_SPELLS && mi->antimagic_susceptible())
+                options.push_back(*mi);
+            else if (enchant == ENCH_CHAOS_LACE && chaos_lace_criteria(*mi))
+                options.push_back(*mi);
+        }
+    }
+
+    shuffle_array(options);
+    sort(options.begin( ), options.end( ), [](actor* a, actor* b)
+    { return a->get_hit_dice() > b->get_hit_dice(); });
+
+    if (!(options.empty()))
+    {
+        int fuzz = random_range(2, 3);
+        int cap = (int(options.size()) > fuzz) ? fuzz : options.size();
+        int affected = 0;
+
+        for (monster *mons : options)
+        {
+            if (affected < cap)
+            {
+                if (enchant == ENCH_CHAOS_LACE && you.see_cell(mons->pos()))
+                {
+                    flash_tile(mons->pos(), random_choose(RED, BLUE, GREEN,
+                               YELLOW, MAGENTA), 120, TILE_BOLT_CHAOS_BUFF);
+                }
+
+                mons->add_ench(mon_enchant(enchant, 0, nullptr, time));
+
+                // Traps effects are established as trap-los centric,
+                // so don't inform players of monsters out of sight.
+                if (you.see_cell(mons->pos()))
+                    buffed.push_back(mons);
+
+                affected++;
+            }
+        }
+    }
+
+    return buffed;
 }
 
 /**
@@ -200,33 +287,6 @@ const char* held_status(actor *act)
         return "caught in a web";
 }
 
-// If there are more than one net on this square
-// split off one of them for checking/setting values.
-static void _maybe_split_nets(item_def &item, const coord_def& where)
-{
-    if (item.quantity == 1)
-    {
-        set_net_stationary(item);
-        return;
-    }
-
-    item_def it;
-
-    it.base_type = item.base_type;
-    it.sub_type  = item.sub_type;
-    it.net_durability      = item.net_durability;
-    it.net_placed  = item.net_placed;
-    it.flags     = item.flags;
-    it.special   = item.special;
-    it.quantity  = --item.quantity;
-    item_colour(it);
-
-    item.quantity = 1;
-    set_net_stationary(item);
-
-    copy_item_to_grid(it, where);
-}
-
 static void _mark_net_trapping(const coord_def& where)
 {
     int net = get_trapping_net(where);
@@ -234,7 +294,7 @@ static void _mark_net_trapping(const coord_def& where)
     {
         net = get_trapping_net(where, false);
         if (net != NON_ITEM)
-            _maybe_split_nets(env.item[net], where);
+            maybe_split_nets(env.item[net], where);
     }
 }
 
@@ -246,19 +306,26 @@ static void _mark_net_trapping(const coord_def& where)
  */
 bool monster_caught_in_net(monster* mon)
 {
-    if (mon->body_size(PSIZE_BODY) >= SIZE_GIANT)
+    if (mon->is_insubstantial() || mon->is_amorphous())
     {
-        if (you.see_cell(mon->pos()))
+        if (you.can_see(*mon))
         {
-            if (!mon->visible_to(&you))
-                mpr("The net bounces off something gigantic!");
+            if (mon->is_insubstantial())
+            {
+                mprf("The net passes right through %s!",
+                     mon->name(DESC_THE).c_str());
+            }
             else
-                simple_monster_message(*mon, " is too large for the net to hold!");
+            {
+                mprf("%s effortlessly oozes through the net!",
+                     mon->name(DESC_THE).c_str());
+            }
         }
         return false;
     }
 
-    if (mons_class_is_stationary(mon->type))
+    monster_info mi(mon);
+    if (mi.net_immune())
     {
         if (you.see_cell(mon->pos()))
         {
@@ -269,16 +336,6 @@ bool monster_caught_in_net(monster* mon)
             }
             else
                 mpr("The net is caught on something unseen!");
-        }
-        return false;
-    }
-
-    if (mon->is_insubstantial())
-    {
-        if (you.can_see(*mon))
-        {
-            mprf("The net passes right through %s!",
-                 mon->name(DESC_THE).c_str());
         }
         return false;
     }
@@ -300,53 +357,42 @@ bool monster_caught_in_net(monster* mon)
 
 bool player_caught_in_net()
 {
-    if (you.body_size(PSIZE_BODY) >= SIZE_GIANT)
+    if (!_net_immune_reason().empty())
         return false;
 
-    if (!you.attribute[ATTR_HELD])
-    {
-        mpr("You become entangled in the net!");
-        stop_running();
+    if (you.attribute[ATTR_HELD])
+        return false;
 
-        // Set the attribute after the mpr, otherwise the screen updates
-        // and we get a glimpse of a web because there isn't a trapping net
-        // item yet
-        you.attribute[ATTR_HELD] = 1;
+    mpr("You become entangled in the net!");
+    stop_running();
 
-        stop_delay(true); // even stair delays
-        return true;
-    }
-    return false;
+    // Set the attribute after the mpr, otherwise the screen updates
+    // and we get a glimpse of a web because there isn't a trapping net
+    // item yet
+    you.attribute[ATTR_HELD] = 1;
+    you.redraw_evasion = true;
+
+    stop_delay(true); // even stair delays
+    return true;
 }
 
 void check_net_will_hold_monster(monster* mons)
 {
     ASSERT(mons); // XXX: should be monster &mons
-    if (mons->body_size(PSIZE_BODY) >= SIZE_GIANT)
-    {
-        int net = get_trapping_net(mons->pos());
-        if (net != NON_ITEM)
-            destroy_item(net);
-
-        if (you.see_cell(mons->pos()))
-        {
-            if (mons->visible_to(&you))
-            {
-                mprf("The net rips apart, and %s comes free!",
-                     mons->name(DESC_THE).c_str());
-            }
-            else
-                mpr("All of a sudden the net rips apart!");
-        }
-    }
-    else if (mons->is_insubstantial())
+    if (mons->is_insubstantial() || mons->is_amorphous())
     {
         const int net = get_trapping_net(mons->pos());
         if (net != NON_ITEM)
             free_stationary_net(net);
 
-        simple_monster_message(*mons,
-                               " drifts right through the net!");
+        if (mons->is_insubstantial())
+        {
+            simple_monster_message(*mons,
+                                   " drifts right through the net!");
+        }
+        else
+            simple_monster_message(*mons,
+                                   " oozes right through the net!");
     }
     else
         mons->add_ench(ENCH_HELD);
@@ -410,7 +456,7 @@ static passage_type _find_other_passage_side(coord_def& to)
 // Table of possible Zot trap effects as pairs with weights.
 // 2/3 are "evil magic", 1/3 are "summons"
 static const vector<pair<function<void ()>, int>> zot_effects = {
-    { [] { lose_stat(STAT_RANDOM, 1 + random2avg(5, 2)); }, 4 },
+    { [] { blind_player(random_range(15, 20)); }, 4 },
     { [] { contaminate_player(7000 + random2avg(13000, 2), false); }, 4 },
     { [] { you.paralyse(nullptr, 2 + random2(4), "a Zot trap"); }, 1 },
     { [] { drain_mp(you.magic_points); canned_msg(MSG_MAGIC_DRAIN); }, 2 },
@@ -421,7 +467,7 @@ static const vector<pair<function<void ()>, int>> zot_effects = {
     { [] {
               mgen_data mg = mgen_data::hostile_at(RANDOM_DEMON_GREATER,
                                                    true, you.pos());
-              mg.set_summoned(nullptr, 0, SPELL_NO_SPELL, GOD_NO_GOD);
+              mg.set_summoned(nullptr, MON_SUMM_ZOT);
               mg.set_non_actor_summoner("a Zot trap");
               mg.extra_flags |= (MF_NO_REWARD | MF_HARD_RESET);
               if (create_monster(mg))
@@ -435,7 +481,7 @@ static const vector<pair<function<void ()>, int>> zot_effects = {
     { [] {
               mgen_data mg = mgen_data::hostile_at(MONS_TWISTER,
                                                    false, you.pos());
-              mg.set_summoned(nullptr, 2, SPELL_NO_SPELL, GOD_NO_GOD);
+              mg.set_summoned(nullptr, MON_SUMM_ZOT, summ_dur(2));
               mg.set_non_actor_summoner("a Zot trap");
               mg.extra_flags |= (MF_NO_REWARD | MF_HARD_RESET);
               if (create_monster(mg))
@@ -525,23 +571,27 @@ void trap_def::trigger(actor& triggerer)
         break;
     }
     case TRAP_DISPERSAL:
+    {
         dprf("Triggered dispersal.");
         if (you_trigger)
             mprf("You enter %s!", name(DESC_A).c_str());
         else
             mprf("%s enters %s!", triggerer.name(DESC_THE).c_str(),
                     name(DESC_A).c_str());
-        apply_visible_monsters([] (monster& mons) {
-                return !mons.no_tele() && monster_blink(&mons);
+        mid_t triggerer_mid = triggerer.mid;
+        apply_visible_monsters([triggerer_mid] (monster& mons) {
+                return (mons.mid != triggerer_mid) && !mons.no_tele() && monster_blink(&mons);
             }, pos);
         if (!you_trigger && you.see_cell_no_trans(pos))
         {
             you.blink();
-            interrupt_activity(activity_interrupt::teleport);
+            if (!you.no_tele(true))
+                interrupt_activity(activity_interrupt::teleport);
         }
         // Don't chain disperse
         triggerer.blink();
         break;
+    }
     case TRAP_TELEPORT:
     case TRAP_TELEPORT_PERMANENT:
         if (you_trigger)
@@ -558,6 +608,135 @@ void trap_def::trigger(actor& triggerer)
             triggerer.teleport(true);
         break;
 
+    case TRAP_TYRANT:
+    {
+        if (you_trigger)
+            mpr("You enter a tyrant's trap.");
+        else
+        {
+            mprf("%s %s!", triggerer.name(DESC_THE).c_str(),
+                 mons_intel(*m) >= I_HUMAN ? "invokes a tyrant's trap upon you" :
+                                             "sets off a tyrant's trap");
+        }
+
+        int debuff_time = 10 + random2(5);
+        you.increase_duration(DUR_WEAK, debuff_time, 50);
+
+        vector<monster*> buffed_mons = _find_and_buff_trap_targets(ENCH_MIGHT, pos,
+                                                                   debuff_time * 20);
+
+        // Subject-verb agreement versus plurality is a pain.
+        int visible_mons = 0;
+        for (monster* mon : buffed_mons)
+             if (you.can_see(*mon))
+                 visible_mons++;
+
+        if (buffed_mons.size() == 0)
+           mpr("Your strength is siphoned away, and you feel your attacks grow feeble!");
+        else
+        {
+            mprf("Your strength is siphoned away as %s grow%s stronger!",
+                describe_monsters_condensed(buffed_mons).c_str(),
+                visible_mons > 1 ? "" : "s");
+        }
+
+        break;
+    }
+
+    case TRAP_ARCHMAGE:
+    {
+        if (you_trigger)
+            mpr("You enter an archmage's trap.");
+        else
+        {
+            mprf("%s %s!", triggerer.name(DESC_THE).c_str(),
+                 mons_intel(*m) >= I_HUMAN ? "invokes an archmage's trap upon you" :
+                                             "sets off an archmage's trap");
+        }
+
+        int buff_time = 200 + random2(80);
+        int drain = min(you.magic_points, max(1, you.magic_points / 3));
+        if (drain > 0)
+            drain_mp(drain);
+
+        vector<monster*> buffed_mons = _find_and_buff_trap_targets(ENCH_EMPOWERED_SPELLS,
+                                                                   pos, buff_time);
+
+        if (buffed_mons.size() == 0)
+           mprf(MSGCH_WARN, "Your power is siphoned away!");
+        else
+        {
+            string m_list = describe_monsters_condensed(buffed_mons);
+
+            if (drain == 0)
+                mprf("The spells of %s are empowered!", m_list.c_str());
+            else
+            {
+                mprf(MSGCH_WARN, "Your power is siphoned away as the spells of %s are empowered!",
+                     m_list.c_str());
+            }
+        }
+        break;
+    }
+
+    case TRAP_HARLEQUIN:
+    {
+        if (you_trigger)
+            mpr("You enter a harlequin's trap.");
+
+        int buff_time = 200 + random2(80);
+
+        vector<monster*> buffed_mons = _find_and_buff_trap_targets(ENCH_CHAOS_LACE,
+                                                                   pos, buff_time);
+
+        if (buffed_mons.size() > 0)
+        {
+            // With no player-centric effect, don't keep spamming messages about
+            // monsters walking on the trap unless it actually does something.
+            if (!you_trigger)
+            {
+                mprf("%s %s!", triggerer.name(DESC_THE).c_str(),
+                 mons_intel(*m) >= I_HUMAN ? "invokes a harlequin's trap" :
+                                             "sets off a harlequin's trap");
+            }
+
+            string m_list = describe_monsters_condensed(buffed_mons);
+            mprf(MSGCH_MONSTER_ENCHANT, "%s the attacks of %s are laced with chaos!",
+                 getMiscString("harlequin_trap_lines").c_str(),  m_list.c_str());
+
+            // Almost certainly not worth setting up any penance;
+            // player-triggered Zot traps summoning demons don't either.
+            if (you_trigger && is_good_god(you.religion))
+                mprf(MSGCH_GOD, "You feel a twinge of divine disapproval.");
+        }
+        else if (!you_trigger)
+            mprf("%s enters a harlequin's trap.", triggerer.name(DESC_THE).c_str());
+
+        break;
+    }
+
+    case TRAP_DEVOURER:
+    {
+        if (you_trigger)
+            mpr("You enter a devourer's trap.");
+
+        if (x_chance_in_y(2, 3))
+        {
+            if (!you_trigger)
+            {
+                mprf("%s %s!", triggerer.name(DESC_THE).c_str(),
+                mons_intel(*m) >= I_HUMAN ? "invokes an devourer's trap upon you" :
+                                            "sets off an devourer's trap");
+            }
+            flash_tile(you.pos(), YELLOW, 60, TILE_BOLT_DEFAULT_YELLOW);
+            you.corrode(nullptr, "The trap's stomach acid");
+        }
+        else if (!you_trigger)
+            mprf("%s enters a devourer's trap.", triggerer.name(DESC_THE).c_str());
+
+        break;
+    }
+
     case TRAP_ALARM:
         // Alarms always mark the player, but not through glass
         // The trap gets destroyed to prevent the player from abusing an alarm
@@ -566,7 +745,7 @@ void trap_def::trigger(actor& triggerer)
             break;
         trap_destroyed = true;
         if (you_trigger)
-            mprf("You set off the alarm!");
+            mpr("You set off the alarm!");
         else
             mprf("%s %s the alarm!", triggerer.name(DESC_THE).c_str(),
                  mons_intel(*m) >= I_HUMAN ? "pulls" : "sets off");
@@ -627,7 +806,11 @@ void trap_def::trigger(actor& triggerer)
 
         if (!player_caught_in_net())
         {
-            mpr("The net is torn apart by your bulk.");
+            if (!m) // no message already printed
+                mpr("You trigger the net trap.");
+            const string reason = _net_immune_reason();
+            if (!reason.empty())
+                mpr(reason);
             break;
         }
 
@@ -656,7 +839,7 @@ void trap_def::trigger(actor& triggerer)
             {
                 if (m->is_insubstantial())
                     simple_monster_message(*m, " passes through a web.");
-                else if (mons_genus(m->type) == MONS_JELLY)
+                else if (m->is_amorphous())
                     simple_monster_message(*m, " oozes through a web.");
                 // too spammy for spiders, and expected
             }
@@ -729,6 +912,7 @@ void trap_def::trigger(actor& triggerer)
         {
         // keep this for messaging purposes
         const bool triggerer_seen = you.can_see(triggerer);
+        const bool triggerer_was_invisible_monster = m && m->has_ench(ENCH_INVIS) && !m->friendly();
 
         // Fire away!
         triggerer.do_shaft();
@@ -741,6 +925,15 @@ void trap_def::trigger(actor& triggerer)
                  triggerer_seen ? "The" : "A");
             know_trap_destroyed = true;
             trap_destroyed = true;
+
+            // If we shaft an invisible monster reactivate autopickup.
+            // We need to check for actual invisibility rather than
+            // whether we can see the monster. There are several edge
+            // cases where a monster is visible to the player but we
+            // still need to turn autopickup back on, such as
+            // TSO's halo or sticky flame.
+            if (triggerer_was_invisible_monster)
+                autotoggle_autopickup(false);
         }
         }
         break;
@@ -981,6 +1174,14 @@ dungeon_feature_type trap_feature(trap_type type)
         return DNGN_TRAP_TELEPORT;
     case TRAP_TELEPORT_PERMANENT:
         return DNGN_TRAP_TELEPORT_PERMANENT;
+    case TRAP_TYRANT:
+        return DNGN_TRAP_TYRANT;
+    case TRAP_ARCHMAGE:
+        return DNGN_TRAP_ARCHMAGE;
+    case TRAP_HARLEQUIN:
+        return DNGN_TRAP_HARLEQUIN;
+    case TRAP_DEVOURER:
+        return DNGN_TRAP_DEVOURER;
     case TRAP_ALARM:
         return DNGN_TRAP_ALARM;
     case TRAP_ZOT:
@@ -992,14 +1193,8 @@ dungeon_feature_type trap_feature(trap_type type)
         return DNGN_TRAP_SHADOW;
     case TRAP_SHADOW_DORMANT:
         return DNGN_TRAP_SHADOW_DORMANT;
-    case TRAP_ARROW:
-        return DNGN_TRAP_ARROW;
     case TRAP_SPEAR:
         return DNGN_TRAP_SPEAR;
-    case TRAP_BLADE:
-        return DNGN_TRAP_BLADE;
-    case TRAP_DART:
-        return DNGN_TRAP_DART;
     case TRAP_BOLT:
         return DNGN_TRAP_BOLT;
 #endif
@@ -1009,13 +1204,47 @@ dungeon_feature_type trap_feature(trap_type type)
         return DNGN_TRAP_PLATE;
 
 #if TAG_MAJOR_VERSION == 34
-    case TRAP_NEEDLE:
     case TRAP_GAS:
         return DNGN_TRAP_MECHANICAL;
 #endif
 
     default:
         die("placeholder trap type %d used", type);
+    }
+}
+
+trap_type trap_type_from_feature(dungeon_feature_type type)
+{
+    switch (type)
+    {
+    case DNGN_TRAP_WEB:
+        return TRAP_WEB;
+    case DNGN_TRAP_SHAFT:
+        return TRAP_SHAFT;
+    case DNGN_TRAP_DISPERSAL:
+        return TRAP_DISPERSAL;
+    case DNGN_TRAP_TELEPORT:
+        return TRAP_TELEPORT;
+    case DNGN_TRAP_TELEPORT_PERMANENT:
+        return TRAP_TELEPORT_PERMANENT;
+    case DNGN_TRAP_TYRANT:
+        return TRAP_TYRANT;
+    case DNGN_TRAP_ARCHMAGE:
+        return TRAP_ARCHMAGE;
+    case DNGN_TRAP_HARLEQUIN:
+        return TRAP_HARLEQUIN;
+    case DNGN_TRAP_ALARM:
+        return TRAP_ALARM;
+    case DNGN_TRAP_ZOT:
+        return TRAP_ZOT;
+    case DNGN_PASSAGE_OF_GOLUBRIA:
+        return TRAP_GOLUBRIA;
+    case DNGN_TRAP_NET:
+        return TRAP_NET;
+    case DNGN_TRAP_PLATE:
+        return TRAP_PLATE;
+    default:
+        return TRAP_UNASSIGNED;
     }
 }
 
@@ -1089,7 +1318,7 @@ void roll_trap_effects()
 
 static string _malev_msg()
 {
-    return make_stringf("A sourceless malevolence fills %s...",
+    return make_stringf("A malevolent force fills %s...",
                         branches[you.where_are_you].longname);
 }
 
@@ -1104,6 +1333,9 @@ static void _print_malev()
  */
 void do_trap_effects()
 {
+    if (crawl_state.game_is_descent())
+        return;
+
     // Try to shaft, teleport, or alarm the player.
 
     // We figure out which possibilities are allowed before picking which happens
@@ -1114,7 +1346,7 @@ void do_trap_effects()
     vector<trap_type> available_traps = { TRAP_TELEPORT };
     // Don't shaft the player when shafts aren't allowed in the location or when
     //  it would be into a dangerous end.
-    if (_is_valid_shaft_effect_level())
+    if (_is_valid_shaft_effect_level() && you.shaftable())
         available_traps.push_back(TRAP_SHAFT);
     // No alarms on the first 3 floors
     if (env.absdepth0 > 3)
@@ -1130,7 +1362,7 @@ void do_trap_effects()
                 simple_god_message(" reveals a hidden shaft just before you would have fallen in.");
                 return;
             }
-            if (you.do_shaft(false))
+            if (you.do_shaft())
                 set_shafted();
             break;
 
@@ -1145,18 +1377,19 @@ void do_trap_effects()
                 simple_god_message(" reveals an alarm trap just before you would have tripped it.");
                 return;
             }
-            mprf("With a horrendous wail, an alarm goes off!");
+            mpr("With a horrendous wail, an alarm goes off!");
             fake_noisy(40, you.pos());
             you.sentinel_mark(true);
             break;
 
         case TRAP_TELEPORT:
         {
-            string msg = make_stringf("%s and a teleportation trap spontaneously manifests!",
+            string msg = make_stringf("%s and a teleportation trap "
+                                      "spontaneously manifests!",
                                       _malev_msg().c_str());
             if (have_passive(passive_t::avoid_traps))
             {
-                mprf("%s", msg.c_str());
+                mpr(msg);
                 simple_god_message(" warns you in time for you to avoid it.");
                 return;
             }
@@ -1184,6 +1417,10 @@ level_id generic_shaft_dest(level_id place)
     // Shafts drop you 1/2/3 levels with equal chance.
     // 33.3% for 1, 2, 3 from D:3, less before
     place.depth += 1 + random2(min(place.depth, 3));
+
+    // In descent, instead always drop one floor. Too brutal otherwise.
+    if (crawl_state.game_is_descent())
+        place.depth = curr_depth + 1;
 
     if (place.depth > max_depth)
         place.depth = max_depth;
@@ -1257,12 +1494,30 @@ trap_type random_trap_for_place(bool dispersal_ok)
     const bool tele_ok = !crawl_state.game_is_sprint();
     const bool alarm_ok = env.absdepth0 > 3;
 
+    // Split lesser theme traps across branches to vary up those branches.
+    // (Most Zot and Tomb trap placement is done by vaults.)
+    const bool tyrant_ok = player_in_branch(BRANCH_ORC)
+                           || player_in_branch(BRANCH_SNAKE)
+                           || player_in_branch(BRANCH_VAULTS);
+    const bool archmage_ok = player_in_branch(BRANCH_SNAKE)
+                             || player_in_branch(BRANCH_ELF)
+                             || player_in_branch(BRANCH_DEPTHS);
+    const bool harlequin_ok = player_in_branch(BRANCH_DEPTHS)
+                              || player_in_branch(BRANCH_ZOT)
+                              || player_in_branch(BRANCH_PANDEMONIUM);
+    const bool devourer_ok = player_in_branch(BRANCH_SLIME)
+                             || player_in_branch(BRANCH_PANDEMONIUM);
+
     const pair<trap_type, int> trap_weights[] =
     {
-        { TRAP_DISPERSAL, dispersal_ok && tele_ok  ? 1 : 0},
-        { TRAP_TELEPORT,  tele_ok  ? 1 : 0},
-        { TRAP_SHAFT,    shaft_ok  ? 1 : 0},
-        { TRAP_ALARM,    alarm_ok  ? 1 : 0},
+        { TRAP_DISPERSAL, dispersal_ok && tele_ok  ? 4 : 0},
+        { TRAP_TELEPORT,  tele_ok      ? 5 : 0},
+        { TRAP_SHAFT,     shaft_ok     ? 4 : 0},
+        { TRAP_ALARM,     alarm_ok     ? 5 : 0},
+        { TRAP_TYRANT,    tyrant_ok    ? 3 : 0},
+        { TRAP_ARCHMAGE,  archmage_ok  ? 3 : 0},
+        { TRAP_HARLEQUIN, harlequin_ok ? 2 : 0},
+        { TRAP_DEVOURER,  devourer_ok  ? 2 : 0},
     };
 
     const trap_type *trap = random_choose_weighted(trap_weights);
@@ -1331,13 +1586,6 @@ bool ensnare(actor *fly)
         return false;
     }
 
-    if (fly->body_size() >= SIZE_GIANT)
-    {
-        if (you.can_see(*fly))
-            mprf("A web harmlessly splats on %s.", fly->name(DESC_THE).c_str());
-        return false;
-    }
-
     // If we're over water, an open door, shop, portal, etc, the web will
     // fail to attach and you'll be released after a single turn.
     if (env.grid(fly->pos()) == DNGN_FLOOR)
@@ -1381,12 +1629,8 @@ bool is_removed_trap(trap_type trap)
 {
     switch (trap)
     {
-    case TRAP_ARROW:
-    case TRAP_DART:
     case TRAP_SPEAR:
-    case TRAP_BLADE:
     case TRAP_BOLT:
-    case TRAP_NEEDLE:
     case TRAP_GAS:
     case TRAP_SHADOW:
     case TRAP_SHADOW_DORMANT:

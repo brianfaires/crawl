@@ -72,7 +72,7 @@ static vector<coord_def> ray_coords;
 
 // These store all unique minimal cellrays. For each i,
 // cellray i ends in cellray_ends[i] and passes through
-// thoses cells p that have blockrays(p)[i] set. In other
+// those cells p that have blockrays(p)[i] set. In other
 // words, blockrays(p)[i] is set iff an opaque cell p blocks
 // the cellray with index i.
 static vector<coord_def> cellray_ends;
@@ -154,8 +154,7 @@ struct los_ray : public ray_def
         los_ray copy = *this;
         coord_def c;
         coord_def old;
-        int cellnum;
-        for (cellnum = 0; true; ++cellnum)
+        while (true)
         {
             old = c;
             if (!copy.advance())

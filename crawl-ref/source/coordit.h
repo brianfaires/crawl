@@ -4,6 +4,7 @@
 #include "coord-circle.h"
 #include "los-type.h"
 
+#include <cstdint>
 #include <vector>
 
 using std::vector;
@@ -28,7 +29,7 @@ private:
 /**
  * @class random_rectangle_iterator
  * Iterator over coordinates in a rectangular region in a
- * random order. This interator does not favour any given
+ * random order. This iterator does not favour any given
  * direction, but is slower than rectangle_iterator.
  *
  * When this iterator has returned all elements, it will just
@@ -166,13 +167,21 @@ private:
     void push_neigh(coord_def from, int dx, int dy);
 };
 
-// If this becomes performance-critical, reimplement it as adjacent_iterator
-// with a permutation array.
-class fair_adjacent_iterator : public distance_iterator
+class fair_adjacent_iterator
 {
 public:
-    fair_adjacent_iterator(coord_def _center, bool _exclude_center = true)
-        : distance_iterator(_center, true, _exclude_center, 1) {}
+    fair_adjacent_iterator(coord_def _center);
+
+    operator bool() const noexcept PURE;
+    coord_def operator *() const noexcept PURE;
+    //const coord_def *operator->() const PURE;
+
+    void operator ++ ();
+    void operator ++ (int);
+private:
+    coord_def center;
+    std::uint_fast32_t remaining; // used as an array of 8 4-bit numbers
+    std::uint_fast8_t remaining_count;
 };
 
 # ifdef DEBUG_TESTS

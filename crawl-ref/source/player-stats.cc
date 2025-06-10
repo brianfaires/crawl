@@ -6,15 +6,11 @@
 #include "clua.h"
 #include "delay.h"
 #include "duration-type.h"
-#include "equipment-type.h"
 #include "files.h"
 #include "god-passive.h"
 #include "hints.h"
 #include "libutil.h"
 #include "macro.h"
-#ifdef TOUCH_UI
-#include "menu.h"
-#endif
 #include "message.h"
 #include "monster.h"
 #include "notes.h"
@@ -27,71 +23,45 @@
 #include "state.h"
 #include "stringutil.h"
 #include "tag-version.h"
-#ifdef TOUCH_UI
-#include "rltiles/tiledef-gui.h"
-#include "tilepick.h"
-#endif
 #include "transform.h"
 
-int player::stat(stat_type s, bool nonneg) const
+static int _stat_modifier(stat_type stat, bool innate_only);
+
+/**
+ * What's the player's value for a given stat?
+ *
+ * @param s      The stat in question (e.g. STAT_STR).
+ * @param nonneg Whether to cap the stat at 0.
+ * @param innate_only Whether to disregard stat modifiers other than those from
+ *                    innate mutations.
+ * @return       The player's value for a given stat; capped at MAX_STAT_VALUE.
+ */
+int player::stat(stat_type s, bool nonneg, bool innate_only) const
 {
-    const int val = max_stat(s) - stat_loss[s];
+    const int val = min(base_stats[s] + _stat_modifier(s, innate_only), MAX_STAT_VALUE);
     return nonneg ? max(val, 0) : val;
 }
 
 int player::strength(bool nonneg) const
 {
-    return stat(STAT_STR, nonneg);
+    return stat(STAT_STR, nonneg, false);
 }
 
 int player::intel(bool nonneg) const
 {
-    return stat(STAT_INT, nonneg);
+    return stat(STAT_INT, nonneg, false);
 }
 
 int player::dex(bool nonneg) const
 {
-    return stat(STAT_DEX, nonneg);
+    return stat(STAT_DEX, nonneg, false);
 }
 
-static int _stat_modifier(stat_type stat, bool innate_only);
-
-/**
- * What's the player's current maximum for a stat, before ability damage is
- * applied?
- *
- * @param s      The stat in question (e.g. STAT_STR).
- * @param innate Whether to disregard stat modifiers other than those from
- *               innate mutations.
- * @return      The player's maximum for the given stat; capped at
- *              MAX_STAT_VALUE.
- */
-int player::max_stat(stat_type s, bool innate) const
-{
-    return min(base_stats[s] + _stat_modifier(s, innate), MAX_STAT_VALUE);
-}
-
-int player::max_strength() const
-{
-    return max_stat(STAT_STR);
-}
-
-int player::max_intel() const
-{
-    return max_stat(STAT_INT);
-}
-
-int player::max_dex() const
-{
-    return max_stat(STAT_DEX);
-}
-
-// Base stat including innate mutations (which base_stats does not)
+// Base stat including innate mutations, but no temporary effects.
 int innate_stat(stat_type s)
 {
-    return you.max_stat(s, true);
+    return you.stat(s, false, true);
 }
-
 
 static void _handle_stat_change(stat_type stat);
 
@@ -112,27 +82,6 @@ bool attribute_increase()
                                                   (statgain > 2) ?
                                                   " dramatic" : "n");
     crawl_state.stat_gain_prompt = true;
-#ifdef TOUCH_UI
-    learned_something_new(HINT_CHOOSE_STAT);
-    Menu pop(MF_SINGLESELECT | MF_ANYPRINTABLE);
-    MenuEntry * const status = new MenuEntry("", MEL_SUBTITLE);
-    MenuEntry * const s_me = new MenuEntry("Strength", MEL_ITEM, 1,
-                                                        need_caps ? 'S' : 's');
-    s_me->add_tile(tile_def(TILEG_FIGHTING_ON));
-    MenuEntry * const i_me = new MenuEntry("Intelligence", MEL_ITEM, 1,
-                                                        need_caps ? 'I' : 'i');
-    i_me->add_tile(tile_def(TILEG_SPELLCASTING_ON));
-    MenuEntry * const d_me = new MenuEntry("Dexterity", MEL_ITEM, 1,
-                                                        need_caps ? 'D' : 'd');
-    d_me->add_tile(tile_def(TILEG_DODGING_ON));
-
-    pop.set_title(new MenuEntry("Increase Attributes", MEL_TITLE));
-    pop.add_entry(new MenuEntry(stat_gain_message + " Increase:", MEL_TITLE));
-    pop.add_entry(status);
-    pop.add_entry(s_me);
-    pop.add_entry(i_me);
-    pop.add_entry(d_me);
-#else
     mprf(MSGCH_INTRINSIC_GAIN, "%s", stat_gain_message.c_str());
     learned_something_new(HINT_CHOOSE_STAT);
     if (innate_stat(STAT_STR) != you.strength()
@@ -147,7 +96,6 @@ bool attribute_increase()
     mprf(MSGCH_PROMPT, need_caps
         ? "Increase (S)trength, (I)ntelligence, or (D)exterity? "
         : "Increase (s)trength, (i)ntelligence, or (d)exterity? ");
-#endif
     mouse_control mc(MOUSE_MODE_PROMPT);
 
     bool tried_lua = false;
@@ -165,16 +113,11 @@ bool attribute_increase()
         }
         else
         {
-#ifdef TOUCH_UI
-            pop.show();
-            keyin = pop.getkey();
-#else
             while ((keyin = getchm()) == CK_REDRAW)
             {
                 redraw_screen();
                 update_screen();
             }
-#endif
         }
         tried_lua = true;
 
@@ -209,16 +152,8 @@ bool attribute_increase()
         case 's':
         case 'i':
         case 'd':
-#ifdef TOUCH_UI
-            status->text = "Uppercase letters only, please.";
-#else
             mprf(MSGCH_PROMPT, "Uppercase letters only, please.");
-#endif
             break;
-#ifdef TOUCH_UI
-        default:
-            status->text = "Please choose an option below"; // too naggy?
-#endif
         }
     }
 }
@@ -295,7 +230,60 @@ void notify_stat_change()
 
 static int _mut_level(mutation_type mut, bool innate_only)
 {
+    if (mut == MUT_NON_MUTATION)
+        return 0;
     return you.get_base_mutation_level(mut, true, !innate_only, !innate_only);
+}
+
+struct mut_stat_effect
+{
+    mutation_type mut;
+    int s;
+    int i;
+    int d;
+
+    int effect(stat_type which) const
+    {
+        switch (which)
+        {
+        case STAT_STR: return s;
+        case STAT_INT: return i;
+        case STAT_DEX: return d;
+        default: break;
+        }
+        return 0; // or ASSERT
+    }
+
+    int apply(stat_type which, bool innate_only) const
+    {
+        return _mut_level(mut, innate_only) * effect(which);
+    }
+};
+
+static const vector<mut_stat_effect> mut_stat_effects = {
+    //               s   i   d
+    { MUT_STRONG,    4, -1, -1 },
+    { MUT_AGILE,    -1, -1,  4 },
+    { MUT_CLEVER,   -1,  4, -1 },
+    { MUT_WEAK,     -2,  0,  0 },
+    { MUT_BIG_BRAIN, 0,  2,  0 },
+    { MUT_DOPEY,     0, -2,  0 },
+    { MUT_CLUMSY,    0,  0, -2 },
+    { MUT_THIN_SKELETAL_STRUCTURE,
+                     0,  0,  2 },
+#if TAG_MAJOR_VERSION == 34
+    { MUT_ROUGH_BLACK_SCALES, 0, 0, -1},
+    { MUT_STRONG_STIFF, 1, 0, -1 },
+    { MUT_FLEXIBLE_WEAK, -1, 0, 1 },
+#endif
+};
+
+static int _get_mut_effects(stat_type which_stat, bool innate_only)
+{
+    int total = 0;
+    for (const auto &e : mut_stat_effects)
+        total += e.apply(which_stat, innate_only);
+    return total;
 }
 
 static int _strength_modifier(bool innate_only)
@@ -310,10 +298,10 @@ static int _strength_modifier(bool innate_only)
         result += chei_stat_boost();
 
         // ego items of strength
-        result += 3 * count_worn_ego(SPARM_STRENGTH);
+        result += 3 * you.wearing_ego(OBJ_ARMOUR, SPARM_STRENGTH);
 
         // rings of strength
-        result += you.wearing(EQ_RINGS_PLUS, RING_STRENGTH);
+        result += you.wearing_jewellery(RING_STRENGTH);
 
         // randarts of strength
         result += you.scan_artefacts(ARTP_STRENGTH);
@@ -323,14 +311,7 @@ static int _strength_modifier(bool innate_only)
     }
 
     // mutations
-    result += 4 * _mut_level(MUT_STRONG, innate_only);
-    result -= 2 * _mut_level(MUT_WEAK, innate_only);
-    result -= _mut_level(MUT_CLEVER, innate_only);
-    result -= _mut_level(MUT_AGILE, innate_only);
-#if TAG_MAJOR_VERSION == 34
-    result += _mut_level(MUT_STRONG_STIFF, innate_only)
-              - _mut_level(MUT_FLEXIBLE_WEAK, innate_only);
-#endif
+    result += _get_mut_effects(STAT_STR, innate_only);
 
     return result;
 }
@@ -347,21 +328,17 @@ static int _int_modifier(bool innate_only)
         result += chei_stat_boost();
 
         // ego items of intelligence
-        result += 3 * count_worn_ego(SPARM_INTELLIGENCE);
+        result += 3 * you.wearing_ego(OBJ_ARMOUR, SPARM_INTELLIGENCE);
 
         // rings of intelligence
-        result += you.wearing(EQ_RINGS_PLUS, RING_INTELLIGENCE);
+        result += you.wearing_jewellery(RING_INTELLIGENCE);
 
         // randarts of intelligence
         result += you.scan_artefacts(ARTP_INTELLIGENCE);
     }
 
     // mutations
-    result += 4 * _mut_level(MUT_CLEVER, innate_only);
-    result += 2 * _mut_level(MUT_BIG_BRAIN, innate_only);
-    result -= 2 * _mut_level(MUT_DOPEY, innate_only);
-    result -= _mut_level(MUT_AGILE, innate_only);
-    result -= _mut_level(MUT_STRONG, innate_only);
+    result += _get_mut_effects(STAT_INT, innate_only);
 
     return result;
 }
@@ -378,10 +355,10 @@ static int _dex_modifier(bool innate_only)
         result += chei_stat_boost();
 
         // ego items of dexterity
-        result += 3 * count_worn_ego(SPARM_DEXTERITY);
+        result += 3 * you.wearing_ego(OBJ_ARMOUR, SPARM_DEXTERITY);
 
         // rings of dexterity
-        result += you.wearing(EQ_RINGS_PLUS, RING_DEXTERITY);
+        result += you.wearing_jewellery(RING_DEXTERITY);
 
         // randarts of dexterity
         result += you.scan_artefacts(ARTP_DEXTERITY);
@@ -391,18 +368,33 @@ static int _dex_modifier(bool innate_only)
     }
 
     // mutations
-    result += 4 * _mut_level(MUT_AGILE, innate_only);
-    result -= 2 * _mut_level(MUT_CLUMSY, innate_only);
-    result -= _mut_level(MUT_CLEVER, innate_only);
-    result -= _mut_level(MUT_STRONG, innate_only);
-#if TAG_MAJOR_VERSION == 34
-    result += _mut_level(MUT_FLEXIBLE_WEAK, innate_only)
-              - _mut_level(MUT_STRONG_STIFF, innate_only);
-    result -= _mut_level(MUT_ROUGH_BLACK_SCALES, innate_only);
-#endif
-    result += 2 * _mut_level(MUT_THIN_SKELETAL_STRUCTURE, innate_only);
+    result += _get_mut_effects(STAT_DEX, innate_only);
 
     return result;
+}
+
+static int _base_stat_with_muts(stat_type s)
+{
+    // XX semi code dup (with player::max_stat)
+    return min(you.base_stats[s] + _get_mut_effects(s, false), MAX_STAT_VALUE);
+}
+
+static int _base_stat_with_new_mut(stat_type which_stat, mutation_type mut)
+{
+    int base = _base_stat_with_muts(which_stat);
+    for (const auto &e : mut_stat_effects)
+        if (e.mut == mut)
+            base += e.apply(which_stat, false);
+    return base;
+}
+
+/// whether a mutation innately causes stat zero. Does not look at equpment etc.
+bool mutation_causes_stat_zero(mutation_type mut)
+{
+    // not very elegant...
+    return _base_stat_with_new_mut(STAT_STR, mut) <= 0
+        || _base_stat_with_new_mut(STAT_INT, mut) <= 0
+        || _base_stat_with_new_mut(STAT_DEX, mut) <= 0;
 }
 
 static int _stat_modifier(stat_type stat, bool innate_only)
@@ -418,181 +410,31 @@ static int _stat_modifier(stat_type stat, bool innate_only)
     }
 }
 
-static string _stat_name(stat_type stat)
-{
-    switch (stat)
-    {
-    case STAT_STR:
-        return "strength";
-    case STAT_INT:
-        return "intelligence";
-    case STAT_DEX:
-        return "dexterity";
-    default:
-        die("invalid stat");
-    }
-}
-
-int stat_loss_roll()
-{
-    const int loss = 30 + random2(30);
-    dprf("Stat loss points: %d", loss);
-
-    return loss;
-}
-
-bool lose_stat(stat_type which_stat, int stat_loss, bool force)
-{
-    if (stat_loss <= 0)
-        return false;
-
-    if (which_stat == STAT_RANDOM)
-        which_stat = static_cast<stat_type>(random2(NUM_STATS));
-
-    if (!force)
-    {
-        if (you.duration[DUR_DIVINE_STAMINA] > 0)
-        {
-            mprf("Your divine stamina protects you from %s loss.",
-                 _stat_name(which_stat).c_str());
-            return false;
-        }
-    }
-
-    mprf(MSGCH_WARN, "You feel %s.", stat_desc(which_stat, SD_LOSS));
-
-    you.stat_loss[which_stat] = min<int>(100,
-                                         you.stat_loss[which_stat] + stat_loss);
-    if (!you.attribute[ATTR_STAT_LOSS_XP])
-        you.attribute[ATTR_STAT_LOSS_XP] = stat_loss_roll();
-    _handle_stat_change(which_stat);
-    return true;
-}
-
-stat_type random_lost_stat()
-{
-    stat_type choice = NUM_STATS;
-    int found = 0;
-    for (int i = 0; i < NUM_STATS; ++i)
-        if (you.stat_loss[i] > 0)
-        {
-            found++;
-            if (one_chance_in(found))
-                choice = static_cast<stat_type>(i);
-        }
-    return choice;
-}
-
-// Restore the stat in which_stat by the amount in stat_gain, displaying
-// a message if suppress_msg is false, and doing so in the recovery
-// channel if recovery is true. If stat_gain is 0, restore the stat
-// completely.
-bool restore_stat(stat_type which_stat, int stat_gain,
-                  bool suppress_msg, bool recovery)
-{
-    // A bit hackish, but cut me some slack, man! --
-    // Besides, a little recursion never hurt anyone {dlb}:
-    if (which_stat == STAT_ALL)
-    {
-        bool stat_restored = false;
-        for (int i = 0; i < NUM_STATS; ++i)
-            if (restore_stat((stat_type) i, stat_gain, suppress_msg))
-                stat_restored = true;
-
-        return stat_restored;
-    }
-
-    if (which_stat == STAT_RANDOM)
-        which_stat = random_lost_stat();
-
-    if (which_stat >= NUM_STATS || you.stat_loss[which_stat] == 0)
-        return false;
-
-    if (!suppress_msg)
-    {
-        mprf(recovery ? MSGCH_RECOVERY : MSGCH_PLAIN,
-             "You feel your %s returning.",
-             _stat_name(which_stat).c_str());
-    }
-
-    if (stat_gain == 0 || stat_gain > you.stat_loss[which_stat])
-        stat_gain = you.stat_loss[which_stat];
-
-    you.stat_loss[which_stat] -= stat_gain;
-
-    // If we're fully recovered, clear out stat loss recovery timer.
-    if (random_lost_stat() == NUM_STATS)
-        you.attribute[ATTR_STAT_LOSS_XP] = 0;
-
-    _handle_stat_change(which_stat);
-    return true;
-}
-
-static void _normalize_stat(stat_type stat)
-{
-    ASSERT(you.stat_loss[stat] >= 0);
-    you.base_stats[stat] = min<int8_t>(you.base_stats[stat], MAX_STAT_VALUE);
-}
-
 static void _handle_stat_change(stat_type stat)
 {
     ASSERT_RANGE(stat, 0, NUM_STATS);
 
-    if (you.stat(stat) <= 0 && !you.duration[stat_zero_duration(stat)])
+    const bool was_zero = you.attribute[ATTR_STAT_ZERO] & (1 << (int)stat);
+    const int val = you.stat(stat);
+
+    if (val <= 0 && !was_zero)
     {
-        // Time required for recovery once the stat is restored, randomised slightly.
-        you.duration[stat_zero_duration(stat)] =
-            (20 + random2(20)) * BASELINE_DELAY;
-        mprf(MSGCH_WARN, "You have lost your %s.", stat_desc(stat, SD_NAME));
-        take_note(Note(NOTE_MESSAGE, 0, 0, make_stringf("Lost %s.",
-            stat_desc(stat, SD_NAME)).c_str()), true);
-        // 2 to 5 turns of paralysis (XXX: decremented right away?)
-        you.increase_duration(DUR_PARALYSIS, 2 + random2(3));
+        // Notify the player and make the penalty explicit.
+        mprf(MSGCH_WARN, "You have lost all your %s. It will be difficult to act "
+                         "quickly in this state!", stat_desc(stat, SD_NAME));
+
+        you.attribute[ATTR_STAT_ZERO] |= 1 << (int)stat;
+    }
+    else if (was_zero && val > 0)
+    {
+        mprf(MSGCH_RECOVERY, "You have recovered your %s.", stat_desc(stat, SD_NAME));
+        you.attribute[ATTR_STAT_ZERO] &= ~(1 << (int)stat);
     }
 
     you.redraw_stats[stat] = true;
-    _normalize_stat(stat);
-
-    switch (stat)
-    {
-    case STAT_STR:
-        you.redraw_armour_class = true; // includes shields
-        you.redraw_evasion = true; // Might reduce EV penalty
-        break;
-
-    case STAT_INT:
-        break;
-
-    case STAT_DEX:
-        you.redraw_evasion = true;
-        you.redraw_armour_class = true; // includes shields
-        break;
-
-    default:
-        break;
-    }
-}
-
-duration_type stat_zero_duration(stat_type stat)
-{
-    switch (stat)
-    {
-    case STAT_STR:
-        return DUR_COLLAPSE;
-    case STAT_INT:
-        return DUR_BRAINLESS;
-    case STAT_DEX:
-        return DUR_CLUMSY;
-    default:
-        die("invalid stat");
-    }
 }
 
 bool have_stat_zero()
 {
-    for (int i = 0; i < NUM_STATS; ++i)
-        if (you.duration[stat_zero_duration(static_cast<stat_type> (i))])
-            return true;
-
-    return false;
+    return you.attribute[ATTR_STAT_ZERO] > 0;
 }

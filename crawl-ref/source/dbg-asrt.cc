@@ -154,10 +154,10 @@ static void _dump_player(FILE *file)
     fprintf(file, "MP: %d/%d; mod: %d\n",
             you.magic_points, you.max_magic_points,
             you.mp_max_adj);
-    fprintf(file, "Stats: %d (%d) %d (%d) %d (%d)\n",
-            you.strength(false), you.max_strength(),
-            you.intel(false), you.max_intel(),
-            you.dex(false), you.max_dex());
+    fprintf(file, "Stats: %d %d %d\n",
+            you.strength(false),
+            you.intel(false),
+            you.dex(false));
     fprintf(file, "Position: %s, god: %s (%d), turn_is_over: %d, "
                   "banished: %d\n",
             debug_coord_str(you.pos()).c_str(),
@@ -356,37 +356,18 @@ static void _dump_player(FILE *file)
     fprintf(file, "\n");
 
     fprintf(file, "Equipment:\n");
-    for (int i = EQ_FIRST_EQUIP; i < NUM_EQUIP; ++i)
+    for (player_equip_entry& entry : you.equipment.items)
     {
-        int8_t eq = you.equip[i];
-
-        if (eq == -1)
-            continue;
-
-        fprintf(file, "    eq slot #%d, inv slot #%d", i, (int) eq);
-        if (eq < 0 || eq >= ENDOFPACK)
+        fprintf(file, "    eq slot #%d, inv slot #%d", entry.slot, entry.item);
+        if (entry.item < 0 || entry.item >= ENDOFPACK)
         {
             fprintf(file, " <invalid>\n");
             continue;
         }
-        const bool unknown = !item_type_known(you.inv[eq]);
-        const bool melded  = you.melded[i];
-        string suffix = "";
-        if (unknown || melded)
-        {
-            suffix = " (";
-            if (unknown)
-            {
-                suffix += "unknown";
-                if (melded)
-                    suffix += ", ";
-            }
-            if (melded)
-                suffix += "melded";
-            suffix += ")";
-        }
-        fprintf(file, ": %s%s\n",
-                you.inv[eq].name(DESC_PLAIN, false, true).c_str(), suffix.c_str());
+        fprintf(file, ": %s%s%s\n",
+                entry.get_item().name(DESC_PLAIN, false, true).c_str(),
+                entry.melded ? "(melded)" : "",
+                entry.is_overflow ? "(overflow)" : "");
     }
     fprintf(file, "\n");
 
@@ -588,7 +569,7 @@ static void _dump_options(FILE *file)
 {
     fprintf(file, "RC options:\n");
     fprintf(file, "restart_after_game = %s\n",
-            maybe_to_string(Options.restart_after_game).c_str());
+            Options.restart_after_game.to_string().c_str());
     fprintf(file, "\n\n");
 }
 
@@ -637,15 +618,20 @@ void do_crash_dump()
 
     if (!crawl_state.test && !cause_msg.empty())
         fprintf(stderr, "\n%s", cause_msg.c_str());
-    // This message is parsed by the WebTiles server.
+    // This message is parsed by the WebTiles server. In particular, if you
+    // change the line that prints the crash report filename, you must update
+    // CrawlProcessHandler._on_process_error.
     fprintf(stderr,
-            "\n\nWe crashed! This is likely due to a bug in Crawl. "
-            "\nPlease submit a bug report at https://github.com/crawl/crawl/issues or at"
-            "\nhttps://crawl.develz.org/mantis/ and include:"
+            "\n\nWe crashed! This is likely due to a bug in " CRAWL_SHORT "."
+            "\nPlease submit a bug report to:"
+            "\n    " CRAWL_BUG_REPORT
+            "\nand include at least:"
             "\n- The crash report: %s"
             "\n- Your save file: %s"
+            "\n- Information about your computer and game version: %s %s (%s)"
             "\n- A description of what you were doing when this crash occurred.\n\n",
-            name, get_savedir_filename(you.your_name).c_str());
+            name, get_savedir_filename(you.your_name).c_str(),
+            CRAWL, Version::Long, CRAWL_BUILD_NAME);
     errno = 0;
     // TODO: this freopen of stderr persists into a recursive crash, making it
     // hard to directly log in webtiles...
@@ -694,7 +680,7 @@ void do_crash_dump()
     // generation info if the crash happened during level generation.
     _dump_level_info(file);
 
-    // Dumping information on marker inconsistancy is unlikely to crash,
+    // Dumping information on marker inconsistency is unlikely to crash,
     // as is dumping the descriptions of non-Lua markers.
     fprintf(file, "Markers:\n");
     fprintf(file, "<<<<<<<<<<<<<<<<<<<<<<\n");

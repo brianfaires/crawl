@@ -42,6 +42,7 @@ string wu_jian_random_sifu_name();
 god_type str_to_god(const string &name, bool exact = true);
 
 int initial_wrath_penance_for(god_type god);
+void maybe_clear_traitor(god_type god);
 bool active_penance(god_type god);
 bool xp_penance(god_type god);
 void dec_penance(int val);
@@ -51,7 +52,7 @@ void excommunication(bool voluntary = false, god_type new_god = GOD_NO_GOD);
 int excom_xp_docked();
 
 bool gain_piety(int pgn, int denominator = 1, bool should_scale_piety = true);
-void dock_piety(int pietyloss, int penance);
+void dock_piety(int pietyloss, int penance, bool no_lecture = false);
 void god_speaks(god_type god, const char *mesg);
 void lose_piety(int pgn);
 void set_piety(int piety);
@@ -103,7 +104,6 @@ bool god_hates_eating(god_type god, monster_type mc);
 bool god_likes_spell(spell_type spell, god_type god);
 bool god_hates_spellcasting(god_type god);
 bool god_hates_spell(spell_type spell, god_type god, bool fake_spell = false);
-bool god_loathes_spell(spell_type spell, god_type god);
 string god_spell_warn_string(spell_type spell, god_type god);
 
 void initialize_ashenzari_props();
@@ -111,9 +111,6 @@ bool god_protects_from_harm();
 bool jiyva_is_dead();
 bool ignis_is_dead();
 void set_penance_xp_timeout();
-bool fedhas_protects(const monster* target);
-bool god_protects(const actor *agent, const monster *target, bool quiet=true);
-bool god_protects(const monster *target, bool quiet=true);
 bool fedhas_neutralises(const monster& target);
 void nemelex_death_message();
 
@@ -123,13 +120,10 @@ bool faith_has_penalty();
 void mons_make_god_gift(monster& mon, god_type god = you.religion);
 bool mons_is_god_gift(const monster& mon, god_type god = you.religion);
 
-bool yred_random_servant(unsigned int threshold, bool force_hostile = false);
-void give_yred_bonus_zombies(int stars);
+bool yred_random_servant(unsigned int threshold, bool force_hostile = false, int num = 1);
 bool yred_reap_chance();
-bool yred_reclaim_souls(bool all = false);
-bool pay_yred_souls(unsigned int how_many, bool just_check = false);
-bool is_yred_undead_slave(const monster& mon);
-bool is_orcish_follower(const monster& mon);
+bool is_yred_undead_follower(const monster& mon);
+bool is_apostle_follower(const monster& mon);
 bool is_fellow_slime(const monster& mon);
 bool is_follower(const monster& mon);
 
@@ -144,6 +138,8 @@ int hepliaklqana_ally_hp();
 void upgrade_hepliaklqana_ancestor(bool quiet_force = false);
 void upgrade_hepliaklqana_weapon(monster_type mtyp, item_def &item);
 void upgrade_hepliaklqana_shield(const monster& ancestor, item_def &item);
+
+void makhleb_initialize_marks();
 
 bool god_hates_attacking_friend(god_type god, const monster& fr);
 

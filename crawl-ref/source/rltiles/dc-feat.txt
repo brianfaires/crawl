@@ -40,6 +40,18 @@ tree_dead3
 tree_dead4
 tree_dead5
 
+%variation DNGN_TREE blue
+tree_of_woe1 DNGN_TREE_OF_WOE
+tree_of_woe2
+tree_of_woe3
+tree_of_woe4
+
+%variation DNGN_TREE lightblue
+dead_tree_of_woe1 DNGN_DEAD_TREE_OF_WOE
+dead_tree_of_woe2
+dead_tree_of_woe3
+dead_tree_of_woe4
+
 %weight 10
 mangrove1 DNGN_MANGROVE
 %weight 8
@@ -52,21 +64,37 @@ tree_petrified2
 tree_petrified3
 
 tree_demonic1 DNGN_DEMONIC_TREE
+%syn DNGN_DEMONIC_TREE_1
 tree_demonic2
+%syn DNGN_DEMONIC_TREE_2
 tree_demonic3
+%syn DNGN_DEMONIC_TREE_3
 tree_demonic4
+%syn DNGN_DEMONIC_TREE_4
 tree_demonic5
+%syn DNGN_DEMONIC_TREE_5
 tree_demonic6
+%syn DNGN_DEMONIC_TREE_6
 tree_demonic7
+%syn DNGN_DEMONIC_TREE_7
 tree_demonic8
+%syn DNGN_DEMONIC_TREE_8
 tree_demonic9
+%syn DNGN_DEMONIC_TREE_9
 tree_demonic10
+%syn DNGN_DEMONIC_TREE_10
 tree_demonic11
+%syn DNGN_DEMONIC_TREE_11
 tree_demonic12
+%syn DNGN_DEMONIC_TREE_12
 tree_demonic13
+%syn DNGN_DEMONIC_TREE_13
 tree_demonic14
+%syn DNGN_DEMONIC_TREE_14
 tree_demonic15
+%syn DNGN_DEMONIC_TREE_15
 tree_demonic16
+%syn DNGN_DEMONIC_TREE_16
 
 # We put the berserk icon on the dngn tilesheet for rendering purposes.
 %sdir misc/icons
@@ -174,9 +202,10 @@ vgate_broken_down_crypt DNGN_VGATE_BROKEN_DOWN_CRYPT
 ## Alternate doors for vaults, etc. Should be in the order listed above for
 ## doors which also provide gateways; otherwise detected, closed, open, broken,
 ## or closed, open, broken.
-fleshy_orifice_closed DNGN_FLESHY_ORIFICE
-fleshy_orifice_open
-fleshy_orifice_ruined
+%sdir dngn/vaults
+cigotuvi_door_closed DNGN_FLESHY_ORIFICE
+cigotuvi_door_open
+cigotuvi_door_ruined
 
 # Place new door tiles before this point, otherwise they can't be used as
 # door overrides.
@@ -186,6 +215,7 @@ stone_arch DNGN_STONE_ARCH
 
 %sdir dngn/statues
 orcish_idol DNGN_ORCISH_IDOL
+metal_statue DNGN_METAL_STATUE
 # dungeon statues
 %weight 5
 statue_dwarf DNGN_GRANITE_STATUE
@@ -251,6 +281,58 @@ statue_maw
 statue_tentacles
 %syn DNGN_STATUE_TENTACLES
 
+# Depths and Zot statues
+%weight 5
+statue_depths_tengu DNGN_GRANITE_STATUE_DEPTHS
+%syn DNGN_STATUE_DEPTHS_TENGU
+statue_depths_spriggan
+%syn DNGN_STATUE_DEPTHS_SPRIGGAN
+%weight 3
+statue_depths_asmodeus
+%syn DNGN_STATUE_DEPTHS_ASMODEUS
+statue_depths_tomes
+%syn DNGN_STATUE_DEPTHS_TOMES
+%weight 1
+statue_depths_seraph
+%syn DNGN_STATUE_DEPTHS_SERAPH
+statue_depths_fangs
+%syn DNGN_STATUE_DEPTHS_FANGS
+
+%weight 6
+statue_depths_zot_dragon DNGN_GRANITE_STATUE_DEPTHS_ZOT
+%syn DNGN_STATUE_DEPTHS_ZOT_DRAGON
+statue_depths_zot_orb_guardian
+%syn DNGN_STATUE_DEPTHS_ZOT_ORB_GUARDIAN
+statue_depths_zot_tentacles
+%syn DNGN_STATUE_DEPTHS_ZOT_TENTACLES
+%weight 4
+statue_depths_zot_angel
+%syn DNGN_STATUE_DEPTHS_ZOT_ANGEL
+statue_depths_zot_devil
+%syn DNGN_STATUE_DEPTHS_ZOT_DEVIL
+%weight 2
+statue_depths_zot_cerebov
+%syn DNGN_STATUE_DEPTHS_ZOT_CEREBOV
+statue_depths_zot_lich
+%syn DNGN_STATUE_DEPTHS_ZOT_LICH
+%weight 1
+statue_depths_zot_ancient_evil
+%syn DNGN_STATUE_DEPTHS_ZOT_ANCIENT_EVIL
+
+%weight 7
+statue_zot_orb DNGN_GRANITE_STATUE_ZOT
+%syn DNGN_STATUE_ZOT_ORB
+statue_zot_serpent
+%syn DNGN_STATUE_ZOT_SERPENT
+%weight 5
+statue_zot_old_guardian
+%syn DNGN_STATUE_ZOT_OLD_GUARDIAN
+statue_zot_tornado
+%syn DNGN_STATUE_ZOT_TORNADO
+%weight 1
+statue_zot_oldest_guardian
+%syn DNGN_STATUE_ZOT_OLDEST_GUARDIAN
+
 # damaged statues
 %weight 1
 crumbled_column_1 DNGN_CRUMBLED_COLUMN
@@ -260,25 +342,114 @@ crumbled_column_4
 crumbled_column_5
 crumbled_column_6
 
+# depths statues, damaged or not
+depths_column DEPTHS_COLUMN
+depths_crumbled_column DEPTHS_CRUMBLED_COLUMN
+
 # Statues in Dis
 statue_iron DNGN_STATUE_IRON
 
 ## Features only used in certain minivaults
 %sdir dngn/vaults
 
-## Reworked statues for Zonguldrok Wizlab: gravestones
+##
+
+## Renamed statues for undead vaults: gravestones
 gravestone_blank DNGN_GRAVESTONE
 gravestone_writing1
 gravestone_writing2
+necropolis_gravestone_0 DNGN_NECROPOLIS_GRAVESTONE
+necropolis_gravestone_1
+necropolis_gravestone_2
 zshrine DNGN_ZONGULDROK_SHRINE
 
 # start TAG_MAJOR_VERSION == 34
 teleporter_ice_cave DNGN_TELEPORTER_ICE_CAVE
 # end TAG_MAJOR_VERSION
 
-## golden statues for the holy Pan level
+## golden statues for Gozag and TSO
 golden_statue_1 DNGN_GOLDEN_STATUE
 golden_statue_2
+golden_iron_statue DNGN_GOLDEN_IRON_STATUE
+
+## blue iron statues for Oka
+oka_iron_statue_1 DNGN_OKA_IRON_STATUE
+oka_iron_statue_2
+
+#### Random tile animation for statuary starts here.
+
+## silver statues for Zin and the Vaults
+%weight 10
+silver_statue_0 DNGN_SILVER_STATUE
+%weight 1
+silver_statue_1
+silver_statue_2
+
+## chaotic scintillating statues for Xom, Nem, and Klowns
+%weight 60
+scintillating_statue_0 DNGN_SCINTILLATING_STATUE
+%weight 15
+scintillating_statue_1
+%weight 3
+scintillating_statue_2
+scintillating_statue_3
+scintillating_statue_4
+
+## Renamed statues for menageries, kennels, experiments, etc
+mystic_cage_0 DNGN_MYSTIC_CAGE
+mystic_cage_1
+mystic_cage_2
+
+#### Random tile animation for statuary ends here.
+#### Cycling tile animation for statuary starts here.
+#### Weights need to be weight 1 for that code to work properly
+
+## magical conduits for themed magic branches, portals, vaults
+## conj, hex, summ / tloc, necro, alch, fire, ice, air, earth
+
+%weight 1
+arcane_conduit_0 ARCANE_CONDUIT
+arcane_conduit_1
+arcane_conduit_2
+arcane_conduit_3
+misfortune_conduit_0 MISFORTUNE_CONDUIT
+misfortune_conduit_1
+misfortune_conduit_2
+misfortune_conduit_3
+dimensional_conduit_0 DIMENSIONAL_CONDUIT
+dimensional_conduit_1
+dimensional_conduit_2
+dimensional_conduit_3
+soul_conduit_0 SOUL_CONDUIT
+soul_conduit_1
+soul_conduit_2
+soul_conduit_3
+alchemical_conduit_0 ALCHEMICAL_CONDUIT
+alchemical_conduit_1
+alchemical_conduit_2
+alchemical_conduit_3
+fiery_conduit_0 FIERY_CONDUIT
+fiery_conduit_1
+fiery_conduit_2
+fiery_conduit_3
+icy_conduit_0 ICY_CONDUIT
+icy_conduit_1
+icy_conduit_2
+icy_conduit_3
+earthen_conduit_0 EARTHEN_CONDUIT
+earthen_conduit_1
+earthen_conduit_2
+earthen_conduit_3
+storm_conduit_0 STORM_CONDUIT
+storm_conduit_1
+storm_conduit_2
+storm_conduit_3
+
+#### Cycling tile animation for statuary ends here.
+
+## machinery for wizlabs and Zot and nowhere else
+enigmatic_dynamo DNGN_ENIGMATIC_DYNAMO
+nascence_circuit DNGN_NASCENCE_CIRCUIT
 
 ## sarcophagus for ragdoll_tomb_raider
 sarcophagus_sealed DNGN_SARCOPHAGUS_SEALED
@@ -287,7 +458,7 @@ sarcophagus_sealed DNGN_SARCOPHAGUS_SEALED
 sarcophagus_pedestal_left DNGN_SARCOPHAGUS_PEDESTAL_LEFT
 sarcophagus_pedestal_right DNGN_SARCOPHAGUS_PEDESTAL_RIGHT
 
-## Animating statues for due_jungle_book, dis_mu, and grunt_dis_stairs_iron_hall
+## Animating statues for dis_mu and grunt_dis_stairs_iron_hall
 statue_elephant_jade DNGN_STATUE_ELEPHANT_JADE
 statue_iron_golem DNGN_STATUE_IRON_GOLEM
 
@@ -296,6 +467,48 @@ dimension_edge DNGN_DIMENSION_EDGE
 
 ## The disco ball in pan_disco_hall.
 disco_ball DNGN_DISCO_BALL
+
+## The Orb of Zot's pedestal
+orb_dais DNGN_ORB_DAIS
+
+## Loose floor deco.
+mop_1 DNGN_MOP
+mop_2 DNGN_MOP_BLOODY
+yak_fur DNGN_YAK_FUR
+lectern DNGN_LECTERN
+flower_pot_1 DNGN_FLOWER_POT
+flower_pot_broken_1 DNGN_FLOWER_POT_BROKEN
+flower_pot_2 DNGN_DARK_FLOWER_POT
+flower_pot_broken_2 DNGN_DARK_FLOWER_POT_BROKEN
+djembe_set DNGN_DJEMBE
+ensign_beogh DNGN_ENSIGN_BEOGH
+ensign_dark DNGN_ENSIGN_DARK
+ensign_gehenna DNGN_ENSIGN_GEHENNA
+## preferably have more of these
+%weight 10
+skull_pike_1 DNGN_SKULL_PIKE
+%weight 2
+skull_pike_2
+## Worth considering mostly behind glass with WALL_STUDIO bookcases.
+stacked_books_1 DNGN_STACKED_BOOKS
+stacked_books_2
+stacked_books_3
+## Ideally we'd actually have all fountains vary across branches using these as
+## a base, but this would need dry fountain and eye fountain variations drawn.
+fountain_double_decker DNGN_FOUNTAIN_NOVELTY_FANCY
+fountain_octopode DNGN_FOUNTAIN_NOVELTY_OCTOPODE
+fountain_stone_lantern DNGN_FOUNTAIN_NOVELTY_LANTERN
+fountain_xom DNGN_FOUNTAIN_NOVELTY_XOM
+##
+stone_smooth_beogh_0 STONE_SMOOTH_WALL_BEOGH
+stone_smooth_beogh_1
+gilded_reliquary DNGN_GILDED_RELIQUARY
+
+%sdir dngn/wall
+spike_launcher DNGN_SPIKE_LAUNCHER
+
+## Wall assets are not usable as is, edit on them top of the
+## desired wall texture as needed (ie TILE_NAME_banner_beogh)
 
 # A couple of placeholders in case we absolutely need
 # to add some more tiles for vault design.
@@ -307,22 +520,27 @@ misc/error PLACEHOLDER3
 %sdir dngn/traps
 ## traps
 # start TAG_MAJOR_VERSION == 34
-dart DNGN_TRAP_DART
-arrow DNGN_TRAP_ARROW
-needle DNGN_TRAP_NEEDLE
 bolt DNGN_TRAP_BOLT
 spear DNGN_TRAP_SPEAR
-blade DNGN_TRAP_BLADE
 # end TAG_MAJOR_VERSION
 net DNGN_TRAP_NET
 alarm DNGN_TRAP_ALARM
 shaft DNGN_TRAP_SHAFT
+tyrant DNGN_TRAP_TYRANT
+archmage DNGN_TRAP_ARCHMAGE
+harlequin0 DNGN_TRAP_HARLEQUIN
+harlequin1
+harlequin2
+harlequin3
+harlequin4
+devourer DNGN_TRAP_DEVOURER
 dispersal DNGN_TRAP_DISPERSAL
 teleport DNGN_TRAP_TELEPORT
 teleport_permanent DNGN_TRAP_TELEPORT_PERMANENT
 zot DNGN_TRAP_ZOT
 passage_of_golubria DNGN_TRAP_GOLUBRIA
 pressure_plate DNGN_TRAP_PLATE
+binding_sigil DNGN_BINDING_SIGIL
 
 # order matters (tilepick.c tileidx_feature())
 cobweb_none_0 DNGN_TRAP_WEB
@@ -384,6 +602,8 @@ shop_gadgets SHOP_GADGETS
 %shrink 1
 abandoned_shop DNGN_ABANDONED_SHOP
 
+#### Automatic animation starts here.
+
 %sdir dngn/gateways
 %rim 0
 enter_zot_closed DNGN_ENTER_ZOT_CLOSED
@@ -407,9 +627,9 @@ enter_shoals DNGN_ENTER_SHOALS
 exit_shoals DNGN_EXIT_SHOALS
 enter_slime DNGN_ENTER_SLIME
 exit_slime DNGN_EXIT_SLIME
-enter_vaults_closed DNGN_ENTER_VAULTS_CLOSED
-enter_vaults_open DNGN_ENTER_VAULTS_OPEN
-exit_vaults DNGN_EXIT_VAULTS
+enter_vaults_closed DNGN_EXIT_VAULTS_CLOSED
+enter_vaults_open DNGN_ENTER_VAULTS
+exit_vaults DNGN_EXIT_VAULTS_OPEN
 enter_depths DNGN_ENTER_DEPTHS
 return_depths DNGN_RETURN_DEPTHS
 enter_crypt DNGN_ENTER_CRYPT
@@ -453,15 +673,21 @@ transit_pandemonium DNGN_TRANSIT_PANDEMONIUM
 exit_pandemonium DNGN_EXIT_PANDEMONIUM
 exit_pandemonium_flickering
 
-
 # portal vault entrances
+necropolis_portal DNGN_PORTAL_NECROPOLIS
+necropolis_gone DNGN_NECROPOLIS_GONE
+necropolis_exit0 DNGN_EXIT_NECROPOLIS
+necropolis_exit1
 volcano_portal DNGN_PORTAL_VOLCANO
 volcano_gone DNGN_PORTAL_VOLCANO_GONE
 volcano_exit DNGN_EXIT_VOLCANO
 sewer_portal DNGN_PORTAL_SEWER
+sewer_exit DNGN_EXIT_SEWER
 sewer_portal_rusted DNGN_PORTAL_SEWER_RUSTED
 ice_cave_portal DNGN_PORTAL_ICE_CAVE
 ice_cave_gone DNGN_PORTAL_ICE_CAVE_GONE
+glacial_chasm_portal DNGN_PORTAL_GLACIAL_CHASM
+glacial_chasm_gone DNGN_PORTAL_GLACIAL_CHASM_GONE
 wizlab_portal0 DNGN_PORTAL_WIZARD_LAB
 wizlab_portal1
 wizlab_portal2
@@ -489,11 +715,18 @@ desolation_portal_closed DNGN_PORTAL_DESOLATION_GONE
 portal_unknown DNGN_UNKNOWN_PORTAL
 
 %sdir dngn/altars
-zin DNGN_ALTAR_ZIN
+zin1 DNGN_ALTAR_ZIN
+zin2
+zin3
+zin4
+zin5
+zin6
 shining_one DNGN_ALTAR_SHINING_ONE
 kikubaaqudgha DNGN_ALTAR_KIKUBAAQUDGHA
 yredelemnul DNGN_ALTAR_YREDELEMNUL
+%weight 3
 xom0 DNGN_ALTAR_XOM
+%weight 1
 xom1
 xom2
 xom3
@@ -536,12 +769,14 @@ jiyva08
 jiyva09
 jiyva10
 jiyva11
+jiyva12
 fedhas DNGN_ALTAR_FEDHAS
 cheibriados DNGN_ALTAR_CHEIBRIADOS
 ashenzari DNGN_ALTAR_ASHENZARI
-dithmenos DNGN_ALTAR_DITHMENOS
+dithmenos1 DNGN_ALTAR_DITHMENOS
 dithmenos2
 dithmenos3
+dithmenos4
 gozag0 DNGN_ALTAR_GOZAG
 gozag1
 gozag2
@@ -571,7 +806,7 @@ runelight1
 runelight2
 runelight3
 
-%sdir dngn
+%sdir dngn/decor
 blue_fountain DNGN_FOUNTAIN DNGN_BLUE_FOUNTAIN
 blue_fountain2
 
@@ -579,6 +814,7 @@ sparkling_fountain DNGN_SPARKLING_FOUNTAIN
 sparkling_fountain2
 blood_fountain DNGN_BLOOD_FOUNTAIN
 blood_fountain2
+eyes_fountain DNGN_EYES_FOUNTAIN
 dry_fountain DNGN_DRY_FOUNTAIN
 
 %variation DNGN_DRY_FOUNTAIN white
@@ -589,12 +825,36 @@ dry_fountain DNGN_DRY_FOUNTAIN
 %repeat DNGN_DRY_FOUNTAIN DNGN_DRY_FOUNTAIN_WHITE
 %resetcol
 
+decorative_floor DNGN_DECORATIVE_FLOOR
+
+%weight 8
+cache_of_fruit_0 DNGN_CACHE_OF_FRUIT
+cache_of_fruit_1
+%weight 10
+cache_of_fruit_2
+cache_of_meat_0 DNGN_CACHE_OF_MEAT
+%weight 3
+%syn DNGN_CACHE_OF_PIZZA
+cache_of_meat_1
+cache_of_baked_goods_1 DNGN_CACHE_OF_BAKED_GOODS
+cache_of_baked_goods_2
+garden_patch DNGN_GARDEN_PATCH
+%weight 10
+flower_patch_0 DNGN_FLOWER_PATCH
+%weight 7
+flower_patch_1
+flower_patch_2
+%weight 3
+flower_patch_3
+
+%sdir dngn
 # Remove this entry when TAG_MAJOR_VERSION == 34 is false.
 teleporter DNGN_TELEPORTER
 
 transporter DNGN_TRANSPORTER
 transporter_landing_site DNGN_TRANSPORTER_LANDING
 
+#### Automatic animation ends here.
 ## Miscellaneous entries that get drawn on the background.
 ## Flavour is fixed again.
 %sdir misc/blood
@@ -735,10 +995,18 @@ monster_threat_trivial THREAT_TRIVIAL
 monster_threat_easy THREAT_EASY
 monster_threat_tough THREAT_TOUGH
 monster_threat_nasty THREAT_NASTY
+ghost_threat_trivial THREAT_GHOST_TRIVIAL
+ghost_threat_easy THREAT_GHOST_EASY
+ghost_threat_tough THREAT_GHOST_TOUGH
+ghost_threat_nasty THREAT_GHOST_NASTY
+monster_threat_unusual THREAT_UNUSUAL
 
 travel_exclusion TRAVEL_EXCLUSION_BG
 travel_exclusion_centre TRAVEL_EXCLUSION_CENTRE_BG
+
 effect/sanctuary SANCTUARY
+effect/blood_for_blood BLOOD_FOR_BLOOD
+effect/blasphemy BLASPHEMY
 mold_small1 MOLD
 mold_small2
 mold_small3

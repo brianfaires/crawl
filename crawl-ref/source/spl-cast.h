@@ -24,13 +24,15 @@ enum class spflag
     none               = 0x00000000,
     dir_or_target      = 0x00000001,      // use DIR_NONE targeting
     target             = 0x00000002,      // use DIR_TARGET targeting
-                     //  0x00000004,
+    prefer_farthest    = 0x00000004,      // targets the most distant target
+                                          // by default
                      //  0x00000008,
                                           // used to test for targeting
     targeting_mask     = spflag::dir_or_target | spflag::target,
     obj                = 0x00000010,      // TARG_MOVABLE_OBJECT used
     helpful            = 0x00000020,      // TARG_FRIEND used
-    neutral            = 0x00000040,      // TARG_ANY used
+    aim_at_space       = 0x00000040,      // Spell aims at a location, not a
+                                          // monster. Defaults to aiming at self
     not_self           = 0x00000080,      // aborts on isMe
     unholy             = 0x00000100,      // counts as "unholy"
     unclean            = 0x00000200,      // counts as "unclean"
@@ -40,7 +42,8 @@ enum class spflag
     escape             = 0x00002000,      // useful for running away
     recovery           = 0x00004000,      // healing or recovery spell
     area               = 0x00008000,      // area affect
-                     //  0x00010000,      // was SPFLAG_BATTLE
+    destructive        = 0x00010000,      // not a conjuration, but still
+                                          // supported by Vehumet/Battlesphere
     selfench           = 0x00020000,      // monsters use as selfench
     monster            = 0x00040000,      // monster-only spell
     needs_tracer       = 0x00080000,      // monster casting needs tracer
@@ -54,10 +57,9 @@ enum class spflag
     WL_check           = 0x08000000,      // spell that checks monster WL
     mons_abjure        = 0x10000000,      // monsters can cast abjuration
                                           // instead of this spell
-    not_evil           = 0x20000000,      // not considered evil by the
-                                          // good gods
+                     //  0x20000000,      // was spflag::not_evil
     holy               = 0x40000000,      // considered holy (can't be
-                                          // used by Yred enslaved souls)
+                                          // used by Yred bound souls)
 };
 DEF_BITFIELD(spell_flags, spflag);
 
@@ -89,13 +91,11 @@ enum class spret
 void surge_power(const int enhanced);
 void surge_power_wand(const int mp_cost);
 
-int list_spells(bool toggle_with_I = true, bool viewing = false,
-                bool allow_preselect = true,
-                const string &title = "Your Spells");
-int raw_spell_fail(spell_type spell);
-int calc_spell_power(spell_type spell, bool apply_intel,
-                     bool fail_rate_chk = false, bool cap_power = true,
-                     int scale = 1);
+int list_spells(bool toggle_with_I = true, bool transient = false,
+                bool viewing = false, bool allow_preselect = true,
+                const string &title = "cast");
+int raw_spell_fail(spell_type spell, bool enkindled = false);
+int calc_spell_power(spell_type spell);
 int calc_spell_range(spell_type spell, int power = 0, bool allow_bonus = true,
                      bool ignore_shadows = false);
 
@@ -106,12 +106,12 @@ void inspect_spells();
 bool can_cast_spells(bool quiet = false);
 void do_cast_spell_cmd(bool force);
 
-int hex_success_chance(const int mr, int powc, int scale,
+int hex_success_chance(const int wl, int powc, int scale,
                        bool round_up = false);
 class targeter;
 unique_ptr<targeter> find_spell_targeter(spell_type spell, int pow, int range);
 bool spell_has_targeter(spell_type spell);
-string target_desc(const monster_info& mi, spell_type spell);
+string target_spell_desc(const monster_info& mi, spell_type spell);
 vector<string> desc_wl_success_chance(const monster_info& mi, int pow,
                                       targeter* hitfunc);
 vector<string> desc_beam_hit_chance(const monster_info& mi, targeter* hitfunc);
@@ -135,13 +135,20 @@ int power_to_barcount(int power);
 
 int spell_power_percent(spell_type spell);
 string spell_power_string(spell_type spell);
-string spell_damage_string(spell_type spell, bool evoked = false);
+string spell_damage_string(spell_type spell, bool evoked = false, int pow = -1,
+                           bool terse = false);
+string spell_max_damage_string(spell_type spell);
 int spell_acc(spell_type spell);
 string spell_range_string(spell_type spell);
-string range_string(int range, int maxrange, char32_t caster_char);
+string range_string(int range, int maxrange = -1, int minrange = 0);
 string spell_schools_string(spell_type spell);
-string spell_failure_rate_string(spell_type spell);
+string spell_failure_rate_string(spell_type spell, bool terse);
 string spell_noise_string(spell_type spell, int chop_wiz_display_width = 0);
 
 void spell_skills(spell_type spell, set<skill_type> &skills);
 void do_demonic_magic(int pow, int rank);
+
+bool channelled_spell_active(spell_type spell);
+void start_channelling_spell(spell_type spell, string reminder_msg = "", bool do_effect = true);
+void stop_channelling_spells(bool quiet = false);
+void handle_channelled_spell();

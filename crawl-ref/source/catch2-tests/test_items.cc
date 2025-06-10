@@ -1,4 +1,4 @@
-#include "catch.hpp"
+#include "catch_amalgamated.hpp"
 
 #include "AppHdr.h"
 
@@ -141,7 +141,7 @@ static void find_and_equip_exact_item(item_def item){
 
     REQUIRE(index != -1);
 
-    equip_item(get_armour_slot(item), index);
+    equip_item(get_all_item_slots(item)[0], index);
 }
 
 static void make_and_equip_item(object_class_type base_type, int sub_type,
@@ -213,4 +213,6 @@ TEST_CASE("Test all_item_subtypes() does include items for each category",
     REQUIRE(all_item_subtypes(OBJ_MISCELLANY).size() > 0);
     REQUIRE(all_item_subtypes(OBJ_GOLD).size() > 0);
     REQUIRE(all_item_subtypes(OBJ_RUNES).size() > 0);
+    REQUIRE(all_item_subtypes(OBJ_TALISMANS).size() > 0);
+    REQUIRE(all_item_subtypes(OBJ_GEMS).size() > 0);
 }

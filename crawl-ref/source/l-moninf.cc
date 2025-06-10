@@ -110,6 +110,11 @@ MIRET1(number, threat, threat)
  * @function mname
  */
 MIRET1(string, mname, mname.c_str())
+/*** The last turn the monster was seen at this location.
+ * @treturn int
+ * @function type
+ */
+MIRET1(number, last_seen_at_turn, last_seen_at_turn)
 /*** Monster type enum value as in monster_type.h.
  * @treturn int
  * @function type
@@ -127,8 +132,9 @@ MIRET1(number, base_type, base_type)
  */
 MIRET1(number, number, number)
 /*** Does this monster have a ranged attack we know about?
- * This refers to ranged weapons. Ranged spells and abilities are not included
- * in this check.
+ * A monster is considered to have a ranged attack if it has any of the
+ * following: a reach attack, a throwable missile, a launcher weapon, an
+ * attack wand, or an attack spell with a range greater than 1.
  * @treturn boolean
  * @function has_ranged_attack
  */
@@ -220,7 +226,7 @@ MIRES1(res_shock, MR_RES_ELEC)
  * @treturn int resistance level
  * @function res_corr
  */
-MIRES1(res_corr, MR_RES_ACID)
+MIRES1(res_corr, MR_RES_CORR)
 /*** Can the monster currently be frenzied?
  * Is it possible to affect the monster with the discord spell or a datura
  * dart?
@@ -270,7 +276,7 @@ static int moninf_get_defeat_wl(lua_State *ls)
     bool is_evoked = lua_isboolean(ls, 3) ? lua_toboolean(ls, 3) : false;
     int power = is_evoked ?
         (15 + you.skill(SK_EVOCATIONS, 7) / 2) * (wand_mp_cost() + 9) / 9 :
-        calc_spell_power(spell, true);
+        calc_spell_power(spell);
     spell_flags flags = get_spell_flags(spell);
     bool wl_check = testbits(flags, spflag::WL_check)
         && testbits(flags, spflag::dir_or_target)
@@ -338,17 +344,15 @@ static int moninf_get_target_desc(lua_State *ls)
     return 1;
 }
 
-/*** Returns the string displayed if you target this monster with a weapon (or unarmed attack).
- * @tparam[opt] weapon (item object) to use; omit for unarmed attack.
- * @treturn string (such as "about 18% to evade your dagger")
+/*** Returns the string displayed in xv for your current weapon hit chance.
+ * @treturn string (such as "about 82% to hit with your dagger")
  * @function target_weapon
  */
 static int moninf_get_target_weapon(lua_State *ls)
 {
     MONINF(ls, 1, mi);
-    item_def *item = (lua_isnone(ls, 2) || lua_isnil(ls, 2)) ? nullptr : *(item_def **) luaL_checkudata(ls, 2, ITEM_METATABLE);
     ostringstream result;
-    describe_to_hit(*mi, result, false, item);
+    describe_to_hit(*mi, result, you.weapon(), true);
     lua_pushstring(ls, result.str().c_str());
     return 1;
 }
@@ -362,7 +366,7 @@ static int moninf_get_target_spell(lua_State *ls)
 {
     MONINF(ls, 1, mi);
     spell_type spell = spell_by_name(luaL_checkstring(ls, 2), false);
-    string desc = target_desc(*mi, spell);
+    string desc = target_spell_desc(*mi, spell);
     lua_pushstring(ls, desc.c_str());
     return 1;
 }
@@ -376,9 +380,29 @@ static int moninf_get_target_throw(lua_State *ls)
 {
     MONINF(ls, 1, mi);
     item_def *item = *(item_def **) luaL_checkudata(ls, 2, ITEM_METATABLE);
-    ranged_attack attk(&you, nullptr, item, false);
-    string d = make_stringf("%d%% to hit", to_hit_pct(*mi, attk, false));
-    lua_pushstring(ls, d.c_str());
+    ostringstream result;
+    describe_to_hit(*mi, result, item);
+    lua_pushstring(ls, result.str().c_str());
+    return 1;
+}
+
+/*** Returns the string displayed if you target this monster with an evocable.
+ * @tparam item object to be evoked
+ * @treturn string (such as "about 45% to hit")
+ * @function target_evoke
+ */
+static int moninf_get_target_evoke(lua_State *ls)
+{
+    MONINF(ls, 1, mi);
+    item_def *item = *(item_def **) luaL_checkudata(ls, 2, ITEM_METATABLE);
+    if (!item)
+    {
+        lua_pushnil(ls);
+        return 1;
+    }
+
+    string desc = target_evoke_desc(*mi, *item);
+    lua_pushstring(ls, desc.c_str());
     return 1;
 }
 
@@ -415,6 +439,18 @@ LUAFN(moninf_get_holiness)
     }
     else
         PLUARET(string, holiness_description(mi->holi).c_str());
+}
+
+/*** Get the monster's intelligence.
+ * Returns a string describing the intelligence level of the monster. Possible
+ * descriptions: "Mindless", "Animal", or "Human"
+ * @treturn string
+ * @function intelligence
+ */
+LUAFN(moninf_get_intelligence)
+{
+    MONINF(ls, 1, mi);
+    PLUARET(string, intelligence_description(mi->intel()));
 }
 
 /*** Get the monster's average depth of (random) generation in the current branch
@@ -492,7 +528,7 @@ LUAFN(moninf_get_is)
 }
 
 /*** Get the monster's flags.
- * Returns all flags set for the moster, as a list of flag names.
+ * Returns all flags set for the monster, as a list of flag names.
  * @treturn array
  * @function flags
  */
@@ -522,30 +558,30 @@ LUAFN(moninf_get_spells)
 {
     MONINF(ls, 1, mi);
 
-    lua_newtable(ls);
-
     if (!mi->has_spells())
+    {
+        lua_newtable(ls);
         return 1;
+    }
 
     const vector<mon_spell_slot> &unique_slots = get_unique_spells(*mi);
     vector<string> spell_titles;
 
+    bool abjuration = false;
     for (const auto& slot : unique_slots)
+    {
         spell_titles.emplace_back(spell_title(slot.spell));
 
+        // XXX: Probably get_unique_spells() could just do this for us.
+        if (get_spell_flags(slot.spell) & spflag::mons_abjure)
+            abjuration = true;
+    }
+
+    if (abjuration)
+        spell_titles.emplace_back(spell_title(SPELL_ABJURATION));
+
     clua_stringtable(ls, spell_titles);
-    lua_rawseti(ls, -2, 1);
-
     return 1;
-}
-
-static bool cant_see_you(const monster_info *mi)
-{
-    if (mons_class_flag(mi->type, M_SEE_INVIS))
-        return false;
-    if (you.in_water())
-        return false;
-    return you.invisible() || mi->is(MB_BLIND);
 }
 
 /*** What quality of stab can you get on this monster?
@@ -563,17 +599,10 @@ static bool cant_see_you(const monster_info *mi)
 LUAFN(moninf_get_stabbability)
 {
     MONINF(ls, 1, mi);
-    if (mi->is(MB_DORMANT) || mi->is(MB_SLEEPING) || mi->is(MB_PETRIFIED)
-            || mi->is(MB_PARALYSED))
-    {
+    if (mi->is(MB_STABBABLE))
         lua_pushnumber(ls, 1.0);
-    }
-    else if (mi->is(MB_CAUGHT) || mi->is(MB_WEBBED) || mi->is(MB_PETRIFYING)
-             || mi->is(MB_CONFUSED) || mi->is(MB_FLEEING) || cant_see_you(mi)
-             || mi->is(MB_DISTRACTED))
-    {
+    else if (mi->is(MB_MAYBE_STABBABLE))
         lua_pushnumber(ls, 0.25);
-    }
     else
         lua_pushnumber(ls, 0);
 
@@ -646,7 +675,7 @@ LUAFN(moninf_get_can_be_constricted)
 {
     MONINF(ls, 1, mi);
     if (!mi->constrictor_name.empty()
-        || !form_keeps_mutations()
+        || form_changes_anatomy()
         || (you.get_mutation_level(MUT_CONSTRICTING_TAIL) < 2
                 || you.is_constricting())
             && (you.has_mutation(MUT_TENTACLE_ARMS)
@@ -659,7 +688,7 @@ LUAFN(moninf_get_can_be_constricted)
         monster dummy;
         dummy.type = mi->type;
         dummy.base_monster = mi->base_type;
-        lua_pushboolean(ls, dummy.res_constrict() < 3);
+        lua_pushboolean(ls, !dummy.res_constrict());
     }
     return 1;
 }
@@ -676,7 +705,43 @@ LUAFN(moninf_get_can_traverse)
 {
     MONINF(ls, 1, mi);
     PLAYERCOORDS(p, 2, 3)
-    lua_pushboolean(ls, monster_habitable_grid(mi->type, env.map_knowledge(p).feat()));
+    lua_pushboolean(ls,
+        map_bounds(p)
+        && monster_habitable_feat(mi->type, env.map_knowledge(p).feat()));
+    return 1;
+}
+
+/*** Returns the monster's items as an array of items.
+ * @treturn array
+ * @function items
+ */
+LUAFN(moninf_get_items)
+{
+    MONINF(ls, 1, mi);
+    lua_newtable(ls);
+    int index = 0;
+    for (unsigned i = 0; i <= MSLOT_LAST_VISIBLE_SLOT; ++i)
+    {
+        item_def* item = mi->inv[i].get();
+        if (item)
+        {
+            clua_push_item(ls, item);
+            lua_rawseti(ls, -2, ++index);
+        }
+
+    }
+    return 1;
+}
+
+/*** What's the monster's maximum range with a weapon, spell, or wand?
+ * @treturn int
+ * @function range
+ */
+LUAFN(moninf_get_range)
+{
+    MONINF(ls, 1, mi);
+
+    lua_pushnumber(ls, mi->range());
     return 1;
 }
 
@@ -711,6 +776,17 @@ LUAFN(moninf_get_is_stationary)
 {
     MONINF(ls, 1, mi);
     lua_pushboolean(ls, mons_class_is_stationary(mi->type));
+    return 1;
+}
+
+/*** Can this monster use doors?
+ * @treturn boolean
+ * @function can_use_doors
+ */
+LUAFN(moninf_get_can_use_doors)
+{
+    MONINF(ls, 1, mi);
+    lua_pushboolean(ls, mons_class_itemuse(mi->type) >= MONUSE_OPEN_DOORS);
     return 1;
 }
 
@@ -798,6 +874,32 @@ LUAFN(moninf_get_name)
     return 1;
 }
 
+/*
+ * The x,y coordinates of the monster that summoned this monster, in player
+ * centered coordinates. If the monster was not summoned by another monster
+ * that's currently in LOS, return nil.
+ * @treturn int
+ * @treturn int
+ * @function pos
+ */
+LUAFN(moninf_get_summoner_pos)
+{
+    MONINF(ls, 1, mi);
+
+    const auto *summoner = mi->get_known_summoner();
+    if (summoner)
+    {
+        lua_pushnumber(ls, summoner->pos().x - you.pos().x);
+        lua_pushnumber(ls, summoner->pos().y - you.pos().y);
+        return 2;
+    }
+    else
+    {
+        lua_pushnil(ls);
+        return 1;
+    }
+}
+
 static const struct luaL_reg moninf_lib[] =
 {
     MIREG(type),
@@ -805,12 +907,14 @@ static const struct luaL_reg moninf_lib[] =
     MIREG(number),
     MIREG(colour),
     MIREG(mname),
+    MIREG(last_seen_at_turn),
     MIREG(is),
     MIREG(flags),
     MIREG(is_safe),
     MIREG(is_firewood),
     MIREG(stabbability),
     MIREG(holiness),
+    MIREG(intelligence),
     MIREG(attitude),
     MIREG(threat),
     MIREG(is_caught),
@@ -819,9 +923,12 @@ static const struct luaL_reg moninf_lib[] =
     MIREG(is_constricting_you),
     MIREG(can_be_constricted),
     MIREG(can_traverse),
+    MIREG(items),
+    MIREG(range),
     MIREG(reach_range),
     MIREG(is_unique),
     MIREG(is_stationary),
+    MIREG(can_use_doors),
     MIREG(damage_level),
     MIREG(damage_desc),
     MIREG(desc),
@@ -846,9 +953,11 @@ static const struct luaL_reg moninf_lib[] =
     MIREG(target_weapon),
     MIREG(target_spell),
     MIREG(target_throw),
+    MIREG(target_evoke),
     MIREG(x_pos),
     MIREG(y_pos),
     MIREG(pos),
+    MIREG(summoner_pos),
     MIREG(avg_local_depth),
     MIREG(avg_local_prob),
 

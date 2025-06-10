@@ -520,7 +520,7 @@ string unwrap_desc(string&& desc)
         string tag = desc.substr(1, pos - 1);
         desc.erase(0, pos + 1);
         if (tag == "nowrap")
-            return move(desc);
+            return std::move(desc);
         else if (desc.empty())
             return "";
     }
@@ -614,15 +614,24 @@ static BOOL WINAPI console_handler(DWORD sig)
     case CTRL_CLOSE_EVENT:
     case CTRL_LOGOFF_EVENT:
     case CTRL_SHUTDOWN_EVENT:
+        //XXX: seen_hups isn't atomic and console handlers are run in there
+        //     own threads, so this is UB
         if (crawl_state.seen_hups++)
             return true; // abort immediately
 
 #ifndef USE_TILE_LOCAL
         // Should never happen in tiles -- if it does (Cygwin?), this will
         // kill the game without saving.
-        w32_insert_escape();
 
-        Sleep(15000); // allow 15 seconds for shutdown, then kill -9
+        // allow 15 seconds for shutdown, although Windows will probably kill
+        // the process before then.
+        for (int i = 0; i < 100; i++)
+        {
+            // We still need to cancel reading from the console even if it is
+            // gone already.
+            w32_cancel_waiting_for_input();
+            Sleep(150);
+        }
 #endif
         return true;
     }
@@ -646,16 +655,24 @@ void text_popup(const string& text, const wchar_t *caption)
     MessageBoxW(0, OUTW(text), caption, MB_OK);
 }
 #else
-#ifndef USE_TILE_LOCAL // is curses in use?
-
 /* [ds] This SIGHUP handling is primitive and far from safe, but it
  * should be better than nothing. Feel free to get rigorous on this.
  */
-static void handle_hangup(int)
+void handle_hangup(int)
 {
+#ifdef USE_TILE_LOCAL
+    // Losing the controlling terminal doesn't matter, we continue and will
+    // shut down only when the actual window is closed.
+    // But, in headless mode, there's no window, so we do want to react to hup.
+    if (!in_headless_mode())
+        return;
+
+#endif
+
     if (crawl_state.seen_hups++)
         return;
 
+#ifndef USE_TILE_LOCAL // is curses in use?
     // When using Curses, closing stdin will cause any Curses call blocking
     // on key-presses to immediately return, including any call that was
     // still blocking in the main thread when the HUP signal was caught.
@@ -668,8 +685,8 @@ static void handle_hangup(int)
     // if it were a plain kernel-side descriptor, calling functions such
     // as select() or read() is undefined behaviour.
     fclose(stdin);
-}
 # endif
+}
 
 void init_signals()
 {
@@ -685,16 +702,19 @@ void init_signals()
 #endif
 
 #ifdef SIGINT
+#ifdef USE_TILE_LOCAL
+    // for local tiles, headless mode is checked in the signal handler, so
+    // we want to unconditionally add the handler here to get ctrl-c. For
+    // console this is handled somewhat differently; see _headless_startup().
+    signal(SIGINT, handle_hangup);
+#else
     signal(SIGINT, SIG_IGN);
 #endif
+#endif
 
-# ifdef USE_TILE_LOCAL
-    // Losing the controlling terminal doesn't matter, we continue and will
-    // shut down only when the actual window is closed.
-    signal(SIGHUP, SIG_IGN);
-# else
+#ifdef SIGHUP
     signal(SIGHUP, handle_hangup);
-# endif
+#endif
 #endif
 
 #ifdef DGL_ENABLE_CORE_DUMP
@@ -712,6 +732,7 @@ void release_cli_signals()
 #ifdef USE_UNIX_SIGNALS
     signal(SIGQUIT, SIG_DFL);
     signal(SIGINT, SIG_DFL);
+    signal(SIGHUP, SIG_DFL);
 #endif
 }
 

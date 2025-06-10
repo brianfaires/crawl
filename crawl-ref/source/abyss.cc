@@ -213,6 +213,9 @@ static bool _abyss_place_map(const map_def *mdef)
     }
     catch (dgn_veto_exception &e)
     {
+#ifndef DEBUG_DIAGNOSTICS
+        UNUSED(e);
+#endif
         dprf(DIAG_ABYSS, "Abyss map placement vetoed: %s", e.what());
     }
     return false;
@@ -221,7 +224,7 @@ static bool _abyss_place_map(const map_def *mdef)
 static bool _abyss_place_vault_tagged(const map_bitmask &abyss_genlevel_mask,
                                       const string &tag)
 {
-    const map_def *map = random_map_for_tag(tag, true, true, MB_FALSE);
+    const map_def *map = random_map_for_tag(tag, true, true, false);
     if (map)
     {
         unwind_vault_placement_mask vaultmask(&abyss_genlevel_mask);
@@ -406,7 +409,7 @@ static int _banished_depth(const int power)
     // Ancient Liches are sending you to A:5 and there's nothing
     // you can do about that.
     const int maxdepth = div_rand_round((power + 5), 6);
-    const int mindepth = (4 * power + 7) / 23;
+    const int mindepth = min(maxdepth, (4 * power + 7) / 23);
     const int bottom = brdepth[BRANCH_ABYSS];
     return min(bottom, max(1, random_range(mindepth, maxdepth)));
 }
@@ -433,6 +436,7 @@ void banished(const string &who, const int power)
     const int depth = _banished_depth(power);
 
     stop_delay(true);
+    splash_corruption(you.pos());
     run_animation(ANIMATION_BANISH, UA_BRANCH_ENTRY, false);
     push_features_to_abyss();
     floor_transition(DNGN_ENTER_ABYSS, orig_terrain(you.pos()),
@@ -453,6 +457,23 @@ void banished(const string &who, const int power)
     }
 }
 
+void check_banished()
+{
+    if (you.banished)
+    {
+        you.banished = false;
+        ASSERT(brdepth[BRANCH_ABYSS] != -1);
+        if (!player_in_branch(BRANCH_ABYSS))
+            mprf(MSGCH_BANISHMENT, "You are cast into the Abyss!");
+        else if (you.depth < brdepth[BRANCH_ABYSS])
+            mprf(MSGCH_BANISHMENT, "You are cast deeper into the Abyss!");
+        else
+            mprf(MSGCH_BANISHMENT, "The Abyss bends around you!");
+        // these are included in default force_more_message
+        banished(you.banished_by, you.banished_power);
+    }
+}
+
 void push_features_to_abyss()
 {
     abyssal_features.clear();
@@ -465,8 +486,10 @@ void push_features_to_abyss()
 
             p += you.pos();
 
-            dungeon_feature_type feature = map_bounds(p) ? env.grid(p) : DNGN_UNSEEN;
+            dungeon_feature_type feature = map_bounds(p) ? env.grid(p)
+                                                         : DNGN_UNSEEN;
             feature = sanitize_feature(feature);
+
             abyssal_features.push_back(feature);
         }
     }
@@ -526,8 +549,8 @@ static bool _abyss_check_place_feat(coord_def p,
 
 static dungeon_feature_type _abyss_pick_altar()
 {
-    // Lugonu has a flat 50% chance of corrupting the altar.
-    if (coinflip())
+    // Lugonu has a flat 90% chance of corrupting the altar.
+    if (!one_chance_in(10))
         return DNGN_ALTAR_LUGONU;
 
     god_type god;
@@ -612,7 +635,7 @@ static void _abyss_lose_monster(monster& mons)
     else if (hepliaklqana_ancestor() == mons.mid)
     {
         simple_monster_message(mons, " is pulled into the Abyss.",
-                MSGCH_BANISHMENT);
+                false, MSGCH_BANISHMENT);
         remove_companion(&mons);
         you.duration[DUR_ANCESTOR_DELAY] = random_range(50, 150); //~5-15 turns
     }
@@ -655,7 +678,7 @@ static void _place_displaced_monsters()
             if (you.can_see(*mon) && hepliaklqana_ancestor() != mon->mid)
             {
                 simple_monster_message(*mon, " is pulled into the Abyss.",
-                        MSGCH_BANISHMENT);
+                        false, MSGCH_BANISHMENT);
             }
             _abyss_lose_monster(*mon);
 
@@ -904,7 +927,7 @@ static void _abyss_move_entities(coord_def target_centre,
             if (map_bounds_with_margin(dst, MAPGEN_BORDER))
             {
                 shift_area_mask->set(dst);
-                // Wipe the dstination clean before dropping things on it.
+                // Wipe the destination clean before dropping things on it.
                 _abyss_wipe_square_at(dst);
                 _abyss_move_entities_at(src, dst);
                 _abyss_update_transporter(dst, source_centre, target_centre,
@@ -1170,7 +1193,7 @@ static ProceduralSample _abyss_grid(const coord_def &p)
         levelLayout = new LevelLayout(lid, 5, rivers);
         complex_vec[0] = levelLayout;
         complex_vec[1] = &rivers; // const
-        abyssLayout = new WorleyLayout(23571113, complex_vec, 6.1);
+        abyssLayout = new WorleyLayout(23571113, complex_vec, 6.1f);
         if (is_existing_level(lid))
         {
             auto &vault_list =  you.vault_list[level_id::current()];
@@ -1209,6 +1232,7 @@ static cloud_type _cloud_from_feat(const dungeon_feature_type &ft)
         case DNGN_BROKEN_CLEAR_DOOR:
             return CLOUD_MIST;
         case DNGN_ORCISH_IDOL:
+        case DNGN_METAL_STATUE:
         case DNGN_GRANITE_STATUE:
         case DNGN_LAVA:
             return CLOUD_BLACK_SMOKE;
@@ -1305,7 +1329,7 @@ static void _update_abyss_terrain(const coord_def &p,
         else if (feat_is_solid(feat))
             delete_cloud(rp);
         monster* mon = monster_at(rp);
-        if (mon && !monster_habitable_grid(mon, feat))
+        if (mon && !monster_habitable_feat(mon, feat))
             _push_displaced_monster(mon);
     }
 }
@@ -1349,20 +1373,14 @@ static void _abyss_apply_terrain(const map_bitmask &abyss_genlevel_mask,
     bool used_queue = false;
     if (morph && !abyss_sample_queue.empty())
     {
-        int ii = 0;
         used_queue = true;
         while (!abyss_sample_queue.empty()
             && abyss_sample_queue.top().changepoint() < abyssal_state.depth)
         {
-            ++ii;
             coord_def p = abyss_sample_queue.top().coord();
             _update_abyss_terrain(p, abyss_genlevel_mask, morph);
             abyss_sample_queue.pop();
         }
-/*
-        if (ii)
-            dprf(DIAG_ABYSS, "Examined %d features.", ii);
-*/
     }
 
     int ii = 0;
@@ -1393,7 +1411,7 @@ static void _abyss_apply_terrain(const map_bitmask &abyss_genlevel_mask,
                                 DNGN_EXIT_ABYSS,
                                 abyss_genlevel_mask)
         ||
-        _abyss_check_place_feat(p, 10000,
+        _abyss_check_place_feat(p, 3000,
                                 &altars_wanted,
                                 nullptr,
                                 _abyss_pick_altar(),
@@ -1560,7 +1578,7 @@ static void abyss_area_shift()
     check_map_validity();
     // TODO: should dactions be rerun at this point instead? That would cover
     // this particular case...
-    gozag_detect_level_gold(false);
+    gozag_move_level_gold_to_top();
     _update_abyssal_map_knowledge();
 }
 
@@ -1759,7 +1777,7 @@ void abyss_teleport(bool wizard_tele)
     stop_delay(true);
     forget_map(false);
     clear_excludes();
-    gozag_detect_level_gold(false);
+    gozag_move_level_gold_to_top();
     auto &vault_list =  you.vault_list[level_id::current()];
 #ifdef DEBUG
     vault_list.push_back("[tele]");
@@ -1856,10 +1874,10 @@ static bool _spawn_corrupted_servant_near(const coord_def &pos)
 
         monster_type mons = pick_monster(level_id(BRANCH_ABYSS), _incorruptible);
         ASSERT(mons);
-        if (!monster_habitable_grid(mons, env.grid(p)))
+        if (!monster_habitable_grid(mons, p))
             continue;
         mgen_data mg(mons, BEH_NEUTRAL, p);
-        mg.set_summoned(0, 5, 0).set_non_actor_summoner("Lugonu's corruption");
+        mg.set_summoned(0, 0, summ_dur(5)).set_non_actor_summoner("Lugonu's corruption");
         mg.place = BRANCH_ABYSS;
         return create_monster(mg);
     }
@@ -1881,10 +1899,10 @@ static void _spawn_corrupted_servant_near_monster(const monster &who)
             continue;
         monster_type mons = pick_monster(level_id(BRANCH_ABYSS), _incorruptible);
         ASSERT(mons);
-        if (!monster_habitable_grid(mons, env.grid(p)))
+        if (!monster_habitable_grid(mons, p))
             continue;
         mgen_data mg(mons, BEH_COPY, p);
-        mg.set_summoned(&who, 3, 0);
+        mg.set_summoned(&who, 0, summ_dur(3));
         mg.place = BRANCH_ABYSS;
         if (create_monster(mg))
             return;
@@ -1992,6 +2010,11 @@ static bool _is_sealed_square(const coord_def &c)
     return true;
 }
 
+static void _recolour_wall(coord_def c, tileidx_t tile)
+{
+    tile_env.flv(c).wall_idx = store_tilename_get_index(tile_dngn_name(tile));
+}
+
 static void _corrupt_square_flavor(const corrupt_env &cenv, const coord_def &c)
 {
     dungeon_feature_type feat = env.grid(c);
@@ -2014,12 +2037,15 @@ static void _corrupt_square_flavor(const corrupt_env &cenv, const coord_def &c)
         tileidx_t idx = tile_dngn_coloured(TILE_WALL_ABYSS,
                                            cenv.rock_colour);
         tile_env.flv(c).wall = idx + random2(tile_dngn_count(idx));
+        _recolour_wall(c, idx);
     }
     else if (feat == DNGN_FLOOR)
     {
         tileidx_t idx = tile_dngn_coloured(TILE_FLOOR_NERVES,
                                            floor);
         tile_env.flv(c).floor = idx + random2(tile_dngn_count(idx));
+        const string name = tile_dngn_name(idx);
+        tile_env.flv(c).floor_idx = store_tilename_get_index(name);
     }
     else if (feat == DNGN_STONE_WALL)
     {
@@ -2028,12 +2054,14 @@ static void _corrupt_square_flavor(const corrupt_env &cenv, const coord_def &c)
         tileidx_t idx = tile_dngn_coloured(TILE_DNGN_STONE_WALL,
                                            cenv.rock_colour);
         tile_env.flv(c).wall = idx + random2(tile_dngn_count(idx));
+        _recolour_wall(c, idx);
     }
     else if (feat == DNGN_METAL_WALL)
     {
         tileidx_t idx = tile_dngn_coloured(TILE_DNGN_METAL_WALL,
                                            cenv.rock_colour);
         tile_env.flv(c).wall = idx + random2(tile_dngn_count(idx));
+        _recolour_wall(c, idx);
     }
     else if (feat_is_tree(feat))
     {
@@ -2279,7 +2307,7 @@ void lugonu_corrupt_level(int power)
     if (is_level_incorruptible())
         return;
 
-    simple_god_message("'s Hand of Corruption reaches out!");
+    simple_god_message(" Hand of Corruption reaches out!", true);
     take_note(Note(NOTE_MESSAGE, 0, 0, make_stringf("Corrupted %s",
               level_id::current().describe().c_str()).c_str()));
     mark_corrupted_level(level_id::current());
@@ -2323,6 +2351,17 @@ void lugonu_corrupt_level_monster(const monster &who)
 #endif
 }
 
+/// Splash decorative corruption around the given space.
+void splash_corruption(coord_def centre)
+{
+    corrupt_env cenv;
+    _corrupt_choose_colours(&cenv);
+    _corrupt_square_flavor(cenv, centre);
+    for (adjacent_iterator ai(centre); ai; ++ai)
+        if (in_bounds(*ai) && coinflip())
+            _corrupt_square_flavor(cenv, *ai);
+}
+
 static void _cleanup_temp_terrain_at(coord_def pos)
 {
     for (map_marker *mark : env.markers.get_all(MAT_TERRAIN_CHANGE))
@@ -2362,4 +2401,5 @@ void abyss_maybe_spawn_xp_exit()
 
     you.props[ABYSS_STAIR_XP_KEY] = EXIT_XP_COST;
     you.props[ABYSS_SPAWNED_XP_EXIT_KEY] = true;
+    interrupt_activity(activity_interrupt::abyss_exit_spawned);
 }

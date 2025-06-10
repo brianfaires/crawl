@@ -46,6 +46,10 @@ enum dungeon_feature_type
     DNGN_CLEAR_STONE_WALL,
     DNGN_CLEAR_PERMAROCK_WALL,
 
+#if TAG_MAJOR_VERSION > 34
+    DNGN_FRIGID_WALL,
+#endif
+
     DNGN_GRATE,
 
     // Misc solid features
@@ -55,6 +59,9 @@ enum dungeon_feature_type
     DNGN_ENDLESS_SALT,                 // Desolation equivalent for permarock
 #endif
     DNGN_ORCISH_IDOL,
+#if TAG_MAJOR_VERSION > 34
+    DNGN_METAL_STATUE,                 // Vault statues that aren't rock
+#endif
     DNGN_GRANITE_STATUE,
     DNGN_MALIGN_GATEWAY,
 
@@ -67,7 +74,9 @@ enum dungeon_feature_type
 
     DNGN_SHALLOW_WATER,
 #if TAG_MAJOR_VERSION > 34
+    DNGN_MUD,                         // Leda's Unmaking
     DNGN_TOXIC_BOG,                   // Eringya's Noxious Bog
+    DNGN_BINDING_SIGIL,               // Sigil of Binding
 #endif
 
     DNGN_FLOOR,
@@ -86,6 +95,10 @@ enum dungeon_feature_type
     DNGN_TRAP_SHAFT,
     DNGN_TRAP_WEB,
 #if TAG_MAJOR_VERSION > 34
+    DNGN_TRAP_TYRANT,
+    DNGN_TRAP_ARCHMAGE,
+    DNGN_TRAP_HARLEQUIN,
+    DNGN_TRAP_DEVOURER,
     DNGN_TRAP_ALARM,
     DNGN_TRAP_ZOT,
     DNGN_TRAP_DISPERSAL,
@@ -94,6 +107,8 @@ enum dungeon_feature_type
 #if TAG_MAJOR_VERSION > 34
     DNGN_TRAP_NET,
     DNGN_TRAP_PLATE,
+    DNGN_SPIKE_LAUNCHER,
+    DNGN_ORB_DAIS,
 #endif
 #if TAG_MAJOR_VERSION == 34
     DNGN_UNDISCOVERED_TRAP,
@@ -221,7 +236,6 @@ enum dungeon_feature_type
     DNGN_ALTAR_GOZAG,
     DNGN_ALTAR_QAZLAL,
     DNGN_ALTAR_RU,
-    DNGN_ALTAR_PAKELLAS,
     DNGN_ALTAR_USKAYAW,
     DNGN_ALTAR_HEPLIAKLQANA,
     DNGN_ALTAR_WU_JIAN,
@@ -232,6 +246,9 @@ enum dungeon_feature_type
     DNGN_FOUNTAIN_BLUE,
     DNGN_FOUNTAIN_SPARKLING,           // aka 'Magic Fountain' {dlb}
     DNGN_FOUNTAIN_BLOOD,
+#if TAG_MAJOR_VERSION > 34
+    DNGN_FOUNTAIN_EYES,
+#endif
 #if TAG_MAJOR_VERSION == 34
     DNGN_DRY_FOUNTAIN_BLUE,
     DNGN_DRY_FOUNTAIN_SPARKLING,
@@ -239,6 +256,10 @@ enum dungeon_feature_type
 #endif
     DNGN_DRY_FOUNTAIN,
 #if TAG_MAJOR_VERSION > 34
+    DNGN_CACHE_OF_BAKED_GOODS,
+    DNGN_CACHE_OF_FRUIT,
+    DNGN_CACHE_OF_MEAT,
+    DNGN_DECORATIVE_FLOOR, // XXX: dummy for redefinition until a rewrite
     DNGN_RUNELIGHT,
 #endif
 
@@ -267,6 +288,9 @@ enum dungeon_feature_type
     DNGN_ENTER_ZIGGURAT,
     DNGN_ENTER_BAZAAR,
     DNGN_ENTER_TROVE,
+#if TAG_MAJOR_VERSION > 34
+    DNGN_ENTER_NECROPOLIS,
+#endif
     DNGN_ENTER_SEWER,
     DNGN_ENTER_OSSUARY,
     DNGN_ENTER_BAILEY,
@@ -279,11 +303,15 @@ enum dungeon_feature_type
     DNGN_ENTER_DESOLATION,
 #if TAG_MAJOR_VERSION > 34
     DNGN_ENTER_ARENA,
+    DNGN_ENTER_CRUCIBLE,
 #endif
 
     DNGN_EXIT_ZIGGURAT,
     DNGN_EXIT_BAZAAR,
     DNGN_EXIT_TROVE,
+#if TAG_MAJOR_VERSION > 34
+    DNGN_EXIT_NECROPOLIS,
+#endif
     DNGN_EXIT_SEWER,
     DNGN_EXIT_OSSUARY,
     DNGN_EXIT_BAILEY,
@@ -299,6 +327,7 @@ enum dungeon_feature_type
     DNGN_EXIT_DESOLATION,
 #if TAG_MAJOR_VERSION > 34
     DNGN_EXIT_ARENA,
+    DNGN_EXIT_CRUCIBLE,
 #endif
 #if TAG_MAJOR_VERSION == 34
 
@@ -326,10 +355,10 @@ enum dungeon_feature_type
     DNGN_SEALED_CLEAR_DOOR,
     DNGN_TOXIC_BOG,
 
-    DNGN_TRAP_ARROW,
+    DNGN_TRAP_ARCHMAGE,
     DNGN_TRAP_SPEAR,
-    DNGN_TRAP_BLADE,
-    DNGN_TRAP_DART,
+    DNGN_TRAP_TYRANT,
+    DNGN_TRAP_HARLEQUIN,
     DNGN_TRAP_BOLT,
     DNGN_TRAP_NET,
     DNGN_TRAP_PLATE,
@@ -349,6 +378,22 @@ enum dungeon_feature_type
     DNGN_EXIT_COCYTUS,
     DNGN_EXIT_TARTARUS,
     DNGN_RUNELIGHT,
+    DNGN_MUD,
+    DNGN_BINDING_SIGIL,
+    DNGN_METAL_STATUE,
+    DNGN_CACHE_OF_FRUIT,
+    DNGN_CACHE_OF_MEAT,
+    DNGN_ORB_DAIS,
+    DNGN_ENTER_CRUCIBLE,
+    DNGN_EXIT_CRUCIBLE,
+    DNGN_FOUNTAIN_EYES,
+    DNGN_CACHE_OF_BAKED_GOODS,
+    DNGN_DECORATIVE_FLOOR,  // XXX: dummy for redefinition until we rewrite code
+    DNGN_SPIKE_LAUNCHER,
+    DNGN_TRAP_DEVOURER,
+    DNGN_ENTER_NECROPOLIS,
+    DNGN_EXIT_NECROPOLIS,
+    DNGN_FRIGID_WALL,
 #endif
 
     NUM_FEATURES

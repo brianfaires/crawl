@@ -67,18 +67,18 @@ enum attack_flavour
     AF_CONFUSE,
 #if TAG_MAJOR_VERSION == 34
     AF_DISEASE,
-#endif
     AF_DRAIN_STR,
     AF_DRAIN_INT,
     AF_DRAIN_DEX,
     AF_DRAIN_STAT,
+#endif
     AF_DRAIN,
     AF_ELEC,
     AF_FIRE,
 #if TAG_MAJOR_VERSION == 34
     AF_HUNGER,
-#endif
     AF_MUTATE,
+#endif
     AF_POISON_PARALYSE,
     AF_POISON,
 #if TAG_MAJOR_VERSION == 34
@@ -99,7 +99,12 @@ enum attack_flavour
 #endif
     AF_DISTORT,
     AF_RAGE,
+#if TAG_MAJOR_VERSION == 34
     AF_STICKY_FLAME,
+#endif
+    // Intentionally inconsistent with the naming of other chaos flavour enums
+    // which are usually * _CHAOS; due to AF_CHAOS conflicting with a macro for
+    // the CHAOS protocol on cygwin. See 3c404ee for full explanation.
     AF_CHAOTIC,
     AF_STEAL,
 #if TAG_MAJOR_VERSION == 34
@@ -141,10 +146,23 @@ enum attack_flavour
     AF_BARBS,
     AF_SPIDER,
     AF_RIFT,
+    AF_BLOODZERK,
+    AF_SLEEP,
+    AF_MINIPARA,
+    AF_FLANK,
+    AF_DRAG,
+    AF_FOUL_FLAME,
+    AF_HELL_HUNT,
+    AF_SWARM,
+    AF_ALEMBIC,
+    AF_BOMBLET,
+    AF_AIRSTRIKE,
+    AF_TRICKSTER,
+    AF_REACH_CLEAVE_UGLY,
 };
 
 // Non-spell "summoning" types to give to monster::mark_summoned(), or
-// as the fourth parameter of mgen_data's constructor.
+// as the second parameter of mgen_data::set_summoned().
 //
 // Negative values since spells are non-negative.
 enum mon_summon_type
@@ -162,6 +180,12 @@ enum mon_summon_type
     MON_SUMM_LANTERN, // Lantern of shadows
 #endif
     MON_SUMM_BUTTERFLIES, // Scroll of butterflies
+    MON_SUMM_YRED_REAP, // Yred's reaping passive
+    MON_SUMM_WPN_REAP,  // Reaping brand reaping
+    MON_SUMM_CACOPHONY, // Poltergeist ability
+    MON_SUMM_THRALL,    // Vampiric thralls
+    MON_SUMM_HIVE,      // Hive form insects
+    MON_SUMM_SUN_SCARAB, // Sun Scarab's solar ember
 };
 
 #include "mon-flags.h"
@@ -175,14 +199,21 @@ enum mon_intel_type             // Must be in increasing intelligence order
 
 enum habitat_type
 {
-    // Flying monsters will appear in all categories except rock walls
-    HT_LAND = 0,         // Land critters
-    HT_AMPHIBIOUS,       // Amphibious creatures
-    HT_WATER,            // Water critters
-    HT_LAVA,             // Lava critters
-    HT_AMPHIBIOUS_LAVA,  // Amphibious w/ lava (salamanders)
 
-    NUM_HABITATS
+    HT_NONE = 0,
+    HT_DRY_LAND = 1 << 0,
+    HT_SHALLOW_WATER = 1 << 1,
+    HT_DEEP_WATER = 1 << 2,
+    HT_LAVA = 1 << 3,
+    HT_MALIGN_GATEWAY = 1 << 4,
+
+    HT_LAND = HT_DRY_LAND | HT_SHALLOW_WATER,
+    HT_AMPHIBIOUS = HT_LAND | HT_DEEP_WATER,
+    HT_WATER = HT_SHALLOW_WATER | HT_DEEP_WATER,
+    HT_AMPHIBIOUS_LAVA = HT_LAND | HT_LAVA,
+    HT_ELDRITCH_TENTACLE = HT_AMPHIBIOUS | HT_MALIGN_GATEWAY,
+    // Flying monsters will appear in all categories except HT_MALIGN_GATEWAY
+    HT_FLYER = HT_LAND | HT_WATER | HT_LAVA,
 };
 
 // order of these is important:
@@ -212,7 +243,7 @@ enum mon_resist_flags
     MR_RES_COLD          = 1 << 9,
     MR_RES_NEG           = 1 << 12,
     MR_RES_MIASMA        = 1 << 15,
-    MR_RES_ACID          = 1 << 18,
+    MR_RES_CORR          = 1 << 18,
 
     MR_LAST_MULTI, // must be >= any multi, < any boolean, exact value doesn't matter
 
@@ -224,18 +255,28 @@ enum mon_resist_flags
 #else
     // unused 1 << 25,
 #endif
-    MR_RES_STICKY_FLAME  = 1 << 26,
-    MR_RES_VORTEX        = 1 << 27,
+    // unused 1 << 26,
+    // unused 1 << 27,
     MR_RES_STEAM         = 1 << 28,
 
     // vulnerabilities
 #if TAG_MAJOR_VERSION == 34
     MR_VUL_WATER         = 1 << 29,
 #endif
-    MR_VUL_ELEC          = mrd(MR_RES_ELEC, -1),
-    MR_VUL_POISON        = mrd(MR_RES_POISON, -1),
-    MR_VUL_FIRE          = mrd(MR_RES_FIRE, -1),
-    MR_VUL_COLD          = mrd(MR_RES_COLD, -1),
+};
+
+const mon_resist_flags ALL_MON_RESISTS[] = {
+    MR_RES_ELEC,
+    MR_RES_POISON,
+    MR_RES_FIRE,
+    MR_RES_COLD,
+    MR_RES_NEG,
+    MR_RES_CORR,
+    MR_RES_MIASMA,
+    MR_RES_TORMENT,
+    MR_RES_PETRIFY,
+    MR_RES_DAMNATION,
+    MR_RES_STEAM,
 };
 
 enum shout_type
@@ -264,6 +305,7 @@ enum shout_type
     S_SQUEAL,               // pigs
     S_LOUD_ROAR,            // dragons, &c. loud!
     S_RUSTLE,               // books
+    S_SQUEAK,               // rats and similar
     NUM_SHOUTS,
 
     // Loudness setting for shouts that are only defined in dat/shout.txt

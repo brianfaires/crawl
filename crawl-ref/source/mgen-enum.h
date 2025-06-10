@@ -13,7 +13,7 @@ enum band_type
     BAND_KILLER_BEES,
     BAND_CAUSTIC_SHRIKE,
     BAND_SHARD_SHRIKE,
-    BAND_FLYING_SKULLS,
+    BAND_LAUGHING_SKULLS,
     BAND_SLIME_CREATURES,
     BAND_YAKS,
     BAND_UGLY_THINGS,
@@ -45,7 +45,7 @@ enum band_type
     BAND_HELL_RATS,
     BAND_DREAM_SHEEP,
     BAND_GHOULS,
-    BAND_DEEP_TROLLS,
+    BAND_PRESERVER,
     BAND_DEEP_TROLL_SHAMAN,
     BAND_HOGS,
     BAND_HELL_HOGS,
@@ -94,7 +94,7 @@ enum band_type
     BAND_BLOOD_SAINT,
     BAND_WARMONGER,
     BAND_CORRUPTER,
-    BAND_BLACK_SUN,
+    BAND_SOUL_SCHOLAR,
     BAND_VASHNIA,
     BAND_CEREBOV,
     BAND_GLOORX_VLOQ,
@@ -121,14 +121,27 @@ enum band_type
     BAND_MIXED_SPIDERS,
     BAND_ORANGE_DEMONS,
     BAND_DOOM_HOUNDS,
+    BAND_JELLYFISH,
+    BAND_SKYSHARKS,
+    BAND_UFETUBI,
+    BAND_BLASTMINER,
+    BAND_BRAIN_WORMS,
+    BAND_PROTEAN_PROGENITORS,
+    BAND_MARGERY,
+    BAND_LATE_ROKA,
+    BAND_WEEPING_SKULLS,
+    BAND_THERMIC_DYNAMOS,
+    BAND_ORB_SPIDERS,
+    BAND_SIN_BEASTS,
+    BAND_WURMS_AND_MASTER,
+    BAND_SLIMES_AND_MASTER,
+    BAND_ELEPHANTS_AND_MASTER,
+    BAND_SPHINXES,
+    BAND_IRONBOUND_MECHANISTS,
+    BAND_CAGES,
+    BAND_CHONCHON,
+    BAND_FLESHCRAFT,
     NUM_BANDS                   // always last
-};
-
-enum dragon_class_type
-{
-    DRAGON_LIZARD,
-    DRAGON_DRACONIAN,
-    DRAGON_DRAGON,
 };
 
 enum proximity_type   // proximity to player to create monster
@@ -153,5 +166,10 @@ enum mgen_flag
                    // 0x080, ///< was MG_DONT_CAP
     MG_FORBID_BANDS = 0x100, ///< override MG_PERMIT_BANDS
     MG_NO_OOD       = 0x200, ///< don't choose out-of-depth random monsters
+    MG_PREFER_LAND  = 0x400, ///< don't place monsters in deep water / lava if
+                             ///  they could be placed on land / shallow water
+                             ///  instead.
+    MG_SEE_SUMMONER = 0x800, ///< will always be generated in sight of its
+                             ///  summoner
 };
 DEF_BITFIELD(mgen_flags, mgen_flag);

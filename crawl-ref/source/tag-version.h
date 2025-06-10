@@ -86,7 +86,7 @@ enum tag_minor_version
     TAG_MINOR_ABIL_GOD_FIXUP,      // Movement of some non-god-specific abils.
     TAG_MINOR_NEMELEX_DUNGEONS,    // Make nemelex not give/track decks of dungeons.
     TAG_MINOR_DEMONSPAWN,          // Save compat wrt demonspawn enemies.
-    TAG_MINOR_EVENT_TIMERS,        // "Every 20 turn" effects are less determinstic.
+    TAG_MINOR_EVENT_TIMERS,        // "Every 20 turn" effects are less deterministic.
     TAG_MINOR_EVENT_TIMER_FIX,     // Correct event timers in transferred games
     TAG_MINOR_MONINFO_ENERGY,      // Energy usage in monster_info
     TAG_MINOR_BOOK_ID,             // Track spellbooks you've identified
@@ -276,6 +276,54 @@ enum tag_minor_version
     TAG_MINOR_RECOMPRESS_BADMUTS,  // Reduce some more mutations to 2 levels.
     TAG_MINOR_SPAWN_RATE,          // Remove the env.spawn_random_rate field.
     TAG_MINOR_REMOVE_AK,           // Remove Abyssal Knight.
+    TAG_MINOR_BUTTERSUMMONS,       // Alternate ?butt with ?summ, not ?fog.
+    TAG_MINOR_WU_ABILITIES,        // Make Lunge and Whirlwind Abil, not Invok
+    TAG_MINOR_MORE_WAYPOINTS,      // Increase the number of allowed waypoints.
+    TAG_MINOR_GENERATED_MISC,      // Track generated misc item types.
+    TAG_MINOR_SAVE_TERRAIN_FLAVOUR, // Save flavour in terrain-change markers.
+    TAG_MINOR_DJ_SPLIT,            // Make Djinn use all magic skills.
+    TAG_MINOR_TALISMANS,           // Add talismans and indefinite transforms.
+    TAG_MINOR_SHAPESHIFTING,       // Add Shapeshifting skill.
+    TAG_MINOR_LANGUAGE_FIX,        // Remove some outdated language.
+    TAG_MINOR_SLENGU,              // Split tengu mutations.
+    TAG_MINOR_GLASS_EYES,          // Fixup paralysis gaze to vitrifying gaze.
+    TAG_MINOR_SAVE_TALISMANS,      // Store the in-use talisman.
+    TAG_MINOR_NO_SPECIAL_ENERGY,   // Remove some unused monster energy types.
+    TAG_MINOR_MON_SH_INFO,         // Store SH in mon-info.
+    TAG_MINOR_RAMPAGE_HEAL,        // Adjust Armataur mutations for healpage.
+    TAG_MINOR_GEMS,                // Add gems.
+    TAG_MINOR_ALCHEMY_MERGER,      // Poison magic and transmuations merged.
+    TAG_MINOR_UNTRAVEL_ALLY_PACE,  // Cut pace travel to slowest ally setting
+    TAG_MINOR_REMOVE_MONSTER_XP,   // Remove the experience member from monster
+    TAG_MINOR_NO_INCREMENTAL_RECALL, // Remove incremental recall and make instant again
+    TAG_MINOR_APOSTLE_DATA,        // Convert apostles to using custom structs instead of props
+    TAG_MINOR_XP_CONTRIBUTE_FIXUP, // Removes the 2x multiplier for player XP contribution
+    TAG_MINOR_GHOST_UMBRAS,        // Allow ghost demons to have umbras.
+    TAG_MINOR_NO_CONSTRICTION_DUR, // Remove duration parameter from constriction tracking
+    TAG_MINOR_NEW_DRACONIAN_BREATH, // Add charges to draconian breaths, revamp effects
+    TAG_MINOR_COGLIN_NO_JEWELLERY, // Remove all jewellery from Coglins
+    TAG_MINOR_TALISMANS_SEEN,      // Keep track of seen talismans
+    TAG_MINOR_FIX_APOSTLE_DAMAGE,  // Fix damage tracking of banished apostles
+    TAG_MINOR_MON_AURA_REFACTORING,// Mark enchantments from passive auras in mon_enchant
+    TAG_MINOR_GRAVE_CLAW_CHARGES,  // Add stockpiling of Grave Claw charges
+    TAG_MINOR_ENDLESS_DIVINE_SHIELD, // Make Divine Shield not expire with time
+    TAG_MINOR_NEGATIVE_DIVINE_SHIELD, // Fix negative Divine Shield charges
+    TAG_MINOR_MAKHLEB_REVAMP,      // Handle backend of giving existing Makh worshippers mark options
+    TAG_MINOR_NO_FAKE_ABJ,         // Remove ENCH_FAKE_ABJURATION
+    TAG_MINOR_ADD_FORGECRAFT,      // Add Forgecraft skill by replacing unused Transmutations
+    TAG_MINOR_REFACTOR_CHANNEL_SPELLS, // Refactor tracking of channelled spells
+    TAG_MINOR_SIMPLIFY_ID,         // Crunch all item identification flags into just one
+    TAG_MINOR_STACKABLE_EVOKERS_TWO, // XP evokers stack for a recharge speed boost
+    TAG_MINOR_EQUIP_SLOT_REWRITE,  // Convert all player equipment handling over to a new system
+    TAG_MINOR_REMOVE_STAT_DRAIN,   // Remove all stat draining
+    TAG_MINOR_SIMPLIFY_STAT_ZERO,  // Simplify stat-zero to permaslow with no duration
+    TAG_MINOR_REMOVE_VAMPIRES,     // Remove the player vampire species
+    TAG_MINOR_SPECTRAL_DUAL_WIELDING, // Allow having multiple spectral weapons out at the same time
+    TAG_MINOR_SPECIFY_EXP,         // Specify monster EXP in yaml rather than calculating from HD
+    TAG_MINOR_GHOST_MOVE_SPEED_FIX,// Fixup move speed of old spriggan/naga/barachi ghosts
+    TAG_MINOR_COMPRESS_MAPPING,    // Reduce another mutation to 2 levels
+    TAG_MINOR_FRENZY_FIXUP,        // Don't pair frenzy with haste and might
+    TAG_MINOR_GHOST_WILLPOWER,     // Allow specifying willpower for ghost_demons (and player ghosts)
 #endif
     NUM_TAG_MINORS,
     TAG_MINOR_VERSION = NUM_TAG_MINORS - 1
@@ -292,6 +340,9 @@ const set<int> bones_minor_tags =
          TAG_MINOR_BOOL_FLIGHT,
          TAG_MINOR_POSITIONAL_MAGIC,
          TAG_MINOR_GHOST_MAGIC,
+         TAG_MINOR_GHOST_UMBRAS,
+         TAG_MINOR_GHOST_MOVE_SPEED_FIX,
+         TAG_MINOR_GHOST_WILLPOWER,
 #endif
         };
 

@@ -85,16 +85,7 @@ local function vector_move(a, dx, dy)
 end
 
 local function have_reaching()
-  local wp = items.equipped_at("weapon")
-  return wp and wp.reach_range >= 2 and not wp.is_melded
-end
-
-local function reach_range()
-  local wp = items.equipped_at("weapon")
-  if wp and not wp.is_melded then
-      return wp.reach_range
-  end
-  return 1
+  return you.reach_range() > 1
 end
 
 local function have_ranged()
@@ -103,16 +94,19 @@ local function have_ranged()
 end
 
 local function have_quiver_action(no_move)
-  return ((AUTOFIGHT_THROW or no_move and AUTOFIGHT_THROW_NOMOVE)
-          and you.quiver_valid(1) and you.quiver_enabled(1)
-          -- TODO: armataur roll passes the following check, which may be
-          -- counterintuitive for the nomove case
-          and you.quiver_allows_autofight()
-          and (not you.quiver_uses_mp() or not AUTOMAGIC_FIGHT or not af_mp_is_low()))
+    return (no_move and AUTOFIGHT_THROW_NOMOVE
+            or not no_move and AUTOFIGHT_THROW)
+        and you.quiver_valid(1) and you.quiver_enabled(1)
+        -- TODO: armataur roll passes the following check, which may be
+        -- counterintuitive for the nomove case.
+        and you.quiver_allows_autofight()
+        and (not you.quiver_uses_mp()
+            or not AUTOMAGIC_FIGHT
+            or not af_mp_is_low())
 end
 
 local function is_safe_square(dx, dy)
-    if view.feature_at(dx, dy) == "trap_web" then
+    if view.feature_at(dx, dy) == "trap_web" and not you.is_web_immune() then
         return false
     end
     return view.is_safe_square(dx, dy)
@@ -197,13 +191,19 @@ local function move_towards(dx, dy)
   local move = choose_move_towards(0, 0, dx, dy, can_move_now)
   if move == nil then
     crawl.mpr("Failed to move towards target.")
+  elseif you.status("immotile") then
+    if AUTOFIGHT_WAIT then
+      crawl.do_commands({"CMD_WAIT"})
+    else
+      crawl.mpr("Failed to move towards target because you cannot move.")
+    end
   else
-    crawl.do_commands({delta_to_cmd(move[1],move[2])})
+      crawl.do_commands({delta_to_cmd(move[1],move[2])})
   end
 end
 
 local function will_tab(ax, ay, bx, by)
-  local range = reach_range()
+  local range = you.reach_range()
   if abs(bx-ax) <= range and abs(by-ay) <= range then
     return true
   end
@@ -234,7 +234,7 @@ local function get_monster_info(dx,dy,no_move)
   elseif not have_reaching() then
     info.attack_type = (-info.distance < 2) and AF_MELEE or AF_MOVES
   else
-    local range = reach_range()
+    local range = you.reach_range()
     -- Assume extended reach (i.e. Rift) gets smite targeting.
     local can_reach = range > 2 and you.see_cell_no_trans or view.can_reach
     if -info.distance > range then
@@ -266,13 +266,14 @@ local function get_monster_info(dx,dy,no_move)
   info.injury = m:damage_level()
   info.threat = m:threat()
   info.orc_priest_wizard = (name == "orc priest" or name == "orc wizard") and 1 or 0
+  info.bullseye_target = (info.attack_type == AF_FIRE and m:status("targeted by your dimensional bullseye")) and -1 or 0
   return info
 end
 
 local function compare_monster_info(m1, m2)
   flag_order = autofight_flag_order
   if flag_order == nil then
-    flag_order = {"can_attack", "safe", "distance", "constricting_you", "very_stabbable", "injury", "threat", "orc_priest_wizard"}
+    flag_order = {"bullseye_target", "can_attack", "safe", "distance", "constricting_you", "very_stabbable", "injury", "threat", "orc_priest_wizard"}
   end
   for i,flag in ipairs(flag_order) do
     if m1[flag] > m2[flag] then
@@ -302,7 +303,7 @@ local function is_candidate_for_attack(x,y)
     return false
   end
   if m:attitude() == ATT_HOSTILE
-      or m:attitude() == ATT_NEUTRAL and m:is("insane") then
+      or m:attitude() == ATT_NEUTRAL and m:is("frenzied") then
     return true
   end
   return false
@@ -400,7 +401,7 @@ function af_mp_is_low()
   return (100*mp <= AUTOMAGIC_STOP*mmp)
 end
 
-function autofight_check_preconditions()
+function autofight_check_preconditions(check_caught)
   local caught = you.caught()
   if af_hp_is_low() then
     crawl.mpr("You are too injured to fight recklessly!")
@@ -408,22 +409,20 @@ function autofight_check_preconditions()
   elseif you.confused() then
     crawl.mpr("You are too confused!")
     return false
-  elseif caught then
-    if not AUTOFIGHT_CAUGHT then
-      crawl.mpr("You are " .. caught .. "!")
-      return false
-    end
+  elseif caught and check_caught and not AUTOFIGHT_CAUGHT then
+    crawl.mpr("You are " .. caught .. "!")
+    return false
   end
   return true
 end
 
-function attack(allow_movement)
+function attack(allow_movement, check_caught)
   local x, y, info = get_target(not allow_movement)
-  if not autofight_check_preconditions() then
+  if not autofight_check_preconditions(check_caught) then
     return
   end
 
-  if you.caught() then
+  if check_caught and you.caught() then
     crawl.do_commands({delta_to_cmd(1, 0)}) -- Direction doesn't matter.
     return
   end
@@ -457,7 +456,7 @@ function hit_closest()
   if AUTOMAGIC_ACTIVE and you.spell_table()[AUTOMAGIC_SPELL_SLOT] then
     mag_attack(true)
   else
-    attack(true)
+    attack(true, true)
   end
 end
 
@@ -465,7 +464,7 @@ function hit_closest_nomove()
   if AUTOMAGIC_ACTIVE and you.spell_table()[AUTOMAGIC_SPELL_SLOT] then
     mag_attack(false)
   else
-    attack(false)
+    attack(false, true)
   end
 end
 
@@ -475,17 +474,17 @@ function fire_closest()
   else
     local old = AUTOFIGHT_FORCE_FIRE
     AUTOFIGHT_FORCE_FIRE = true
-    attack(false)
+    attack(false, false)
     AUTOFIGHT_FORCE_FIRE = old
   end
 end
 
 function hit_nonmagic()
-  attack(true)
+  attack(true, true)
 end
 
 function hit_nonmagic_nomove()
-  attack(false)
+  attack(false, true)
 end
 
 function hit_magic()

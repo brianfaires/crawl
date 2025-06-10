@@ -59,8 +59,7 @@ static int _gold_level()
            (you.gold >=  5000) ? 5 :
            (you.gold >=  1000) ? 4 :
            (you.gold >=   500) ? 3 :
-           (you.gold >=   100) ? 2
-                               : 1;
+           (you.gold >=   100) ? 2 : 1;
 }
 
 static int _invocations_level()
@@ -79,7 +78,7 @@ int god_favour_rank(god_type which_god)
 {
     if (which_god == GOD_GOZAG)
         return _gold_level();
-    else if (which_god == GOD_USKAYAW || which_god == GOD_YREDELEMNUL)
+    else if (which_god == GOD_USKAYAW)
         return _invocations_level();
     else
         return _piety_level(you.piety);
@@ -142,13 +141,13 @@ static const char *divine_title[][8] =
     {"Honourless",         "Acolyte",               "Righteous",                "Unflinching",
         "Holy Warrior",       "Exorcist",              "Demon Slayer",             "Bringer of Light"},
 
-    // Kikubaaqudgha -- scholarly death.
-    {"Tormented",          "Purveyor of Pain",      "Scholar of Death",         "Merchant of Misery",
-        "Artisan of Death",   "Dealer of Despair",     "Black Sun",                "Lord of Darkness"},
+    // Kikubaaqudgha -- death scholar theme.
+    {"Tormented",          "Purveyor of Pain",       "Pupil of Sorrows",        "Merchant of Misery",
+     "Scholar of Souls",   "Artisan of Death",       "Demagogue of Despair",    "Lord of Darkness"},
 
-    // Yredelemnul -- zombie death.
-    {"Traitor",            "Tainted",                "Torchbearer",             "Fey @Genus@",
-        "Black Crusader",     "Sculptor of Flesh",     "Harbinger of Death",       "Grim Reaper"},
+    // Yredelemnul -- ferverent death knight theme.
+    {"Traitor",            "Torchbearer",            "Despoiler",               "Black Crusader",
+     "Fallen @Genus@",     "Harbinger of Doom",      "Inexorable Tide",         "Bringer of Blasphemy"},
 
     // Xom.
     {"Toy",                "Toy",                   "Toy",                      "Toy",
@@ -166,7 +165,7 @@ static const char *divine_title[][8] =
     {"Orderly",            "Spawn of Chaos",        "Disciple of Destruction",  "Fanfare of Bloodshed",
         "Fiendish",           "Demolition @Genus@",    "Pandemonic",               "Champion of Chaos"},
 
-    // Sif Muna -- scholarly theme.
+    // Sif Muna -- generalist scholarly theme.
     {"Ignorant",           "Disciple",              "Student",                  "Adept",
         "Scribe",             "Scholar",               "Sage",                     "Genius of the Arcane"},
 
@@ -187,8 +186,8 @@ static const char *divine_title[][8] =
         "Agent of Entropy",   "Schismatic",            "Envoy of Void",            "Corrupter of Planes"},
 
     // Beogh -- messiah theme.
-    {"Apostate",           "Messenger",             "Proselytiser",             "Priest",
-        "Missionary",         "Evangelist",            "Apostle",                  "Messiah"},
+    {"Apostate",           "Convert",               "Proselytiser",             "Priest",
+        "Missionary",         "Evangelist",            "Unifier",                  "Messiah"},
 
     // Jiyva -- slime and jelly theme.
     {"Scum",               "Squelcher",             "Ooze",                     "Jelly",
@@ -207,8 +206,8 @@ static const char *divine_title[][8] =
         "Oracle",            "Illuminatus",            "Prince of Secrets",        "Omniscient"},
 
     // Dithmenos -- darkness theme
-    {"Ember",              "Gloomy",                "Darkened",                 "Extinguished",
-        "Caliginous",         "Umbral",                "Hand of Shadow",           "Eternal Night"},
+    {"Conspicuous",         "Nocturnal",            "Bump in the Night",        "Thespian",
+        "Tenebrous",          "Puppetmaster",          "@Walking@ Midnight",       "Who Hides the Stars"},
 
     // Gozag -- entrepreneur theme
     {"Profligate",         "Pauper",                "Entrepreneur",             "Capitalist",
@@ -233,7 +232,7 @@ static const char *divine_title[][8] =
         "Impassioned",        "Rapturous",             "Ecstatic",                "Rhythm of Life and Death"},
 
     // Hepliaklqana -- memory/ancestry theme
-    {"Damnatio Memoriae",       "Hazy",             "@Adj@ Child",              "Storyteller",
+    {"Damnatio Memoriae",       "Hazy",             "@Adj@ @Child@",              "Storyteller",
         "Brooding",           "Anamnesiscian",               "Grand Scion",                "Unforgettable"},
 
     // Wu Jian -- animal/chinese martial arts monk theme
@@ -251,7 +250,7 @@ string god_title(god_type which_god, species_type which_species, int piety)
     string title;
     if (player_under_penance(which_god))
         title = divine_title[which_god][0];
-    else if (which_god == GOD_USKAYAW || which_god == GOD_YREDELEMNUL)
+    else if (which_god == GOD_USKAYAW)
         title = divine_title[which_god][_invocations_level()];
     else if (which_god == GOD_GOZAG)
         title = divine_title[which_god][_gold_level()];
@@ -262,8 +261,10 @@ string god_title(god_type which_god, species_type which_species, int piety)
     {
         { "Adj", species::name(which_species, species::SPNAME_ADJ) },
         { "Genus", species::name(which_species, species::SPNAME_GENUS) },
-        { "Walking", species::walking_verb(which_species) + "ing" },
-        { "Walker", species::walking_verb(which_species) + "er" },
+        { "Walking", species::walking_title(which_species) + "ing" },
+        { "Walker", species::walking_title(which_species) + "er" },
+        { "Child", species::child_name(which_species) },
+        { "Orc", species::orc_name(which_species) },
     };
 
     return replace_keys(title, replacements);
@@ -292,24 +293,19 @@ static string _describe_ash_skill_boost()
     desc << setw(30) << "Curse bonuses";
     desc << "</white>\n";
 
-    for (int j = EQ_FIRST_EQUIP; j < NUM_EQUIP; j++)
+    vector<item_def*> eq = you.equipment.get_slot_items(SLOT_ALL_EQUIPMENT, true);
+    for (item_def* item : eq)
     {
-        const equipment_type i = static_cast<equipment_type>(j);
-        if (you.equip[i] != -1)
+        if (item->cursed())
         {
-            const item_def& item = you.inv[you.equip[i]];
-            const bool meld = item_is_melded(item);
-            if (item.cursed())
-            {
-                desc << (meld ? "<darkgrey>" : "<lightred>");
-                desc << setw(40) << item.name(DESC_QUALNAME, true, false, false);
-                desc << setw(30) << (meld ? "melded" : _describe_item_curse(item));
-                desc << (meld ? "</darkgrey>" : "</lightred>");
-                desc << "\n";
-            }
+            const bool meld = item_is_melded(*item);
+            desc << (meld ? "<darkgrey>" : "<lightred>");
+            desc << setw(40) << item->name(DESC_QUALNAME, true, false, false);
+            desc << setw(30) << (meld ? "melded" : _describe_item_curse(*item));
+            desc << (meld ? "</darkgrey>" : "</lightred>");
+            desc << "\n";
         }
     }
-
 
     return desc.str();
 }
@@ -531,60 +527,14 @@ static formatted_string _beogh_extra_description()
 {
     formatted_string desc;
 
-    _add_par(desc, "Named Followers:");
+    for (int i = 1; i <= get_num_apostles(); ++i)
+        _add_par(desc, apostle_short_description(i));
 
-    vector<monster*> followers;
-
-    for (monster_iterator mi; mi; ++mi)
-        if (is_orcish_follower(**mi))
-            followers.push_back(*mi);
-    for (auto &entry : companion_list)
-        // if not elsewhere, follower already seen by monster_iterator
-        if (companion_is_elsewhere(entry.second.mons.mons.mid, true))
-            followers.push_back(&entry.second.mons.mons);
-
-    sort(followers.begin(), followers.end(),
-        [] (monster* a, monster* b) { return a->experience > b->experience;});
-
-    bool has_named_followers = false;
-    for (auto mons : followers)
+    if (you.duration[DUR_BEOGH_CAN_RECRUIT])
     {
-        if (!mons->is_named())
-            continue;
-        has_named_followers = true;
-
-        desc += mons->full_name(DESC_PLAIN);
-        if (companion_is_elsewhere(mons->mid))
-        {
-            desc += formatted_string::parse_string(
-                            " (<blue>on another level</blue>)");
-        }
-        else if (given_gift(mons))
-        {
-            mon_inv_type slot =
-                mons->props.exists(BEOGH_SH_GIFT_KEY) ? MSLOT_SHIELD :
-                mons->props.exists(BEOGH_ARM_GIFT_KEY) ? MSLOT_ARMOUR :
-                mons->props.exists(BEOGH_RANGE_WPN_GIFT_KEY) ? MSLOT_ALT_WEAPON :
-                MSLOT_WEAPON;
-
-            // An orc can still lose its gift, e.g. by being turned into a
-            // shapeshifter via a chaos cloud. TODO: should the gift prop be
-            // deleted at that point?
-            if (mons->inv[slot] != NON_ITEM)
-            {
-                desc.cprintf(" (");
-
-                item_def &gift = env.item[mons->inv[slot]];
-                desc += formatted_string::parse_string(
-                                    menu_colour_item_name(gift,DESC_PLAIN));
-                desc.cprintf(")");
-            }
-        }
-        desc.cprintf("\n");
+        _add_par(desc, "-----------------------------------\n");
+        _add_par(desc, apostle_short_description(0));
     }
-
-    if (!has_named_followers)
-        _add_par(desc, "None");
 
     return desc;
 }
@@ -807,6 +757,21 @@ static formatted_string _describe_god_powers(god_type which_god)
 
     switch (which_god)
     {
+    case GOD_BEOGH:
+    {
+        have_any = true;
+        if (have_passive(passive_t::convert_orcs))
+            desc.textcolour(god_colour(which_god));
+        else
+            desc.textcolour(DARKGREY);
+
+        if (piety >= piety_breakpoint(5))
+            desc.cprintf("Orcs frequently recognise you as Beogh's chosen one.\n");
+        else
+            desc.cprintf("Orcs sometimes recognise you as one of their own.\n");
+    }
+    break;
+
     case GOD_ZIN:
     {
         have_any = true;
@@ -834,42 +799,40 @@ static formatted_string _describe_god_powers(god_type which_god)
         have_any = true;
         desc.cprintf("%s prevents you from stabbing unaware foes.\n",
                 uppercase_first(god_name(which_god)).c_str());
-        if (piety < piety_breakpoint(1))
-            desc.textcolour(DARKGREY);
-        else
-            desc.textcolour(god_colour(which_god));
-        const char *how =
-            (piety >= piety_breakpoint(5)) ? "completely" :
-            (piety >= piety_breakpoint(3)) ? "mostly" :
-                                             "partially";
-
-        desc.cprintf("%s %s shields you from negative energy.\n",
-                uppercase_first(god_name(which_god)).c_str(), how);
 
         const int halo_size = you_worship(which_god) ? you.halo_radius() : -1;
         if (halo_size < 0)
             desc.textcolour(DARKGREY);
         else
             desc.textcolour(god_colour(which_god));
-        desc.cprintf("You radiate a%s righteous aura, and others within it are "
+        desc.cprintf("You radiate a%s righteous aura, and foes within it are "
                 "easier to hit.\n",
                 halo_size > 5 ? " large" :
                 halo_size > 3 ? "" :
                                 " small");
+
+        if (piety >= piety_breakpoint(1))
+            desc.textcolour(god_colour(which_god));
+        else
+            desc.textcolour(DARKGREY);
+        const char *how =
+            (piety >= piety_breakpoint(5)) ? "completely" :
+            (piety >= piety_breakpoint(3)) ? "mostly" :
+                                             "partially";
+        desc.cprintf("%s %s shields you from negative energy.\n",
+                uppercase_first(god_name(which_god)).c_str(), how);
         break;
     }
 
-    case GOD_FEDHAS:
-        have_any = true;
-        desc.cprintf("You can walk through plants and fire through allied plants.\n");
-        break;
-
     case GOD_JIYVA:
         have_any = true;
-        if (!have_passive(passive_t::jelly_regen))
-            desc.textcolour(DARKGREY);
-        else
+        desc.cprintf("Jellies are peaceful and will consume items off the floor.\n");
+        desc.cprintf("Jiyva prevents you from harming jellies.\n");
+
+        if (have_passive(passive_t::jelly_regen))
             desc.textcolour(god_colour(which_god));
+        else
+            desc.textcolour(DARKGREY);
         desc.cprintf("Your health and magic regeneration is %saccelerated.\n",
                      piety >= piety_breakpoint(5) ? "very greatly " :
                      piety >= piety_breakpoint(3) ? "greatly " :
@@ -908,32 +871,15 @@ static formatted_string _describe_god_powers(god_type which_god)
         }
         break;
 
-    case GOD_DITHMENOS:
-    {
-        have_any = true;
-        const int umbra_size = you_worship(which_god) ? you.umbra_radius() : -1;
-        if (umbra_size < 0)
-            desc.textcolour(DARKGREY);
-        else
-            desc.textcolour(god_colour(which_god));
-        desc.cprintf("You radiate a%s aura of darkness, enhancing your stealth "
-                "and reducing the accuracy of your foes.\n",
-                umbra_size > 5 ? " large" :
-                umbra_size > 3 ? "n" :
-                                 " small");
-        break;
-    }
-
-    case GOD_GOZAG:
-        have_any = true;
-        desc.cprintf("You passively detect gold.\n");
-        desc.cprintf("%s turns your defeated foes' bodies to gold.\n",
-                uppercase_first(god_name(which_god)).c_str());
-        desc.cprintf("Your enemies may become distracted by gold.\n");
+    case GOD_YREDELEMNUL:
+        // TODO: Vary the text depending on the size of the umbra.
+        desc.cprintf("You are surrounded by an umbra.\n"
+                     "Foes that die within your umbra may be raised as undead servants.\n");
         break;
 
     case GOD_HEPLIAKLQANA:
-        // XXX: move this logic back into the usual religion.cc god_powers block?
+        // Frailty occurs even under penance post-abandonment, so we can't put
+        // this in the usual god_powers block.
         have_any = true;
     {
         const auto textcol = have_passive(passive_t::frail) ? god_colour(which_god) : DARKGREY;
@@ -942,26 +888,7 @@ static formatted_string _describe_god_powers(god_type which_god)
         // Feature request: not this.
         desc.textcolour(textcol);
         desc.cprintf("Your life essence is reduced. (-10%% HP)\n");
-        desc.textcolour(textcol);
-        desc.cprintf("Your ancestor manifests to aid you.\n");
     }
-        break;
-
-    case GOD_LUGONU:
-        have_any = true;
-        desc.cprintf("You are protected from the effects of unwielding distortion weapons.\n");
-        break;
-
-    case GOD_OKAWARU:
-        have_any = true;
-        desc.cprintf("%s requires that you fight alone, and prevents you from "
-                     "gaining allies.\n",
-                uppercase_first(god_name(which_god)).c_str());
-        break;
-
-    case GOD_IGNIS:
-        have_any = true;
-        desc.cprintf("You are resistant to fire.\n");
         break;
 
     default:
@@ -974,6 +901,13 @@ static formatted_string _describe_god_powers(god_type which_god)
         // wasn't already mentioned by the other description
         if (power.abil == ABIL_KIKU_GIFT_CAPSTONE_SPELLS
             && !you.has_mutation(MUT_NO_GRASPING))
+        {
+            continue;
+        }
+        // Skip over Makhleb's brand options after the first one, since
+        // only the first one has an associated god ability.
+        if (power.abil == ABIL_MAKHLEB_BRAND_SELF_2
+            || power.abil == ABIL_MAKHLEB_BRAND_SELF_3)
         {
             continue;
         }
@@ -991,7 +925,38 @@ static formatted_string _describe_god_powers(god_type which_god)
         else
             desc.textcolour(DARKGREY);
 
+        // XXX: I don't like this, but there's no other obvious way to
+        //      slot the destruction upgrade mutations in at the right piety
+        //      point in the list for them.
+        if (which_god == GOD_MAKHLEB && power.rank == 4)
+        {
+            desc.textcolour(god_colour(which_god));
+            if (you.has_mutation(MUT_MAKHLEB_DESTRUCTION_GEH))
+                desc.cprintf("Your Destruction is augmented by the power of Gehenna.\n");
+            else if (you.has_mutation(MUT_MAKHLEB_DESTRUCTION_COC))
+                desc.cprintf("Your Destruction is augmented by the power of Cocytus.\n");
+            else if (you.has_mutation(MUT_MAKHLEB_DESTRUCTION_TAR))
+                desc.cprintf("Your Destruction is augmented by the power of Tartarus.\n");
+            else if (you.has_mutation(MUT_MAKHLEB_DESTRUCTION_DIS))
+                desc.cprintf("Your Destruction is augmented by the power of Dis.\n");
+            else
+            {
+                desc.textcolour(DARKGREY);
+                desc.cprintf("Your Destruction will be augmented by one of the Four Hells.\n");
+            }
+
+            continue;
+        }
+
         string buf = power.general;
+
+        // Skip listing powers with no description (they are intended to be hidden)
+        if (buf.length() == 0)
+        {
+            have_any = false;
+            continue;
+        }
+
         if (!isupper(buf[0])) // Complete sentence given?
             buf = "You can " + buf + ".";
         const int desc_len = buf.size();
@@ -1006,6 +971,17 @@ static formatted_string _describe_god_powers(god_type which_god)
 
     if (!have_any)
         desc.cprintf("None.\n");
+
+    // Show Jiyva's opening of the Slime Pits at the bottom of the list
+    // We want this to stay green permanently once the player hits 6*
+    if (which_god == GOD_JIYVA)
+    {
+        if (you.one_time_ability_used[which_god])
+            desc.textcolour(god_colour(which_god));
+        else
+            desc.textcolour(DARKGREY);
+        desc.cprintf("Jiyva will unlock the Slime Pits vaults.\n");
+    }
 
     return desc;
 }
@@ -1061,16 +1037,16 @@ static void build_partial_god_ui(god_type which_god, shared_ptr<ui::Popup>& popu
     auto icon = make_shared<Image>();
     const tileidx_t idx = tileidx_feature_base(altar_for_god(which_god));
     icon->set_tile(tile_def(idx));
-    title_hbox->add_child(move(icon));
+    title_hbox->add_child(std::move(icon));
 #endif
 
     auto title = make_shared<Text>(topline.trim());
     title->set_margin_for_sdl(0, 0, 0, 16);
-    title_hbox->add_child(move(title));
+    title_hbox->add_child(std::move(title));
 
     title_hbox->set_main_alignment(Widget::CENTER);
     title_hbox->set_cross_alignment(Widget::CENTER);
-    vbox->add_child(move(title_hbox));
+    vbox->add_child(std::move(title_hbox));
 
     desc_sw = make_shared<Switcher>();
     more_sw = make_shared<Switcher>();
@@ -1084,26 +1060,20 @@ static void build_partial_god_ui(god_type which_god, shared_ptr<ui::Popup>& popu
         _god_extra_description(which_god)
     };
 
-#ifdef USE_TILE_LOCAL
-# define MORE_PREFIX "[<w>!</w>/<w>^</w>" "|<w>Right-click</w>" "]: "
-#else
-# define MORE_PREFIX "[<w>!</w>/<w>^</w>" "]: "
-#endif
-
     int mores_index = descs[3].empty() ? 0 : 1;
     const char* mores[2][4] =
     {
         {
-            MORE_PREFIX "<w>Overview</w>|Powers|Wrath",
-            MORE_PREFIX "Overview|<w>Powers</w>|Wrath",
-            MORE_PREFIX "Overview|Powers|<w>Wrath</w>",
-            MORE_PREFIX "Overview|Powers|Wrath"
+            "[<w>!</w>]: <w>Overview</w>|Powers|Wrath",
+            "[<w>!</w>]: Overview|<w>Powers</w>|Wrath",
+            "[<w>!</w>]: Overview|Powers|<w>Wrath</w>",
+            "[<w>!</w>]: Overview|Powers|Wrath"
         },
         {
-            MORE_PREFIX "<w>Overview</w>|Powers|Wrath|Extra",
-            MORE_PREFIX "Overview|<w>Powers</w>|Wrath|Extra",
-            MORE_PREFIX "Overview|Powers|<w>Wrath</w>|Extra",
-            MORE_PREFIX "Overview|Powers|Wrath|<w>Extra</w>"
+            "[<w>!</w>]: <w>Overview</w>|Powers|Wrath|Extra",
+            "[<w>!</w>]: Overview|<w>Powers</w>|Wrath|Extra",
+            "[<w>!</w>]: Overview|Powers|<w>Wrath</w>|Extra",
+            "[<w>!</w>]: Overview|Powers|Wrath|<w>Extra</w>"
         }
     };
 
@@ -1117,7 +1087,7 @@ static void build_partial_god_ui(god_type which_god, shared_ptr<ui::Popup>& popu
         auto text = make_shared<Text>(desc.trim());
         text->set_wrap_text(true);
         scroller->set_child(text);
-        desc_sw->add_child(move(scroller));
+        desc_sw->add_child(std::move(scroller));
 
         more_sw->add_child(make_shared<Text>(
                 formatted_string::parse_string(mores[mores_index][i])));
@@ -1206,7 +1176,7 @@ void describe_god(god_type which_god)
     bool done = false;
     popup->on_keydown_event([&](const KeyEvent& ev) {
         const auto key = ev.key();
-        if (key == '!' || key == CK_MOUSE_CMD || key == '^')
+        if (key == '!' || key == '^')
         {
             int n = (desc_sw->current() + 1) % desc_sw->num_children();
             desc_sw->current() = more_sw->current() = n;
@@ -1217,7 +1187,9 @@ void describe_god(god_type which_god)
 #endif
             return true;
         }
-        return done = !desc_sw->current_widget()->on_event(ev);
+        if (desc_sw->current_widget()->on_event(ev))
+            return true;
+        return done = ui::key_exits_popup(key, false);
     });
 
 #ifdef USE_TILE_WEB
@@ -1283,9 +1255,9 @@ bool describe_god_with_join(god_type which_god)
         const auto keyin = ev.key();
 
         // Always handle escape and pane-switching keys the same way
-        if (keyin == CK_ESCAPE)
+        if (ui::key_exits_popup(keyin, false))
             return done = true;
-        if (keyin == '!' || keyin == CK_MOUSE_CMD || keyin == '^')
+        if (keyin == '!' || keyin == '^')
         {
             int n = (desc_sw->current() + 1) % desc_sw->num_children();
             desc_sw->current() = n;
@@ -1306,8 +1278,8 @@ bool describe_god_with_join(god_type which_god)
         // Next, allow child widgets to handle scrolling keys
         // NOTE: these key exceptions are also specified in ui-layouts.js
         if (keyin != 'J' && keyin != CK_ENTER)
-        if (desc_sw->current_widget()->on_event(ev))
-            return true;
+            if (desc_sw->current_widget()->on_event(ev))
+                return true;
 
         if (step == ABANDON)
         {

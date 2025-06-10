@@ -11,6 +11,7 @@
 
 #include "act-iter.h"
 #include "areas.h"
+#include "art-enum.h"
 #include "artefact.h"
 #include "branch.h"
 #include "database.h"
@@ -19,6 +20,7 @@
 #include "env.h"
 #include "exercise.h"
 #include "ghost.h"
+#include "god-passive.h"
 #include "hints.h"
 #include "item-status-flag-type.h"
 #include "jobs.h"
@@ -37,11 +39,11 @@
 #include "viewchar.h"
 
 static noise_grid _noise_grid;
-static void _actor_apply_noise(actor *act,
-                               const coord_def &apparent_source,
-                               int noise_intensity_millis);
+static void _monster_apply_noise(monster *mons,
+                                 const coord_def &apparent_source,
+                                 int noise_intensity_millis);
 
-/// By default, what databse lookup key corresponds to each shout type?
+/// By default, what database lookup key corresponds to each shout type?
 static const map<shout_type, string> default_msg_keys = {
     { S_SILENT,         "" },
     { S_SHOUT,          "__SHOUT" },
@@ -67,6 +69,7 @@ static const map<shout_type, string> default_msg_keys = {
     { S_SQUEAL,         "__SQUEAL" },
     { S_LOUD_ROAR,      "__LOUD_ROAR" },
     { S_RUSTLE,         "__RUSTLE" },
+    { S_SQUEAK,         "__SQUEAK" },
 };
 
 /**
@@ -134,7 +137,7 @@ bool monster_attempt_shout(monster &mon)
         return false;
     }
 
-    monster_shout(&mon, shout);
+    monster_shout(mon, shout);
     return true;
 }
 
@@ -143,42 +146,42 @@ bool monster_attempt_shout(monster &mon)
  * Have a monster perform a specific shout.
  *
  * @param mons      The monster in question.
- *                  TODO: use a reference, not a pointer
  * @param shout    The shout_type to use.
  */
-void monster_shout(monster* mons, int shout)
+void monster_shout(monster &mons, int shout)
 {
     shout_type s_type = static_cast<shout_type>(shout);
-    mon_acting mact(mons);
+    mon_acting mact(&mons);
 
     // less specific, more specific.
     const string default_msg_key
-        = mons->type == MONS_PLAYER_GHOST ?
+        = mons.type == MONS_PLAYER_GHOST ?
                  "player ghost" :
                  lookup(default_msg_keys, s_type, "__BUGGY");
-    const string key = _shout_key(*mons);
+    const string key = _shout_key(mons);
 
     // Now that we have the message key, get a random verb and noise level
     // for pandemonium lords.
     if (s_type == S_DEMON_TAUNT)
-        s_type = mons_shouts(mons->type, true);
+        s_type = mons_shouts(mons.type, true);
 
     // Tries to find an entry for "name seen" or "name unseen",
     // and if no such entry exists then looks simply for "name".
-    const string suffix = you.can_see(*mons) ? " seen" : " unseen";
+    const bool seen = you.can_see(mons);
+    const string suffix = seen ? " seen" : " unseen";
     string message = getShoutString(key, suffix);
 
     if (message == "__DEFAULT" || message == "__NEXT")
         message = getShoutString(default_msg_key, suffix);
     else if (message.empty())
     {
-        char mchar = mons_base_char(mons->type);
+        char mchar = mons_base_char(mons.type);
 
         // See if there's a shout for all monsters using the
         // same glyph/symbol
         string glyph_key = "'";
 
-        // Database keys are case-insensitve.
+        // Database keys are case-insensitive.
         if (isaupper(mchar))
             glyph_key += "cap-";
 
@@ -222,45 +225,26 @@ void monster_shout(monster* mons, int shout)
 
         strip_channel_prefix(message, channel);
 
-        // Monster must come up from being submerged if it wants to shout.
-        // XXX: this code is probably unreachable now?
-        if (mons->submerged())
-        {
-            if (!mons->del_ench(ENCH_SUBMERGED))
-            {
-                // Couldn't unsubmerge.
-                return;
-            }
-
-            if (you.can_see(*mons))
-            {
-                mons->seen_context = SC_FISH_SURFACES;
-
-                // Give interrupt message before shout message.
-                handle_seen_interrupt(mons);
-            }
-        }
-
-        if (channel != MSGCH_TALK_VISUAL || you.can_see(*mons))
+        if (seen)
         {
             // Otherwise it can move away with no feedback.
-            if (you.can_see(*mons))
-            {
-                if (!(mons->flags & MF_WAS_IN_VIEW))
-                    handle_seen_interrupt(mons);
-                seen_monster(mons);
-            }
+            if (!(mons.flags & MF_WAS_IN_VIEW))
+                handle_seen_interrupt(&mons);
+            seen_monster(&mons);
+        }
 
-            message = do_mon_str_replacements(message, *mons, s_type);
+        if (channel != MSGCH_TALK_VISUAL || seen)
+        {
+            message = do_mon_str_replacements(message, mons, s_type);
             msg::streams(channel) << message << endl;
         }
     }
 
     const int  noise_level = get_shout_noise_level(s_type);
-    const bool heard       = noisy(noise_level, mons->pos(), mons->mid);
+    const bool heard       = noisy(noise_level, mons.pos(), mons.mid);
 
-    if (crawl_state.game_is_hints() && (heard || you.can_see(*mons)))
-        learned_something_new(HINT_MONSTER_SHOUT, mons->pos());
+    if (crawl_state.game_is_hints() && (heard || you.can_see(mons)))
+        learned_something_new(HINT_MONSTER_SHOUT, mons.pos());
 }
 
 bool check_awaken(monster* mons, int stealth)
@@ -270,9 +254,9 @@ bool check_awaken(monster* mons, int stealth)
     if (!mons->see_cell(you.pos()))
         return false;
 
-    // Monsters put to sleep by ensorcelled hibernation will sleep
-    // at least one turn.
-    if (mons_just_slept(*mons))
+    // Monsters forcibly put to sleep should never wake up of their own accord
+    // until it wears off.
+    if (mons_is_deep_asleep(*mons))
         return false;
 
     // Berserkers aren't really concerned about stealth.
@@ -418,21 +402,16 @@ void item_noise(const item_def &item, actor &act, string msg, int loudness)
 }
 
 // TODO: Let artefacts besides weapons generate noise.
-void noisy_equipment()
+void noisy_equipment(const item_def &weapon)
 {
     if (silenced(you.pos()) || !one_chance_in(20))
         return;
 
     string msg;
 
-    const item_def* weapon = you.weapon();
-    if (!weapon)
-        return;
-
-    if (is_unrandom_artefact(*weapon))
+    if (is_unrandom_artefact(weapon))
     {
-        string name = weapon->name(DESC_PLAIN, false, true, false, false,
-                                   ISFLAG_IDENT_MASK);
+        string name = weapon.name(DESC_PLAIN, false, true, false, false);
         msg = getSpeakString(name);
         if (msg == "NONE")
             return;
@@ -441,17 +420,17 @@ void noisy_equipment()
     if (msg.empty())
         msg = getSpeakString("noisy weapon");
 
-    item_noise(*weapon, you, msg, 20);
+    item_noise(weapon, you, msg, 20);
 }
 
 // Berserking monsters cannot be ordered around.
 static bool _follows_orders(monster* mon)
 {
     return mon->friendly()
-           && mon->type != MONS_BALLISTOMYCETE_SPORE
-           && !mon->berserk_or_insane()
-           && !mons_is_conjured(mon->type)
-           && !mon->has_ench(ENCH_HAUNTING);
+           && !mon->berserk_or_frenzied()
+           && !mon->is_peripheral()
+           && !mon->has_ench(ENCH_HAUNTING)
+           && !mon->has_ench(ENCH_VEXED);
 }
 
 // Sets foe target of friendly monsters.
@@ -483,13 +462,14 @@ static void _set_allies_patrol_point(bool clear = false)
             mi->behaviour = BEH_WANDER;
         else
             mi->behaviour = BEH_SEEK;
+        mi->travel_path.clear();
     }
 }
 
 static void _set_allies_withdraw(const coord_def &target)
 {
     coord_def delta = target - you.pos();
-    float mult = float(LOS_DEFAULT_RANGE * 2) / (float)max(abs(delta.x), abs(delta.y));
+    float mult = float(LOS_DEFAULT_RANGE * 3) / (float)max(abs(delta.x), abs(delta.y));
     coord_def rally_point = clamp_in_bounds(coord_def(delta.x * mult, delta.y * mult) + you.pos());
 
     for (monster_near_iterator mi(you.pos()); mi; ++mi)
@@ -504,16 +484,8 @@ static void _set_allies_withdraw(const coord_def &target)
         mi->foe = MHITNOT;
 
         mi->props.erase(LAST_POS_KEY);
-        mi->props.erase(IDLE_POINT_KEY);
-        mi->props.erase(IDLE_DEADLINE_KEY);
         mi->props.erase(BLOCKED_DEADLINE_KEY);
     }
-}
-
-/// Does the player have a 'previous target' to issue targeting orders at?
-static bool _can_target_prev()
-{
-    return !(you.prev_targ == MHITNOT || you.prev_targ == MHITYOU);
 }
 
 /// Prompt the player to issue orders. Returns the key pressed.
@@ -529,15 +501,7 @@ static int _issue_orders_prompt()
 
     if (!you.berserk() && !you.confused())
     {
-        string previous;
-        if (_can_target_prev())
-        {
-            const monster* target = &env.mons[you.prev_targ];
-            if (target->alive() && you.can_see(*target))
-                previous = "   p - Attack previous target.";
-        }
-
-        mprf("Orders for allies: a - Attack new target.%s", previous.c_str());
+        mpr("Orders for allies: a - Attack new target.");
         mpr("                   r - Retreat!             s - Stop attacking.");
         mpr("                   g - Guard the area.      f - Follow me.");
     }
@@ -565,7 +529,7 @@ static bool _allies_can_see(const monster &mon)
  * Issue the order specified by the given key.
  *
  * @param keyn              The key the player just pressed.
- * @param mons_targd[out]   Who the player's allies should be targetting as a
+ * @param mons_targd[out]   Who the player's allies should be targeting as a
  *                          result of this command.
  * @return                  Whether a command actually executed (and the value
  *                          of mons_targd should be used).
@@ -593,22 +557,12 @@ static bool _issue_order(int keyn, int &mons_targd)
                 mpr("Stop fighting!");
             break;
 
-        case 'w':
         case 'g':
             mpr("Guard this area!");
             mons_targd = MHITNOT;
             _set_allies_patrol_point();
             break;
 
-        case 'p':
-
-            if (_can_target_prev())
-            {
-                mons_targd = you.prev_targ;
-                break;
-            }
-
-            // fall through
         case 'a':
             if (env.sanctuary_time > 0)
             {
@@ -664,7 +618,7 @@ static bool _issue_order(int keyn, int &mons_targd)
         {
             direction_chooser_args args;
             args.restricts = DIR_TARGET;
-            args.mode = TARG_ANY;
+            args.mode = TARG_NON_ACTOR;
             args.needs_path = false;
             args.top_prompt = "Retreat in which direction?";
             dist targ;
@@ -758,8 +712,8 @@ void issue_orders()
 
     you.turn_is_over = true;
     you.pet_target = mons_targd;
-    // Allow patrolling for "Stop fighting!" and "Wait here!"
-    _set_friendly_foes(keyn == 's' || keyn == 'w');
+    // Allow patrolling for "Stop fighting!"
+    _set_friendly_foes(keyn == 's');
 
     if (mons_targd != MHITNOT && mons_targd != MHITYOU)
     {
@@ -792,9 +746,9 @@ void yell(const actor* mon)
             }
             else
             {
-                mprf("You feel a %s rip itself from your throat, "
+                mprf("You feel %s rip itself from your throat, "
                      "but you make no sound!",
-                     shout_verb.c_str());
+                     article_a(shout_verb).c_str());
             }
         }
         else
@@ -812,9 +766,12 @@ void yell(const actor* mon)
     }
     else
     {
-        mprf(MSGCH_SOUND, "You %s%s!",
+        const char *fugue_suff = you.duration[DUR_FUGUE] ?
+            ", and the damned howl along" : "";
+        mprf(MSGCH_SOUND, "You %s%s%s!",
              shout_verb.c_str(),
-             you.berserk() ? " wildly" : " for attention");
+             you.berserk() ? " wildly" : " for attention",
+             fugue_suff);
     }
 
     noisy(noise_level, you.pos());
@@ -851,8 +808,14 @@ bool noisy(int original_loudness, const coord_def& where,
         ambient < 0 ? original_loudness + random2avg(abs(ambient), 3)
                     : original_loudness - random2avg(abs(ambient), 3);
 
-    const int adj_loudness = you.has_mutation(MUT_NOISE_DAMPENING)
-                && you.see_cell(where) ? div_rand_round(loudness, 2) : loudness;
+    int adj_loudness = loudness;
+    if (you.see_cell(where))
+    {
+        if (have_passive(passive_t::dampen_noise))
+            adj_loudness = div_rand_round(adj_loudness, 2);
+        if (you.unrand_equipped(UNRAND_THIEF))
+            adj_loudness = div_rand_round(adj_loudness, 2);
+    }
 
     dprf(DIAG_NOISE, "Noise %d (orig: %d; ambient: %d) at pos(%d,%d)",
          adj_loudness, original_loudness, ambient, where.x, where.y);
@@ -1122,40 +1085,25 @@ void noise_grid::apply_noise_effects(const coord_def &pos,
 
     if (you.pos() == pos)
     {
-        // The bizarre arrangement of those code into two functions that each
-        // check whether the actor is the player, but work at different types,
-        // probably ought to be refactored. I put the noise updating code here
-        // because the type is correct here.
-
-        _actor_apply_noise(&you, noise.noise_source,
-                           noise_intensity_millis);
-
-        // The next bit stores noise heard at the player's position for
+        // This stores noise heard at the player's position for
         // display in the HUD. A more interesting (and much more complicated)
         // way of doing this might be to sample from the noise grid at
         // selected distances from the player. Dealing with terrain is a bit
         // nightmarish for this alternative, though, so I'm going to keep it
         // simple.
-        you.los_noise_level = you.asleep()
-                            // noise may awaken the player but this should be
-                            // dealt with in `_actor_apply_noise`. We want only
-                            // noises after awakening (or the awakening noise)
-                            // to be shown.
-                            ? 0
-                            : max(you.los_noise_level, noise_intensity_millis);
-        ++affected_actor_count;
+        you.los_noise_level = max(you.los_noise_level, noise_intensity_millis);
     }
 
     if (monster *mons = monster_at(pos))
     {
         if (mons->alive()
-            && !mons_just_slept(*mons)
+            && !mons_is_deep_asleep(*mons)
             && mons->mid != noise.noise_producer_mid)
         {
             const coord_def perceived_position =
                 noise_perceived_position(mons, pos, noise);
-            _actor_apply_noise(mons, perceived_position,
-                               noise_intensity_millis);
+            _monster_apply_noise(mons, perceived_position,
+                                 noise_intensity_millis);
             ++affected_actor_count;
         }
     }
@@ -1336,7 +1284,7 @@ void noise_grid::write_noise_grid(FILE *outf) const
 
 void noise_grid::dump_noise_grid(const string &filename) const
 {
-    FILE *outf = fopen(filename.c_str(), "w");
+    FILE *outf = fopen_u(filename.c_str(), "w");
     fprintf(outf, "<!DOCTYPE html><html><head>");
     _write_noise_grid_css(outf);
     fprintf(outf, "</head>\n<body>\n");
@@ -1346,9 +1294,9 @@ void noise_grid::dump_noise_grid(const string &filename) const
 }
 #endif
 
-static void _actor_apply_noise(actor *act,
-                               const coord_def &apparent_source,
-                               int noise_intensity_millis)
+static void _monster_apply_noise(monster *mons,
+                                 const coord_def &apparent_source,
+                                 int noise_intensity_millis)
 {
 #ifdef DEBUG_NOISE_PROPAGATION
     dprf(DIAG_NOISE, "[NOISE] Actor %s (%d,%d) perceives noise (%d) "
@@ -1360,34 +1308,26 @@ static void _actor_apply_noise(actor *act,
          noise.noise_source.x, noise.noise_source.y,
          grid_distance(act->pos(), noise.noise_source),
          noise_travel_distance);
+#else
+    UNUSED(noise_intensity_millis);
 #endif
 
-    const bool player = act->is_player();
-    if (player)
-    {
-        const int loudness = div_rand_round(noise_intensity_millis, 1000);
-        act->check_awaken(loudness);
-    }
+    // If the perceived noise came from within the player's LOS, any
+    // monster that hears it will have a chance to guess that the
+    // noise was triggered by the player, depending on how close it was to
+    // the player. This happens independently of actual noise source.
+    //
+    // The probability is calculated as p(x) = (-90/R)x + 100, which is
+    // linear from p(0) = 100 to p(R) = 10. This replaces a version that
+    // was 100% from 0 to 3, and 0% outward.
+    //
+    // behaviour around the old breakpoint for R=8: p(3) = 66, p(4) = 55.
+
+    const int player_distance = grid_distance(apparent_source, you.pos());
+    const int alert_prob = max(player_distance * -90 / LOS_RADIUS + 100, 0);
+
+    if (x_chance_in_y(alert_prob, 100))
+        behaviour_event(mons, ME_ALERT, &you, apparent_source); // shout + set you as foe
     else
-    {
-        monster *mons = act->as_monster();
-        // If the perceived noise came from within the player's LOS, any
-        // monster that hears it will have a chance to guess that the
-        // noise was triggered by the player, depending on how close it was to
-        // the player. This happens independently of actual noise source.
-        //
-        // The probability is calculated as p(x) = (-90/R)x + 100, which is
-        // linear from p(0) = 100 to p(R) = 10. This replaces a version that
-        // was 100% from 0 to 3, and 0% outward.
-        //
-        // behaviour around the old breakpoint for R=8: p(3) = 66, p(4) = 55.
-
-        const int player_distance = grid_distance(apparent_source, you.pos());
-        const int alert_prob = max(player_distance * -90 / LOS_RADIUS + 100, 0);
-
-        if (x_chance_in_y(alert_prob, 100))
-            behaviour_event(mons, ME_ALERT, &you, apparent_source); // shout + set you as foe
-        else
-            behaviour_event(mons, ME_DISTURB, 0, apparent_source); // wake
-    }
+        behaviour_event(mons, ME_DISTURB, 0, apparent_source); // wake
 }

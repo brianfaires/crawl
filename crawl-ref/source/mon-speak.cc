@@ -280,8 +280,9 @@ static string _get_speak_string(const vector<string> &prefixes,
                                 bool no_foe_name, bool no_god,
                                 bool unseen)
 {
-    int duration = 1;
-    if ((mons->flags & MF_BANISHED) && !player_in_branch(BRANCH_ABYSS))
+    if (you.hp <= 0)
+        key += " triumphant";
+    else if ((mons->flags & MF_BANISHED) && !player_in_branch(BRANCH_ABYSS))
         key += " banished";
     else if (mons->hit_points <= 0)
     {
@@ -295,8 +296,8 @@ static string _get_speak_string(const vector<string> &prefixes,
         }
         key += " killed";
     }
-    else if (mons->is_summoned(&duration) && duration <= 0)
-        key += " unsummoned";
+    else if (mons->is_summoned() && mons->get_ench(ENCH_SUMMON).duration <= 0)
+        key += " timeout";
 
     string msg;
     for (int tries = 0; tries < 10; tries++)
@@ -356,12 +357,16 @@ void maybe_mons_speaks(monster* mons)
 
     int chance = 21; // this is a very old number; no idea why it was chosen
 
+    // Uniques tend to have more distinctive things to say and are only seen once.
+    if (mons_is_unique(mons->type))
+        chance -= 9;
+
     // allies stick around longer, so should probably have longer to say
     // their piece; no need for them to chatter as much.
     if (mons->wont_attack())
         chance *= 15;
     else if (!mons_is_unique(mons->type)
-             && testbits(mons->flags, MF_BAND_MEMBER))
+             && testbits(mons->flags, MF_BAND_FOLLOWER))
     {
         // Band members are a lot less likely to speak, since there's
         // a lot of them. Except for uniques.
@@ -374,6 +379,14 @@ void maybe_mons_speaks(monster* mons)
     if (mons->has_ench(ENCH_CONFUSION))
         chance /= 2;
 
+    // Ally orc speech is a little one-note during Blood For Blood and there
+    // are often a lot of them, so reduce the chance somewhat.
+    if (mons->friendly() && mons_genus(mons->type) == MONS_ORC
+        && you.duration[DUR_BLOOD_FOR_BLOOD])
+    {
+        chance *= 5 / 2;
+    }
+
     if ((mons_class_flag(mons->type, M_SPEAKS)
                     || !mons->mname.empty())
                 && one_chance_in(chance))
@@ -381,7 +394,7 @@ void maybe_mons_speaks(monster* mons)
         mons_speaks(mons);
     }
     else if ((mons->type == MONS_CRAZY_YIUF || mons->type == MONS_DONALD)
-        && one_chance_in(7))
+        && one_chance_in(9))
     {
         // Yiuf gets an extra chance to speak!
         // So does Donald.
@@ -423,10 +436,10 @@ bool mons_speaks(monster* mons)
     }
 
     // Monsters talk on death even if invisible/silenced/etc.
-    int duration = 1;
     const bool force_speak = !mons->alive()
         || (mons->flags & MF_BANISHED) && !player_in_branch(BRANCH_ABYSS)
-        || (mons->is_summoned(&duration) && duration <= 0)
+        || (mons->is_summoned() && mons->get_ench(ENCH_SUMMON).duration <= 0)
+        || you.hp <= 0 // your death counts too
         || crawl_state.prev_cmd == CMD_LOOK_AROUND; // Wizard testing
 
     const bool unseen   = !you.can_see(*mons);
@@ -451,7 +464,7 @@ bool mons_speaks(monster* mons)
         }
 
         // Berserk monsters just want your hide.
-        if (mons->berserk_or_insane())
+        if (mons->berserk_or_frenzied())
             return false;
 
         // Rolling beetles shouldn't twitch antennae
@@ -500,8 +513,11 @@ bool mons_speaks(monster* mons)
     {
         // Animals only look at the current player form, smart monsters at the
         // actual player genus.
-        if (is_player_same_genus(mons->type))
-            prefixes.emplace_back("related"); // maybe overkill for Beogh?
+        if (is_player_same_genus(mons->type)
+            || mons_genus(mons->type) == MONS_ORC && you_worship(GOD_BEOGH))
+        {
+            prefixes.emplace_back("related");
+        }
     }
     else
     {
@@ -517,11 +533,13 @@ bool mons_speaks(monster* mons)
                                            : you.religion;
 
     // Add Beogh to list of prefixes for orcs (hostile and friendly) if you
-    // worship Beogh. (This assumes your being an orc, so might have odd
-    // results in wizard mode.) Don't count charmed or summoned orcs.
+    // worship Beogh.
     if (you_worship(GOD_BEOGH) && mons_genus(mons->type) == MONS_ORC)
     {
-        if (!mons->has_ench(ENCH_CHARM) && !mons->is_summoned())
+        // During Blood for Blood, your orcs should be focused on that
+        if (mons->friendly() && you.duration[DUR_BLOOD_FOR_BLOOD])
+            prefixes.emplace_back("bfb");
+        else
         {
             if (mons->god == GOD_BEOGH)
                 prefixes.emplace_back("Beogh");
@@ -682,7 +700,7 @@ bool mons_speaks(monster* mons)
     {
         string key = "'";
 
-        // Database keys are case-insensitve.
+        // Database keys are case-insensitive.
         if (isaupper(mons_base_char(mons->type)))
             key += "cap-";
 

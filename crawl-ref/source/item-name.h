@@ -114,9 +114,7 @@ void display_runes();
 string quant_name(const item_def &item, int quant,
                   description_level_type des, bool terse = false);
 
-bool item_brand_known(const item_def &item);
 bool item_type_known(const item_def &item);
-bool item_type_unknown(const item_def &item);
 bool item_type_known(const object_class_type base_type, const int sub_type);
 
 bool is_interesting_item(const item_def& item);
@@ -126,6 +124,9 @@ bool is_bad_item(const item_def &item);
 bool is_dangerous_item(const item_def& item, bool temp = false);
 bool is_useless_item(const item_def &item, bool temp = false,
                      bool ident = false);
+string cannot_read_item_reason(const item_def *item=nullptr, bool temp=true, bool ident=false);
+string cannot_drink_item_reason(const item_def *item=nullptr,
+                                bool temp=true, bool use_check=false, bool ident = false);
 
 string make_name(uint32_t seed = rng::get_uint32(),
                  makename_type name_type = MNAME_DEFAULT);
@@ -134,16 +135,15 @@ void make_name_tests();
 const char* brand_type_name(brand_type brand, bool terse) PURE;
 const char* brand_type_adj(brand_type brand) PURE;
 const char* weapon_brand_name(const item_def& item, bool terse, brand_type override_brand = SPWPN_NORMAL) PURE;
+const char* special_armour_type_name(special_armour_type ego, bool terse);
 const char* armour_ego_name(const item_def& item, bool terse);
 const char* missile_brand_name(const item_def& item, mbn_type t);
 
 bool item_type_has_ids(object_class_type base_type);
 void check_if_everything_is_identified();
-bool get_ident_type(const item_def &item);
-bool get_ident_type(object_class_type basetype, int subtype);
-bool set_ident_type(item_def &item, bool identify, bool check_last=true);
-bool set_ident_type(object_class_type basetype, int subtype, bool identify,
-                    bool check_last=true);
+bool type_is_identified(const item_def &item);
+bool type_is_identified(object_class_type basetype, int subtype);
+bool identify_item_type(object_class_type basetype, int subtype);
 
 string item_prefix(const item_def &item, bool temp = true);
 string menu_colour_item_name(const item_def &item,
@@ -172,3 +172,4 @@ string weapon_brand_desc(const char *body, const item_def &weap,
 
 const char* potion_type_name(int potiontype);  //used in xom.cc
 const char* jewellery_effect_name(int jeweltype, bool terse = false) PURE; //used in l-item.cc
+const char* gizmo_effect_name(int gizmotype);

@@ -128,6 +128,7 @@ public:
 private:
     MenuEntry* make_menu_entry(char letter, string &key) const;
     string key_to_menu_str(const string &key) const;
+    vector<string> get_desc_keys(string regex) const;
 
     /**
      * Does this lookup type support toggling the sort order of results?
@@ -236,74 +237,110 @@ static bool _compare_mon_toughness(MenuEntry *entry_a, MenuEntry* entry_b)
     return a_toughness > b_toughness;
 }
 
-class DescMenu : public Menu
+namespace
 {
-public:
-    DescMenu(int _flags, bool _toggleable_sort) : Menu(_flags, ""), sort_alpha(true),
-    toggleable_sort(_toggleable_sort)
+    class DescMenu : public Menu
     {
-        set_highlighter(nullptr);
-
-        if (_toggleable_sort)
-            toggle_sorting();
-
-        set_prompt();
-    }
-
-    bool sort_alpha;
-    bool toggleable_sort;
-
-    void set_prompt()
-    {
-        string prompt = "Describe which? ";
-
-        if (toggleable_sort)
+    public:
+        DescMenu(int _flags, bool _toggleable_sort) : Menu(_flags, ""),
+            sort_alpha(true), toggleable_sort(_toggleable_sort)
         {
+            set_highlighter(nullptr);
+
+            if (_toggleable_sort)
+                toggle_sorting();
+
+            set_prompt();
+        }
+
+        bool sort_alpha;
+        bool toggleable_sort;
+
+        void set_prompt()
+        {
+            string prompt = "Describe which? ";
+
+            if (toggleable_sort)
+            {
+                if (sort_alpha)
+                    prompt += "(CTRL-S to sort by monster toughness)";
+                else
+                    prompt += "(CTRL-S to sort by name)";
+            }
+            set_title(new MenuEntry(prompt, MEL_TITLE));
+        }
+
+        bool skip_process_command(int keyin) override
+        {
+            if (keyin == '!')
+                return true; // Gauntlet branch help hotkey
+            return Menu::skip_process_command(keyin);
+        }
+
+        void sort()
+        {
+            if (!toggleable_sort)
+                return;
+
             if (sort_alpha)
-                prompt += "(CTRL-S to sort by monster toughness)";
+                ::sort(items.begin(), items.end(), _compare_mon_names);
             else
-                prompt += "(CTRL-S to sort by name)";
+                ::sort(items.begin(), items.end(), _compare_mon_toughness);
+
+            for (unsigned int i = 0, size = items.size(); i < size; i++)
+            {
+                const char letter = index_to_letter(i % 52);
+
+                items[i]->hotkeys.clear();
+                items[i]->add_hotkey(letter);
+            }
         }
-        set_title(new MenuEntry(prompt, MEL_TITLE));
-    }
 
-    void sort()
-    {
-        if (!toggleable_sort)
-            return;
-
-        if (sort_alpha)
-            ::sort(items.begin(), items.end(), _compare_mon_names);
-        else
-            ::sort(items.begin(), items.end(), _compare_mon_toughness);
-
-        for (unsigned int i = 0, size = items.size(); i < size; i++)
+        void toggle_sorting()
         {
-            const char letter = index_to_letter(i % 52);
+            if (!toggleable_sort)
+                return;
 
-            items[i]->hotkeys.clear();
-            items[i]->add_hotkey(letter);
+            sort_alpha = !sort_alpha;
+
+            sort();
+            set_prompt();
+        }
+    };
+}
+
+vector<string> LookupType::get_desc_keys(string regex) const
+{
+    vector<string> key_matches, body_matches;
+
+    // Search by school skips regular searching.
+    if (type == "spell" && starts_with(regex, "@"))
+    {
+        regex.erase(0, 1);
+        spschools_type school;
+        text_pattern tpat(regex, true);
+        for (const auto _school : spschools_type::range())
+        {
+            if (tpat.matches(spelltype_long_name(_school)))
+                school = _school;
+        }
+
+        for (spell_type i = SPELL_NO_SPELL; i < NUM_SPELLS; ++i)
+        {
+            if ((get_spell_disciplines(i) & school) && is_player_book_spell(i))
+            {
+                string str = lowercase_string(make_stringf("%s spell", spell_title(i)));
+                key_matches.push_back(str);
+            }
         }
     }
-
-    void toggle_sorting()
+    else
     {
-        if (!toggleable_sort)
-            return;
-
-        sort_alpha = !sort_alpha;
-
-        sort();
-        set_prompt();
+        key_matches = getLongDescKeysByRegex(regex, filter_forbid);
+        body_matches = getLongDescBodiesByRegex(regex, filter_forbid);
     }
-};
 
-static vector<string> _get_desc_keys(string regex, db_find_filter filter)
-{
-    vector<string> key_matches = getLongDescKeysByRegex(regex, filter);
-    vector<string> body_matches = getLongDescBodiesByRegex(regex, filter);
-
-    // Merge key_matches and body_matches, discarding duplicates.
+    // Merge all types of matches, discarding duplicates.
     vector<string> tmp = key_matches;
     tmp.insert(tmp.end(), body_matches.begin(), body_matches.end());
     sort(tmp.begin(), tmp.end());
@@ -400,7 +437,11 @@ static vector<string> _get_cloud_keys()
     vector<string> names;
 
     for (int i = CLOUD_NONE + 1; i < NUM_CLOUD_TYPES; i++)
-        names.push_back(cloud_type_name((cloud_type) i) + " cloud");
+    {
+        const cloud_type cloud = static_cast<cloud_type>(i);
+        if (!cloud_is_removed(cloud))
+            names.push_back(cloud_type_name(cloud) + " cloud");
+    }
 
     return names;
 }
@@ -449,7 +490,9 @@ static bool _spell_filter(string key, string /*body*/)
 
 static bool _item_filter(string key, string /*body*/)
 {
-    return item_kind_by_name(key).base_type == OBJ_UNASSIGNED
+    item_kind ik = item_kind_by_name(key);
+    return ik.base_type == OBJ_UNASSIGNED
+        && !item_type_removed(ik.base_type, ik.sub_type)
         && !extant_unrandart_by_exact_name(key);
 }
 
@@ -475,9 +518,18 @@ static bool _status_filter(string key, string /*body*/)
 
 static bool _mutation_filter(string key, string /*body*/)
 {
-    return !strip_suffix(lowercase(key), " mutation");
+    lowercase(key);
+
+    if (!strip_suffix(key, " mutation"))
+        return true;
+
+    return starts_with(key, "potion of"); // hack alert!
 }
 
+static bool _passive_filter(string key, string /*body*/)
+{
+    return !strip_suffix(lowercase(key), " passive");
+}
 
 static void _recap_mon_keys(vector<string> &keys)
 {
@@ -529,7 +581,7 @@ static void _recap_ability_keys(vector<string> &keys)
     {
         strip_suffix(key, "ability");
         // get the real name
-        key = make_stringf("%s ability", ability_name(ability_by_name(key)));
+        key = make_stringf("%s ability", ability_name(ability_by_name(key)).c_str());
     }
 }
 
@@ -616,6 +668,7 @@ static bool _make_item_fake_unrandart(item_def &item, int unrand_index)
     // use API rather than unwinds so that sanity checks don't need to be
     // duplicated
     const auto prior_status = get_unique_item_status(unrand_index);
+    unwind_var<uint8_t> octo(you.octopus_king_rings, 0x0); // easier to do unconditionally
     const bool r = make_item_unrandart(item, unrand_index);
     set_unique_item_status(item, prior_status);
     return r;
@@ -634,7 +687,7 @@ static MenuEntry* _item_menu_gen(char letter, const string &str, string &key)
     else
         get_item_by_name(&item, key.c_str(), kind.base_type);
     item_colour(item);
-    tileidx_t idx = tileidx_item(get_item_known_info(item));
+    tileidx_t idx = tileidx_item(item);
     tileidx_t base_item = tileidx_known_base_item(idx);
     if (base_item)
         me->add_tile(tile_def(base_item));
@@ -823,7 +876,7 @@ vector<string> LookupType::matching_keys(string regex) const
     else if (regex.size() == 1 && supports_glyph_lookup())
         key_list = glyph_fetch(regex[0]);
     else
-        key_list = _get_desc_keys(regex, filter_forbid);
+        key_list = get_desc_keys(regex);
 
     if (recap != nullptr)
         (*recap)(key_list);
@@ -846,26 +899,27 @@ static string _mons_desc_key(monster_type type)
 void LookupType::display_keys(vector<string> &key_list) const
 {
     DescMenu desc_menu(MF_SINGLESELECT | MF_ANYPRINTABLE | MF_ALLOW_FORMATTING
-                | MF_USE_TWO_COLUMNS | MF_ARROWS_SELECT,
+                | MF_USE_TWO_COLUMNS | MF_ARROWS_SELECT | MF_INIT_HOVER,
             toggleable_sort());
     desc_menu.set_tag("description");
 
     // XXX: ugh
     const bool doing_mons = type == "monster";
     vector<monster_info> monster_list(key_list.size());
+    int letter_i = 0;
     for (unsigned int i = 0, size = key_list.size(); i < size; i++)
     {
-        const char letter = index_to_letter(i % 52);
+        const char letter = index_to_letter(letter_i % 52);
         string &key = key_list[i];
         // XXX: double ugh
-        if (doing_mons)
-        {
-            desc_menu.add_entry(_monster_menu_gen(letter,
-                                                  key_to_menu_str(key),
-                                                  monster_list[i]));
-        }
-        else
-            desc_menu.add_entry(make_menu_entry(letter, key));
+        auto *entry = doing_mons
+            ? _monster_menu_gen(letter, key_to_menu_str(key), monster_list[i])
+            : make_menu_entry(letter, key);
+
+        if (!entry)
+            continue;
+        desc_menu.add_entry(entry);
+        letter_i++;
     }
 
     desc_menu.sort();
@@ -887,10 +941,6 @@ void LookupType::display_keys(vector<string> &key_list) const
         describe(key);
         return true;
     };
-
-    // for some reason DescMenu is an InvMenu, so we need to do something to
-    // prevent examine crashes. Just alias it to regular selection.
-    desc_menu.on_examine = desc_menu.on_single_selection;
 
     while (true)
     {
@@ -1118,7 +1168,10 @@ static int _describe_item(const string &key, const string &suffix,
     {
         const int unrand_idx = extant_unrandart_by_exact_name(item_name);
         if (!unrand_idx)
-            die("Unable to get item %s by name", key.c_str());
+        {
+            ui::error(make_stringf("Unable to get item '%s' by name", key.c_str()));
+            return 0;
+        }
         _make_item_fake_unrandart(item, unrand_idx);
     }
     describe_item_popup(item);
@@ -1150,20 +1203,18 @@ static int _describe_god(const string &key, const string &/*suffix*/,
     return 0; // no exact matches for gods, so output doesn't matter
 }
 
-static string _branch_entry_runes(branch_type br)
+static string _branch_transit_runes(branch_type br)
 {
+    if (br != BRANCH_VAULTS && br != BRANCH_ZOT)
+        return "";
+
     string desc;
-    const int num_runes = runes_for_branch(br);
-
-    if (num_runes > 0)
-    {
-        desc = make_stringf("\n\nThis %s can only be entered while carrying "
-                            "at least %d rune%s of Zot.",
-                            br == BRANCH_ZIGGURAT ? "portal" : "branch",
-                            num_runes, num_runes > 1 ? "s" : "");
-    }
-
-    return desc;
+    const bool exit = br == BRANCH_VAULTS;
+    const int num_runes = br == BRANCH_ZOT ? 3 : 1;
+    return make_stringf("\n\nThis branch can only be %sed while carrying at "
+                        "least %d rune%s of Zot.",
+                        exit ? "exit" : "enter",
+                        num_runes, num_runes > 1 ? "s" : "");
 }
 
 static string _branch_depth(branch_type br)
@@ -1252,7 +1303,7 @@ static int _describe_branch(const string &key, const string &suffix,
         info += "\n\n" + noise_desc;
 
     info += _branch_location(branch)
-            + _branch_entry_runes(branch)
+            + _branch_transit_runes(branch)
             + _branch_depth(branch)
             + _branch_subbranches(branch)
             + "\n\n"
@@ -1260,6 +1311,21 @@ static int _describe_branch(const string &key, const string &suffix,
 
     tile_def tile = tile_def(tileidx_branch(branch));
     return _describe_key(key, suffix, footer, info, &tile);
+}
+
+static int _describe_mutation(const string &key, const string &suffix,
+                              string /*footer*/)
+{
+    const string mutation_name = key.substr(0, key.size() - suffix.size());
+    const mutation_type mutation = mutation_from_name(mutation_name.c_str(),
+                                                      false);
+    if (mutation == NUM_MUTATIONS) // oops! someone messed up!
+    {
+        ui::error(make_stringf("Unable to get '%s' by name", key.c_str()));
+        return 0;
+    }
+    describe_mutation(mutation);
+    return 0;
 }
 
 /// All types of ?/ queries the player can enter.
@@ -1294,12 +1360,15 @@ static const vector<LookupType> lookup_types = {
     LookupType('L', "cloud", nullptr, nullptr,
                nullptr, _get_cloud_keys, _cloud_menu_gen,
                _describe_cloud, lookup_type::db_suffix),
+    LookupType('P', "passive", nullptr, _passive_filter,
+               nullptr, nullptr, _simple_menu_gen,
+               _describe_generic, lookup_type::db_suffix),
     LookupType('T', "status", nullptr, _status_filter,
                nullptr, nullptr, _simple_menu_gen,
                _describe_generic, lookup_type::db_suffix),
     LookupType('U', "mutation", nullptr, _mutation_filter,
                nullptr, nullptr, _mut_menu_gen,
-               _describe_generic, lookup_type::db_suffix),
+               _describe_mutation, lookup_type::db_suffix),
 };
 
 /**
@@ -1343,12 +1412,13 @@ static string _prompt_for_regex(const LookupType &lookup_type, string &err)
     const string type = lowercase_string(lookup_type.type);
     const string extra = lookup_type.supports_glyph_lookup() ?
         make_stringf(" Enter a single letter to list %s displayed by that"
-                     " symbol.", pluralise(type).c_str()) :
-        "";
+                     " symbol.", pluralise(type).c_str())
+        : lookup_type.type == "spell" ? " Preface with '@' to search by school."
+        : "";
     const string prompt = make_stringf(
-         "Describe a %s; partial names and regexps are fine.%s\n"
+         "Describe %s; partial names and regexps are fine.%s\n"
          "Describe what? ",
-         type.c_str(), extra.c_str());
+         article_a(type).c_str(), extra.c_str());
 
     char buf[80];
     if (msgwin_get_line(prompt, buf, sizeof(buf)) || buf[0] == '\0')

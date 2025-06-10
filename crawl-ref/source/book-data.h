@@ -39,8 +39,8 @@ static const vector<spell_type> spellbook_templates[] =
 
 {   // Book of Minor Magic
     SPELL_MAGIC_DART,
+    SPELL_BLINK,
     SPELL_CALL_IMP,
-    SPELL_MEPHITIC_CLOUD,
 },
 
 {   // Book of Conjurations
@@ -62,6 +62,7 @@ static const vector<spell_type> spellbook_templates[] =
 },
 
 {   // Book of the Wilderness
+    SPELL_SUMMON_SEISMOSAURUS_EGG,
     SPELL_SUMMON_FOREST,
     SPELL_SUMMON_MANA_VIPER,
     SPELL_SUMMON_CACTUS,
@@ -69,13 +70,13 @@ static const vector<spell_type> spellbook_templates[] =
 
 {   // Book of Fire
     SPELL_FOXFIRE,
-    SPELL_FIREBALL,
+    SPELL_PLASMA_BEAM,
     SPELL_STARBURST,
 },
 
 {   // Book of Ice
     SPELL_FREEZING_CLOUD,
-    SPELL_SIMULACRUM,
+    SPELL_OZOCUBUS_REFRIGERATION,
     SPELL_POLAR_VORTEX,
 },
 
@@ -86,22 +87,21 @@ static const vector<spell_type> spellbook_templates[] =
 },
 
 {   // Book of Hexes
-    SPELL_INNER_FLAME,
+    SPELL_ANGUISH,
     SPELL_CAUSE_FEAR,
-    SPELL_DISCORD,
+    SPELL_ENFEEBLE,
 },
 
 {   // Young Poisoner's Handbook
-    SPELL_STING,
     SPELL_POISONOUS_VAPOURS,
+    SPELL_MERCURY_ARROW,
     SPELL_OLGREBS_TOXIC_RADIANCE,
 },
 
 {   // Book of Lightning
-    SPELL_DISCHARGE,
     SPELL_ELECTRIC_CHARGE,
-    SPELL_LIGHTNING_BOLT,
     SPELL_ARCJOLT,
+    SPELL_PLASMA_BEAM,
 },
 
 {   // Book of Death
@@ -111,21 +111,24 @@ static const vector<spell_type> spellbook_templates[] =
 },
 
 {   // Book of Misfortune
+    SPELL_JINXBITE,
     SPELL_VIOLENT_UNRAVELLING,
     SPELL_ENFEEBLE,
+    SPELL_SPHINX_SISTERS,
 },
 
-{   // Book of Changes
-    SPELL_BEASTLY_APPENDAGE,
-    SPELL_WEREBLOOD,
-    SPELL_SPIDER_FORM,
+{   // Book of Spontaneous Combustion
+    SPELL_INNER_FLAME,
+    SPELL_DETONATION_CATALYST,
+    SPELL_IRRADIATE,
+    SPELL_IGNITION,
 },
 
+#if TAG_MAJOR_VERSION == 34
 {   // Book of Transfigurations
     SPELL_IRRADIATE,
-    SPELL_BLADE_HANDS,
-    SPELL_DRAGON_FORM,
 },
+#endif
 
 {   // Fen Folio
     SPELL_SUMMON_FOREST,
@@ -133,28 +136,31 @@ static const vector<spell_type> spellbook_templates[] =
     SPELL_SUMMON_HYDRA,
 },
 
-{   // Book of Vapours
-    SPELL_POISONOUS_VAPOURS,
-    SPELL_ROT,
-    SPELL_MEPHITIC_CLOUD,
+{   // My Sojourn Through Swamps
+    SPELL_MERCURY_ARROW,
+    SPELL_CLOCKWORK_BEE,
+    SPELL_SURPRISING_CROCODILE,
 },
 
 {   // Book of Necromancy
-    SPELL_NECROTISE,
+    SPELL_SOUL_SPLINTER,
+    SPELL_GRAVE_CLAW,
     SPELL_VAMPIRIC_DRAINING,
-    SPELL_AGONY,
 },
 
 {   // Book of Callings
     SPELL_SUMMON_SMALL_MAMMAL,
+    SPELL_CALL_IMP,
     SPELL_CALL_CANINE_FAMILIAR,
-    SPELL_SUMMON_GUARDIAN_GOLEM,
+    SPELL_SURPRISING_CROCODILE,
 },
 
+#if TAG_MAJOR_VERSION == 34
 {   // Book of Maledictions
     SPELL_ANGUISH,
     SPELL_ENFEEBLE,
 },
+#endif
 
 {   // Book of Air
     SPELL_SHOCK,
@@ -162,29 +168,28 @@ static const vector<spell_type> spellbook_templates[] =
     SPELL_AIRSTRIKE,
 },
 
+#if TAG_MAJOR_VERSION == 34
 {   // Book of the Sky
-    SPELL_SUMMON_LIGHTNING_SPIRE,
-    SPELL_STORM_FORM,
     SPELL_MAXWELLS_COUPLING,
 },
+#endif
 
 {   // Book of the Warp
-    SPELL_MANIFOLD_ASSAULT,
     SPELL_DISPERSAL,
+    SPELL_MANIFOLD_ASSAULT,
     SPELL_DISJUNCTION,
 },
 
 #if TAG_MAJOR_VERSION == 34
 {   // Book of Envenomations
-    SPELL_SPIDER_FORM,
     SPELL_OLGREBS_TOXIC_RADIANCE,
     SPELL_INTOXICATE,
 },
 #endif
 
 {   // Book of Unlife
-    SPELL_ANIMATE_DEAD,
-    SPELL_BORGNJORS_VILE_CLUTCH,
+    SPELL_SOUL_SPLINTER,
+    SPELL_MARTYRS_KNELL,
     SPELL_DEATH_CHANNEL,
 },
 
@@ -192,45 +197,49 @@ static const vector<spell_type> spellbook_templates[] =
 {   // Book of Control
     SPELL_ENGLACIATION,
 },
+#endif
 
 {   // Book of Battle
-    SPELL_WEREBLOOD,
+    SPELL_FUGUE_OF_THE_FALLEN,
     SPELL_OZOCUBUS_ARMOUR,
+    SPELL_DETONATION_CATALYST,
+    SPELL_MANIFOLD_ASSAULT,
 },
-#endif
 
 {   // Book of Geomancy
     SPELL_SANDBLAST,
-    SPELL_PASSWALL,
     SPELL_STONE_ARROW,
+    SPELL_PASSWALL,
 },
 
 #if TAG_MAJOR_VERSION == 34
 {   // Book of Stone
     SPELL_LEDAS_LIQUEFACTION,
-    SPELL_STATUE_FORM,
 },
 
 {   // Book of Wizardry
-    SPELL_AGONY,
-    SPELL_SPELLFORGED_SERVITOR,
+    SPELL_CURSE_OF_AGONY,
+    SPELL_SPELLSPARK_SERVITOR,
 },
 #endif
 
 {   // Book of Power
     SPELL_BATTLESPHERE,
-    SPELL_IRON_SHOT,
-    SPELL_SPELLFORGED_SERVITOR,
+    SPELL_BOMBARD,
+    SPELL_FORTRESS_BLAST,
+    SPELL_SPELLSPARK_SERVITOR,
 },
 
 {   // Book of Cantrips
-    SPELL_NECROTISE,
+    SPELL_POISONOUS_VAPOURS,
+    SPELL_KINETIC_GRAPNEL,
     SPELL_SUMMON_SMALL_MAMMAL,
     SPELL_APPORTATION,
 },
 
 {   // Book of Party Tricks
     SPELL_APPORTATION,
+    SPELL_JINXBITE,
     SPELL_INTOXICATE,
 },
 
@@ -244,38 +253,39 @@ static const vector<spell_type> spellbook_templates[] =
 
 {   // Book of Debilitation
     SPELL_SLOW,
-    SPELL_VAMPIRIC_DRAINING,
     SPELL_CONFUSING_TOUCH,
+    SPELL_PUTREFACTION,
 },
 
 {   // Book of the Dragon
     SPELL_CAUSE_FEAR,
-    SPELL_DRAGON_FORM,
+    SPELL_FIREBALL,
     SPELL_DRAGON_CALL,
 },
 
 {   // Book of Burglary
-    SPELL_PASSWALL,
     SPELL_HIBERNATION,
     SPELL_SWIFTNESS,
+    SPELL_PASSWALL,
 },
 
 {   // Book of Dreams
     SPELL_HIBERNATION,
-    SPELL_SPIDER_FORM,
+    SPELL_FUGUE_OF_THE_FALLEN,
     SPELL_ANGUISH,
 },
 
-{   // Book of Alchemy
-    SPELL_SUBLIMATION_OF_BLOOD,
+{   // Book of Transmutation
     SPELL_PETRIFY,
     SPELL_IRRADIATE,
+    SPELL_FULSOME_FUSILLADE,
 },
 
 {   // Book of Beasts
     SPELL_SUMMON_ICE_BEAST,
+    SPELL_SUMMON_SEISMOSAURUS_EGG,
     SPELL_SUMMON_MANA_VIPER,
-    SPELL_MONSTROUS_MENAGERIE,
+    SPELL_SPHINX_SISTERS,
 },
 
 {   // Book of Annihilations
@@ -290,8 +300,8 @@ static const vector<spell_type> spellbook_templates[] =
 },
 
 {   // Necronomicon
+    SPELL_HAUNT,
     SPELL_BORGNJORS_REVIVIFICATION,
-    SPELL_NECROMUTATION,
     SPELL_DEATHS_DOOR,
 },
 
@@ -304,17 +314,18 @@ static const vector<spell_type> spellbook_templates[] =
 
 { // Book of Spectacle
     SPELL_DAZZLING_FLASH,
-    SPELL_ISKENDERUNS_MYSTIC_BLAST,
     SPELL_STARBURST,
+    SPELL_FULSOME_FUSILLADE,
 },
 
 { // Book of Winter
+    SPELL_FROZEN_RAMPARTS,
     SPELL_OZOCUBUS_ARMOUR,
     SPELL_ENGLACIATION,
-    SPELL_SIMULACRUM,
 },
 
 { // Book of Spheres
+    SPELL_BOULDER,
     SPELL_BATTLESPHERE,
     SPELL_FIREBALL,
     SPELL_CONJURE_BALL_LIGHTNING,
@@ -323,34 +334,35 @@ static const vector<spell_type> spellbook_templates[] =
 
 { // Book of Armaments
     SPELL_STONE_ARROW,
-    SPELL_ANIMATE_ARMOUR,
+    SPELL_RENDING_BLADE,
     SPELL_LEHUDIBS_CRYSTAL_SPEAR,
 },
 
 #if TAG_MAJOR_VERSION == 34
 { // Book of Pain
-    SPELL_NECROTISE,
-    SPELL_AGONY,
+    SPELL_SOUL_SPLINTER,
+    SPELL_CURSE_OF_AGONY,
 },
 #endif
 
 { // Book of Decay
-    SPELL_ROT,
+    SPELL_PUTREFACTION,
     SPELL_DISPEL_UNDEAD,
-    SPELL_DEATH_CHANNEL,
+    SPELL_MARTYRS_KNELL,
 },
 
 { // Book of Displacement
     SPELL_BECKONING,
-    SPELL_GRAVITAS,
     SPELL_TELEPORT_OTHER,
+    SPELL_PILEDRIVER,
 },
 
+#if TAG_MAJOR_VERSION == 34
 { // Book of Rime
     SPELL_FROZEN_RAMPARTS,
-    SPELL_ICE_FORM,
     SPELL_SUMMON_ICE_BEAST,
 },
+#endif
 
 { // Everburning Encyclopedia
     SPELL_IGNITE_POISON,
@@ -361,18 +373,21 @@ static const vector<spell_type> spellbook_templates[] =
 { // Book of Earth
     SPELL_LEDAS_LIQUEFACTION,
     SPELL_LRD,
-    SPELL_STATUE_FORM,
+    SPELL_PERMAFROST_ERUPTION,
 },
 
+#if TAG_MAJOR_VERSION == 34
 { // Ozocubu's Autobio
     SPELL_OZOCUBUS_ARMOUR,
     SPELL_OZOCUBUS_REFRIGERATION,
 },
+#endif
 
 { // Book of the Senses
     SPELL_DAZZLING_FLASH,
-    SPELL_AGONY,
+    SPELL_MEPHITIC_CLOUD,
     SPELL_SILENCE,
+    SPELL_CURSE_OF_AGONY,
 },
 
 { // Book of the Moon
@@ -382,64 +397,66 @@ static const vector<spell_type> spellbook_templates[] =
 },
 
 { // Book of Blasting
-    SPELL_BLASTSPARK,
+    SPELL_BLASTMOTE,
     SPELL_FULMINANT_PRISM,
     SPELL_ISKENDERUNS_MYSTIC_BLAST,
-    SPELL_LRD,
+    SPELL_MONARCH_BOMB,
 },
 
 { // Book of Iron
-    SPELL_ANIMATE_ARMOUR,
-    SPELL_BLADE_HANDS,
-    SPELL_IRON_SHOT,
+    SPELL_AWAKEN_ARMOUR,
+    SPELL_LRD,
+    SPELL_MAGNAVOLT,
 },
 
+#if TAG_MAJOR_VERSION == 34
 { // Inescapable Atlas
     SPELL_BLINK,
     SPELL_MANIFOLD_ASSAULT,
-    SPELL_STORM_FORM,
 },
+#endif
 
 { // Book of the Tundra
     SPELL_HAILSTORM,
-    SPELL_ICE_FORM,
-    SPELL_SIMULACRUM,
+    SPELL_SUMMON_ICE_BEAST,
+    SPELL_PERMAFROST_ERUPTION,
 },
 
 { // Book of Storms
+    SPELL_DISCHARGE,
     SPELL_AIRSTRIKE,
-    SPELL_SUMMON_LIGHTNING_SPIRE,
-    SPELL_LIGHTNING_BOLT,
+    SPELL_FORGE_LIGHTNING_SPIRE,
 },
 
 { // Book of Weapons
     SPELL_TUKIMAS_DANCE,
-    SPELL_PORTAL_PROJECTILE,
-    SPELL_BLADE_HANDS,
+    SPELL_DIMENSIONAL_BULLSEYE,
+    SPELL_RENDING_BLADE,
+    SPELL_PLATINUM_PARAGON,
 },
 
 { // Book of Sloth
+    SPELL_LEDAS_LIQUEFACTION,
     SPELL_PETRIFY,
     SPELL_ENGLACIATION,
-    SPELL_STATUE_FORM,
 },
 
 { // Book of Blood
     SPELL_SUBLIMATION_OF_BLOOD,
-    SPELL_WEREBLOOD,
+    SPELL_IGNITE_POISON,
     SPELL_SUMMON_HYDRA,
 },
 
 { // There-And-Back Book
-    SPELL_GRAVITAS,
     SPELL_TELEPORT_OTHER,
+    SPELL_GELLS_GAVOTTE,
     SPELL_DISPERSAL,
 },
 
 { // Book of Dangerous Friends
-    SPELL_SUMMON_GUARDIAN_GOLEM,
+    SPELL_FORGE_BLAZEHEART_GOLEM,
     SPELL_IOOD,
-    SPELL_SPELLFORGED_SERVITOR,
+    SPELL_SPELLSPARK_SERVITOR,
 },
 
 { // Book of Touch
@@ -457,7 +474,7 @@ static const vector<spell_type> spellbook_templates[] =
 { // Unrestrained Analects
     SPELL_OLGREBS_TOXIC_RADIANCE,
     SPELL_OZOCUBUS_REFRIGERATION,
-    SPELL_IGNITION,
+    SPELL_DISCORD,
 },
 
 { // Great Wizards, Vol. II
@@ -473,15 +490,15 @@ static const vector<spell_type> spellbook_templates[] =
 },
 
 { // Trismegistus Codex
-    SPELL_BLASTSPARK,
-    SPELL_IGNITE_POISON,
+    SPELL_MEPHITIC_CLOUD,
     SPELL_FREEZING_CLOUD,
+    SPELL_HELLFIRE_MORTAR,
 },
 
 { // Book of the Hunter
+    SPELL_SIGIL_OF_BINDING,
     SPELL_CALL_CANINE_FAMILIAR,
-    SPELL_PORTAL_PROJECTILE,
-    SPELL_LEDAS_LIQUEFACTION,
+    SPELL_DIMENSIONAL_BULLSEYE,
 },
 
 { // Book of Scorching
@@ -491,10 +508,90 @@ static const vector<spell_type> spellbook_templates[] =
 },
 
 { // Maxwell's Memoranda
+    SPELL_PILEDRIVER,
+    SPELL_MAGNAVOLT,
+    SPELL_MAXWELLS_COUPLING,
+},
+
+{ // Book of Movement
+    SPELL_BLASTMOTE,
     SPELL_ELECTRIC_CHARGE,
+    SPELL_GELLS_GAVOTTE,
+},
+
+{ // Book of Wicked Creation
+    SPELL_SIMULACRUM,
+    SPELL_DEATH_CHANNEL,
+    SPELL_RIMEBLIGHT,
+},
+
+{ // Compendium of Siegecraft
+    SPELL_BOULDER,
+    SPELL_HOARFROST_CANNONADE,
+    SPELL_BOMBARD,
+    SPELL_HELLFIRE_MORTAR,
+},
+
+{ // Book of Maladies
+    SPELL_SUBLIMATION_OF_BLOOD,
+    SPELL_CURSE_OF_AGONY,
+    SPELL_RIMEBLIGHT,
+},
+
+{ // Codex of Conductivity
+    SPELL_FORGE_LIGHTNING_SPIRE,
     SPELL_ARCJOLT,
     SPELL_MAXWELLS_COUPLING,
 },
+
+{ // Handbook of Applied Construction
+    SPELL_SPIKE_LAUNCHER,
+    SPELL_CLOCKWORK_BEE,
+    SPELL_FORGE_BLAZEHEART_GOLEM,
+},
+
+{ // Book of the Fortress
+    SPELL_AWAKEN_ARMOUR,
+    SPELL_PHALANX_BEETLE,
+    SPELL_FORTRESS_BLAST,
+},
+
+{ // Treatise on Traps
+    SPELL_SPIKE_LAUNCHER,
+    SPELL_SIGIL_OF_BINDING,
+    SPELL_DIAMOND_SAWBLADES,
+},
+
+{ // Book of Cryoformation
+    SPELL_HOARFROST_CANNONADE,
+    SPELL_SIMULACRUM,
+    SPELL_SPLINTERFROST_SHELL,
+},
+
+{ // Book of the Grave
+    SPELL_GRAVE_CLAW,
+    SPELL_ANIMATE_DEAD,
+    SPELL_BORGNJORS_VILE_CLUTCH,
+},
+
+{ // Book of Metalworking
+    SPELL_PERCUSSIVE_TEMPERING,
+    SPELL_WALKING_ALEMBIC,
+    SPELL_PHALANX_BEETLE,
+},
+
+{ // Book of Duality
+    SPELL_VAMPIRIC_DRAINING,
+    SPELL_ISKENDERUNS_MYSTIC_BLAST,
+    SPELL_PERCUSSIVE_TEMPERING,
+    SPELL_SPLINTERFROST_SHELL,
+},
+
+{ // Book of Contraptions
+    SPELL_WALKING_ALEMBIC,
+    SPELL_MONARCH_BOMB,
+    SPELL_DIAMOND_SAWBLADES,
+}
 
 };
 

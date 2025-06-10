@@ -53,6 +53,8 @@ void initialise_branch_depths()
     {
         brdepth.init(-1);
         brdepth[BRANCH_DUNGEON] = 1;
+        brdepth[BRANCH_CRUCIBLE] = 1;
+        brdepth[BRANCH_ARENA] = 1;
         return;
     }
 
@@ -63,6 +65,9 @@ void initialise_branch_depths()
     }
 
     initialise_brentry();
+
+    if (crawl_state.game_is_descent())
+        brdepth[BRANCH_DUNGEON] = 12;
 }
 
 static void _use_overflow_temple(vector<god_type> temple_gods)
@@ -95,7 +100,15 @@ void initialise_temples()
     map_def *main_temple = nullptr;
     int altar_count = 0;
 
-    if (one_chance_in(100))
+    if (crawl_state.game_is_descent())
+    {
+        main_temple
+            = const_cast<map_def*>(random_map_for_tag("temple_altars_0", false));
+
+        if (main_temple == nullptr)
+            end(1, false, "No temple of size 0");
+    }
+    else if (one_chance_in(100))
     {
         main_temple = const_cast<map_def*>(random_map_for_tag("temple_rare"));
 
@@ -115,12 +128,13 @@ void initialise_temples()
     else
     {
         // distribution of altar count has a mean at 13.5, with the extremes
-        // occuring approximately 2.5% of the time each (a much thicker tail
+        // occurring approximately 2.5% of the time each (a much thicker tail
         // than using 6 + random2avg(16,2)).
+        // XXX: slightly out of date?
         if (coinflip())
             altar_count = max(6, 5 + random2max(9, 2));
         else
-            altar_count = min(21, 14 + random2min(9, 2));
+            altar_count = min(22, 14 + random2min(9, 2));
 
         const string vault_tag = make_stringf("temple_altars_%d", altar_count);
         do

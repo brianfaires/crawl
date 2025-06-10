@@ -5,6 +5,7 @@
 
 #include "item-name.h"
 #include "player.h"
+#include "state.h"
 #include "stringutil.h"
 #include "tag-version.h"
 #include "travel.h"
@@ -60,6 +61,8 @@ static const branch_type logical_branch_order[] = {
     BRANCH_DESOLATION,
     BRANCH_GAUNTLET,
     BRANCH_ARENA,
+    BRANCH_CRUCIBLE,
+    BRANCH_NECROPOLIS,
 };
 COMPILE_CHECK(ARRAYSZ(logical_branch_order) == NUM_BRANCHES);
 
@@ -74,6 +77,7 @@ static const branch_type danger_branch_order[] = {
     BRANCH_OSSUARY,
     BRANCH_BAILEY,
     BRANCH_LAIR,
+    BRANCH_NECROPOLIS,
     BRANCH_GAUNTLET,
     BRANCH_ICE_CAVE,
     BRANCH_VOLCANO,
@@ -87,6 +91,7 @@ static const branch_type danger_branch_order[] = {
     BRANCH_CRYPT,
     BRANCH_DESOLATION,
     BRANCH_ABYSS,
+    BRANCH_CRUCIBLE,
     BRANCH_WIZLAB,
     BRANCH_SLIME,
     BRANCH_DEPTHS,
@@ -169,6 +174,15 @@ vector<branch_type> random_choose_disabled_branches()
     for (int i=0; i < number_of_branch_swap_pairs; i++)
         disabled_branch.push_back(swap_branches[i][random_choose(0,1)]);
 
+    // Descent mode disables some other branches for dungeon structure reasons
+    if (crawl_state.game_is_descent())
+    {
+        disabled_branch.push_back(BRANCH_TEMPLE);
+        disabled_branch.push_back(BRANCH_TOMB);
+        you.props[DESCENT_WATER_BRANCH_KEY] = random_choose(BRANCH_SWAMP, BRANCH_SHOALS);
+        you.props[DESCENT_POIS_BRANCH_KEY] = random_choose(BRANCH_SPIDER, BRANCH_SNAKE);
+    }
+
     return disabled_branch;
 }
 
@@ -233,6 +247,11 @@ bool is_connected_branch(level_id place)
     return is_connected_branch(place.branch);
 }
 
+bool branch_has_rune(branch_type branch)
+{
+    return !branches[branch].runes.empty();
+}
+
 branch_type branch_by_abbrevname(const string &branch, branch_type err)
 {
     for (branch_iterator it; it; ++it)
@@ -295,14 +314,9 @@ branch_type parent_branch(branch_type branch)
     return branches[branch].parent_branch;
 }
 
-int runes_for_branch(branch_type branch)
+vector<branch_type> descent_parents(branch_type branch)
 {
-    switch (branch)
-    {
-    case BRANCH_VAULTS:   return 1;
-    case BRANCH_ZOT:      return ZOT_ENTRY_RUNES;
-    default:              return 0;
-    }
+    return branches[branch].descent_parents;
 }
 
 /**
@@ -362,4 +376,21 @@ branch_type rune_location(rune_type rune)
             return br.id;
 
     return NUM_BRANCHES;
+}
+
+static const string VAULTS_LOCKED_KEY = "LOCKED_VAULTS_ENTRANCE";
+
+bool vaults_is_locked()
+{
+    return you.props.exists(VAULTS_LOCKED_KEY);
+}
+
+void lock_vaults()
+{
+    you.props[VAULTS_LOCKED_KEY] = true;
+}
+
+void unlock_vaults()
+{
+    you.props.erase(VAULTS_LOCKED_KEY);
 }

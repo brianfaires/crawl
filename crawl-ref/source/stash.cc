@@ -35,6 +35,7 @@
 #include "message.h"
 #include "notes.h"
 #include "output.h"
+#include "prompt.h"
 #include "religion.h"
 #include "spl-book.h"
 #include "state.h"
@@ -56,7 +57,7 @@ string userdef_annotate_item(const char *s, const item_def *item)
     lua_stack_cleaner cleaner(clua);
     clua_push_item(clua, const_cast<item_def*>(item));
     if (!clua.callfn(s, 1, 1) && !clua.error.empty())
-        mprf(MSGCH_ERROR, "Lua error: %s", clua.error.c_str());
+        ui::error(make_stringf("Lua error: %s", clua.error.c_str()));
     string ann;
     if (lua_isstring(clua, -1))
         ann = luaL_checkstring(clua, -1);
@@ -158,9 +159,7 @@ static void _fully_identify_item(item_def *item)
     if (!item || !item->defined())
         return;
 
-    set_ident_flags(*item, ISFLAG_IDENT_MASK);
-    if (item->base_type != OBJ_WEAPONS)
-        set_ident_type(*item, true);
+    identify_item(*item);
 }
 
 // ----------------------------------------------------------------------
@@ -217,16 +216,38 @@ bool Stash::needs_stop() const
     return false;
 }
 
-bool Stash::is_boring_feature(dungeon_feature_type feature)
-{
-    // Count shops as boring features, because they are handled separately.
-    return !is_notable_terrain(feature) && !feat_is_trap(feature)
-        || feature == DNGN_ENTER_SHOP;
-}
-
 static bool _grid_has_perceived_item(const coord_def& pos)
 {
     return you.visible_igrd(pos) != NON_ITEM;
+}
+
+static bool _grid_is_interesting(const coord_def& pos)
+{
+    const auto feat = env.grid(pos);
+    if (feat_is_staircase(feat)
+       || feat_is_escape_hatch(feat)
+       || (is_notable_terrain(feat)
+            // Count shops as boring features, because they are
+            // handled separately.
+            && feat != DNGN_ENTER_SHOP))
+    {
+        return true;
+    }
+
+    const auto trap = get_trap_type(pos);
+    if (trap == TRAP_UNASSIGNED)
+        return false;
+
+    // Certain traps we want to put in stashes, since they help navigate
+    // within or across levels, or can be used tactically (alarm), or might
+    // release goodies (plate).
+    return trap == TRAP_PLATE
+        || trap == TRAP_DISPERSAL
+        || trap == TRAP_TELEPORT
+        || trap == TRAP_TELEPORT_PERMANENT
+        || trap == TRAP_GOLUBRIA
+        || trap == TRAP_ALARM
+        || trap == TRAP_SHAFT;
 }
 
 bool Stash::unmark_trapping_nets()
@@ -240,23 +261,15 @@ bool Stash::unmark_trapping_nets()
 
 void Stash::update()
 {
-    feat = env.grid(pos);
-    trap = NUM_TRAPS;
-
-    if (is_boring_feature(feat))
-        feat = DNGN_FLOOR;
-
-    if (feat_is_trap(feat))
+    feat = DNGN_FLOOR;
+    trap = TRAP_UNASSIGNED;
+    feat_desc = "";
+    if (_grid_is_interesting(pos))
     {
+        feat = env.grid(pos);
         trap = get_trap_type(pos);
-        if (trap == TRAP_WEB)
-            feat = DNGN_FLOOR, trap = TRAP_UNASSIGNED;
-    }
-
-    if (feat == DNGN_FLOOR)
-        feat_desc = "";
-    else
         feat_desc = feature_description_at(pos, false, DESC_A);
+    }
 
     int previous_size = items.size();
 
@@ -269,8 +282,8 @@ void Stash::update()
         return;
     }
 
-    // Squares are big, whole piles of loot can be seen on each so
-    // let's update them
+    // Squares are big, whole piles of loot can be seen on each,
+    // so let's update them.
 
     // There's something on this square. Take a squint at it.
     item_def *pitem = &env.item[you.visible_igrd(pos)];
@@ -281,19 +294,23 @@ void Stash::update()
     // Now, grab all items on that square and fill our vector
     for (stack_iterator si(pos, true); si; ++si)
     {
-        god_id_item(*si);
+        ash_id_item(*si);
         maybe_identify_base_type(*si);
         if (!(si->flags & ISFLAG_UNOBTAINABLE))
             add_item(*si);
 
-        if (si->base_type == OBJ_STAVES || si->flags & ISFLAG_COSMETIC_MASK)
+        if ((si->base_type == OBJ_STAVES || si->flags & ISFLAG_COSMETIC_MASK)
+            && !is_useless_item(*si))
+        {
             glowing_item_on_square = true;
+        }
 
-        if (si->flags & ISFLAG_ARTEFACT_MASK)
+        if (si->flags & ISFLAG_ARTEFACT_MASK && !is_useless_item(*si))
             artefact_item_on_square = true;
     }
 
-    const bool stack_greed      =  static_cast<int>(items.size()) > 1
+    int current_size = items.size();
+    const bool stack_greed      =  current_size > 1
                                 && (Options.explore_greedy_visit & EG_STACK);
     const bool glowing_greed    =  glowing_item_on_square
                                 && (Options.explore_greedy_visit & EG_GLOWING);
@@ -302,25 +319,7 @@ void Stash::update()
 
     visited = pos == you.pos()
               || !(stack_greed || glowing_greed || artefact_greed)
-              || static_cast<int>(items.size()) == previous_size && visited;
-}
-
-static bool _is_rottable(const item_def &item)
-{
-    if (is_shop_item(item))
-        return false;
-    return item.base_type == OBJ_CORPSES;
-}
-
-static short _min_rot(const item_def &item)
-{
-    if (item.is_type(OBJ_CORPSES, CORPSE_SKELETON))
-        return 0;
-
-    if (!mons_skeleton(item.mon_type))
-        return 0;
-    else
-        return -(FRESHEST_CORPSE);
+              || current_size <= previous_size && visited;
 }
 
 // Returns the item name for a given item, with any appropriate
@@ -339,23 +338,12 @@ string Stash::stash_item_name(const item_def &item)
         name = item.name(DESC_A);
 
 
-    if (!_is_rottable(item))
+    if (!is_rottable(item) || item.stash_freshness > 0)
         return name;
 
-    if (item.stash_freshness <= _min_rot(item))
-    {
-        name += " (gone by now)";
-        return name;
-    }
-
-    // Skeletons show no signs of rotting before they're gone
-    if (item.is_type(OBJ_CORPSES, CORPSE_SKELETON))
-        return name;
-
-    if (item.stash_freshness <= 0)
-        name += " (skeletalised by now)";
-
-    return name;
+    if (mons_has_skeleton(item.mon_type))
+        return name + " (skeletalised by now)";
+    return name + " (gone by now)";
 }
 
 string Stash::description() const
@@ -394,8 +382,10 @@ vector<stash_search_result> Stash::matches_search(
     {
         const string s   = stash_item_name(item);
         const string ann = stash_annotate_item(STASH_LUA_SEARCH_ANNOTATE, &item);
-        if (search.matches(prefix + " " + ann + " " + s)
-            || is_dumpable_artefact(item) && search.matches(chardump_desc(item)))
+        string haystack = prefix + " " + ann + " " + s;
+        if (is_dumpable_artefact(item))
+            haystack += " " + chardump_desc(item);
+        if (search.matches(haystack))
         {
             stash_search_result res;
             res.match_type = MATCH_ITEM;
@@ -433,12 +423,12 @@ void Stash::_update_corpses(int rot_time)
     {
         item_def &item = items[i];
 
-        if (!_is_rottable(item))
+        if (!is_rottable(item) || item.stash_freshness <= 0)
             continue;
 
         int new_rot = static_cast<int>(item.stash_freshness) - rot_time;
 
-        if (new_rot <= _min_rot(item))
+        if (new_rot <= 0 && !mons_has_skeleton(item.mon_type))
         {
             items.erase(items.begin() + i);
             continue;
@@ -451,14 +441,14 @@ void Stash::_update_identification()
 {
     for (int i = items.size() - 1; i >= 0; i--)
     {
-        god_id_item(items[i]);
+        ash_id_item(items[i]);
         maybe_identify_base_type(items[i]);
     }
 }
 
 void Stash::add_item(item_def &item, bool add_to_front)
 {
-    if (_is_rottable(item))
+    if (is_rottable(item))
         StashTrack.update_corpses();
 
     if (add_to_front)
@@ -468,7 +458,7 @@ void Stash::add_item(item_def &item, bool add_to_front)
 
     seen_item(item);
 
-    if (!_is_rottable(item))
+    if (!is_rottable(item))
         return;
 
     // item.freshness remains unchanged in the stash, to show how fresh it
@@ -600,7 +590,7 @@ string ShopInfo::shop_item_desc(const item_def &it) const
     unwind_var<iflags_t>(item.flags);
 
     if (shoptype_identifies_stock(shop.type))
-        item.flags |= ISFLAG_IDENT_MASK;
+        item.flags |= ISFLAG_IDENTIFIED;
 
     if (is_dumpable_artefact(item))
     {
@@ -656,9 +646,9 @@ vector<stash_search_result> ShopInfo::matches_search(
         const string ann   = stash_annotate_item(STASH_LUA_SEARCH_ANNOTATE,
                                                  &item);
 
-        if (search.matches(prefix + " " + ann + " " + sname +
-                                                    " {" + shoptitle + "}")
-            || search.matches(shop_item_desc(item)))
+        string text = prefix + " " + ann + " " + sname + " {" + shoptitle + "}"
+                      + shop_item_desc(item);
+        if (search.matches(text))
         {
             stash_search_result res;
             res.match_type = MATCH_ITEM;
@@ -1096,7 +1086,7 @@ void StashTracker::update_visible_stashes()
 
         if ((!lev || !lev->update_stash(*ri))
             && (_grid_has_perceived_item(*ri)
-                || !Stash::is_boring_feature(feat)))
+                || _grid_is_interesting(*ri)))
         {
             if (!lev)
                 lev = &get_current_level();
@@ -1173,8 +1163,9 @@ static bool _is_potentially_boring(stash_search_result res)
         && !res.in_inventory
         && (res.item.base_type == OBJ_WEAPONS
             || res.item.base_type == OBJ_ARMOUR
-            || res.item.base_type == OBJ_MISSILES)
-        && (item_type_known(res.item) || !item_is_branded(res.item))
+            || res.item.base_type == OBJ_MISSILES
+            || res.item.base_type == OBJ_TALISMANS) // TODO: also misc?
+        && (res.item.is_identified() || !item_is_branded(res.item))
         || res.match_type == MATCH_FEATURE && feat_is_trap(res.feat);
 }
 
@@ -1200,6 +1191,13 @@ static bool _is_duplicate_for_search(stash_search_result l,
     return l.match == r.match;
 }
 
+// Filter out useless results in search_stashes
+static bool _is_useless_result(const stash_search_result res)
+{
+    return res.item.defined() && is_useless_item(res.item, false)
+           || feat_is_altar(res.feat)
+              && !player_can_join_god(feat_altar_god(res.feat), false);
+}
 
 // helper for search_stashes
 static bool _compare_by_distance(const stash_search_result& lhs,
@@ -1275,9 +1273,10 @@ static vector<stash_search_result> _inventory_search(const base_pattern &search)
 
         const string s   = Stash::stash_item_name(item);
         const string ann = stash_annotate_item(STASH_LUA_SEARCH_ANNOTATE, &item);
-        if (search.matches(ann + " " + s)
-            || is_dumpable_artefact(item)
-               && search.matches(chardump_desc(item)))
+        string haystack = ann + " " + s;
+        if (is_dumpable_artefact(item))
+            haystack += " " + chardump_desc(item);
+        if (search.matches(haystack))
         {
             stash_search_result res;
             res.match = s;
@@ -1438,7 +1437,9 @@ void StashTracker::search_stashes(string search_term)
     vector<stash_search_result> results;
     if (!curr_lev)
         results = _inventory_search(*search);
-    get_matching_stashes(*search, results, curr_lev);
+    // allowing offlevel stash searching is not useful in descent mode
+    get_matching_stashes(*search, results, curr_lev
+                                           || crawl_state.game_is_descent());
 
     if (results.empty())
     {
@@ -1456,9 +1457,8 @@ void StashTracker::search_stashes(string search_term)
     }
 
     dedup_results.erase(remove_if(dedup_results.begin(), dedup_results.end(),
-        [](const stash_search_result res) {
-            return res.item.defined() && is_useless_item(res.item, false);
-        }), dedup_results.end());
+                                  _is_useless_result),
+                        dedup_results.end());
 
     bool sort_by_dist = true;
     bool filter_useless = true;
@@ -1586,7 +1586,7 @@ protected:
 
 formatted_string StashSearchMenu::calc_title()
 {
-    const int num_matches = items.size();
+    const int num_matches = item_count(false);
     const int num_alt_matches = title->quantity;
     formatted_string fs;
     fs.textcolour(title->colour);
@@ -1790,7 +1790,7 @@ bool StashTracker::display_search_results(
         else if (res.item.defined())
         {
             const int itemcol = menu_colour(res.item.name(DESC_PLAIN).c_str(),
-                                            item_prefix(res.item), "pickup");
+                                        item_prefix(res.item, false), "pickup", false);
             if (itemcol != -1)
                 colour = itemcol;
         }

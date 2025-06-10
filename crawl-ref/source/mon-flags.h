@@ -71,8 +71,8 @@ enum monclass_flag_type : uint64_t
     /// monster digs through rock
     M_BURROWS           = BIT(19),
 
-    /// monster can submerge
-    M_SUBMERGES         = BIT(20),
+    /// monster passively applies an enchantment in LoS of itself
+    M_HAS_AURA          = BIT(20),
 
     /// monster is a unique
     M_UNIQUE            = BIT(21),
@@ -110,7 +110,9 @@ enum monclass_flag_type : uint64_t
     /// can do damage when attacked in melee
     M_SPINY             = BIT(32),
 
-                        //BIT(33),
+    // Prefers not to move closer to its foe if it's already in range to cast
+    // spells against it.
+    M_CAUTIOUS          = BIT(33),
 
     /// not a valid polymorph target (but can be polymorphed)
     M_NO_POLY_TO        = BIT(34),
@@ -118,12 +120,13 @@ enum monclass_flag_type : uint64_t
     /// An ancestor granted by Hepliaklqana
     M_ANCESTOR          = BIT(35),
 
-                        //BIT(36), // was M_ALWAYS_CORPSE
+    /// Gets a special name, like the Hellbinder
+    M_ALWAYS_NAMED      = BIT(36),
 
     /// prefer ranged attacks over melee
     M_PREFER_RANGED     = BIT(37),
 
-                        //BIT(38), // was M_ARTIFICIAL
+    M_REMNANT           = BIT(38),
 
     /// can survive without breathing; immune to asphyxiation and Mephitic Cloud
     M_UNBREATHING       = BIT(39),
@@ -136,7 +139,9 @@ enum monclass_flag_type : uint64_t
     // has a double-sized tile
     M_TALL_TILE         = BIT(42),
 
-                        //BIT(43), // was M_WEB_SENSE
+    // If summoned, will disappear whenever the player leaves the floor, whether
+    // made by the player or something else.
+    M_UNSTABLE          = BIT(43),
 
     /// tries to maintain LOS/2 range from its target
     M_MAINTAIN_RANGE    = BIT(44),
@@ -156,7 +161,8 @@ enum monclass_flag_type : uint64_t
 
                         //BIT(50),
 
-    /// monster is a projectile (just OOD right now)
+    /// monster is an invulnerable projectile with momentum-based homing
+    /// movement
     M_PROJECTILE        = BIT(51),
 
     /// monster is an "avatar" (no independent attacks, only support)
@@ -164,8 +170,10 @@ enum monclass_flag_type : uint64_t
 
                         //BIT(53),
 
-    /// monster is a proxy for a charm/conjuration spell (ball lightning, etc.)
-    M_CONJURED          = BIT(54),
+    /// monster is a pseudo-projectile or manifestation of a spell effect (eg:
+    /// foxfires or ball lightnings) or otherwise not a 'full' monster for many
+    /// purposes (eg: tentacle segments).
+    M_PERIPHERAL        = BIT(54),
 
     /// monster will never harm the player
     M_NO_THREAT         = BIT(55),
@@ -180,6 +188,9 @@ enum monclass_flag_type : uint64_t
     M_THUNDER_RING      = BIT(58),
     M_FIRE_RING         = BIT(59),
     M_MIASMA_RING       = BIT(60),
+
+    // monster is made of liquid and is immune to webs, nets, and constriction
+    M_AMORPHOUS         = BIT(61),
 };
 DEF_BITFIELD(monclass_flags_t, monclass_flag_type);
 
@@ -187,7 +198,7 @@ DEF_BITFIELD(monclass_flags_t, monclass_flag_type);
 enum monster_flag_type : uint64_t
 {
     MF_NO_FLAGS           = 0,
-    /// no benefit from killing
+    /// no XP/piety from killing (even if the monster type would otherwise)
     MF_NO_REWARD          = BIT(0),
     /// monster skips next available action
     MF_JUST_SUMMONED      = BIT(1),
@@ -203,7 +214,7 @@ enum monster_flag_type : uint64_t
     /// Monster that has been banished.
     MF_BANISHED           = BIT(6),
 
-    /// Summoned, should not drop gear on reset
+    /// Never drops any items upon death
     MF_HARD_RESET         = BIT(7),
     /// mirror to CREATED_FRIENDLY for neutrals
     MF_WAS_NEUTRAL        = BIT(8),
@@ -214,8 +225,8 @@ enum monster_flag_type : uint64_t
     /// Was in view during previous turn.
     MF_WAS_IN_VIEW        = BIT(10),
 
-    /// Created as a member of a band
-    MF_BAND_MEMBER        = BIT(11),
+    /// Created as a member of a band (and not the leader)
+    MF_BAND_FOLLOWER      = BIT(11),
     /// Monter has been pacified
     MF_PACIFIED           = BIT(12),
     /// Consider this monster to have MH_UNDEAD holiness, regardless
@@ -281,6 +292,24 @@ enum monster_flag_type : uint64_t
     MF_JUST_SLEPT         = BIT(37),
     /// possibly got piety with TSO
     MF_TSO_SEEN           = BIT(38),
+
+    /// Part of an orc apostle band
+    MF_APOSTLE_BAND       = BIT(39),
+
+    // Created as the leader of a band
+    MF_BAND_LEADER        = BIT(40),
+
+    /// Will prefer not to approach enemies it's already in spellcast range of
+    MF_CAUTIOUS           = BIT(41),
+
+    // Is abjurable and will disappear in a puff of smoke (or similar) when it
+    // times out, rather than appearing to die physically.
+    MF_ACTUAL_SUMMON      = BIT(42),
+
+    // Despite being temporarily created, will not expire upon its creator's
+    // death (eg: ball lightning)
+    MF_PERSISTS           = BIT(43),
+
 };
 DEF_BITFIELD(monster_flags_t, monster_flag_type);
 

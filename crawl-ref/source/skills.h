@@ -59,10 +59,10 @@ float scaled_skill_cost(skill_type sk);
 
 unsigned int skill_cost_needed(int level);
 int calc_skill_cost(int skill_cost_level);
-void check_skill_cost_change();
+void check_skill_cost_change(bool quiet = false);
 
 bool skill_default_shown(skill_type sk);
-void reassess_starting_skills();
+void reassess_starting_skills(bool balance_djinn = true);
 bool check_selected_skills();
 void init_train();
 void init_can_currently_train();
@@ -81,7 +81,7 @@ void train_skills(bool simu = false);
 bool skill_trained(int i);
 static inline bool skill_trained(skill_type sk) { return skill_trained((int) sk); }
 void redraw_skill(skill_type exsk, skill_type old_best_skill = SK_NONE, bool recalculate_order = true);
-void set_skill_level(skill_type skill, double amount);
+void set_skill_level(skill_type skill, double amount, bool quiet = false);
 
 int get_skill_progress(skill_type sk, int level, int points, int scale);
 int get_skill_progress(skill_type sk, int scale);
@@ -125,17 +125,21 @@ skill_diff skill_level_to_diffs(skill_type skill, double amount,
 vector<skill_type> get_crosstrain_skills(skill_type sk);
 int get_crosstrain_points(skill_type sk);
 
-int elemental_preference(spell_type spell, int scale = 1);
+int destructive_elemental_preference(spell_type spell, int scale = 1);
 
 void skill_menu(int flag = 0, int exp = 0);
 void dump_skills(string &text);
-int skill_bump(skill_type skill, int scale = 1);
+int skill_bump(skill_type skill, int scale = 1, bool allow_random = true);
 void fixup_skills();
 
 bool target_met(skill_type sk);
 bool target_met(skill_type sk, unsigned int target);
 bool check_training_target(skill_type sk);
 bool check_training_targets();
+
+void set_training_status(skill_type sk, training_status st);
+void set_magic_training(training_status st);
+void cleanup_innate_magic_skills();
 
 static const skill_type skill_display_order[] =
 {
@@ -144,25 +148,33 @@ static const skill_type skill_display_order[] =
 
     SK_BLANK_LINE,
 
-    SK_MACES_FLAILS, SK_AXES, SK_POLEARMS, SK_STAVES, SK_UNARMED_COMBAT,
+    // Strength skills.
+    SK_MACES_FLAILS, SK_AXES, SK_POLEARMS, SK_STAVES, SK_UNARMED_COMBAT, SK_THROWING,
 
     SK_BLANK_LINE,
 
+    // Dex skills.
     SK_SHORT_BLADES, SK_LONG_BLADES, SK_RANGED_WEAPONS,
 
     SK_BLANK_LINE,
 
+    // 'Defensive' skills.
     SK_ARMOUR, SK_DODGING, SK_SHIELDS, SK_STEALTH,
 
     SK_COLUMN_BREAK, SK_TITLE,
 
-    SK_SPELLCASTING, SK_CONJURATIONS, SK_HEXES, SK_SUMMONINGS,
-    SK_NECROMANCY, SK_TRANSLOCATIONS, SK_TRANSMUTATIONS,
-    SK_FIRE_MAGIC, SK_ICE_MAGIC, SK_AIR_MAGIC, SK_EARTH_MAGIC, SK_POISON_MAGIC,
+    SK_SPELLCASTING,
 
     SK_BLANK_LINE,
 
-    SK_INVOCATIONS, SK_EVOCATIONS, SK_THROWING,
+    SK_CONJURATIONS, SK_HEXES, SK_SUMMONINGS,
+    SK_NECROMANCY, SK_FORGECRAFT, SK_TRANSLOCATIONS, SK_ALCHEMY,
+    SK_FIRE_MAGIC, SK_ICE_MAGIC, SK_AIR_MAGIC, SK_EARTH_MAGIC,
+
+    SK_BLANK_LINE,
+
+    // Supernatural but nonmagical skills.
+    SK_INVOCATIONS, SK_EVOCATIONS, SK_SHAPESHIFTING,
 
     SK_COLUMN_BREAK,
 };

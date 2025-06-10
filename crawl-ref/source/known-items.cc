@@ -14,6 +14,7 @@
 #include "item-status-flag-type.h"
 #include "known-items.h"
 #include "libutil.h"
+#include "options.h"
 #include "stringutil.h"
 #include "tag-version.h"
 #include "unicode.h"
@@ -22,12 +23,14 @@ class KnownMenu : public InvMenu
 {
 public:
     KnownMenu(bool show_unknown, bool _all_items_known)
-        : InvMenu(MF_QUIET_SELECT | MF_ALLOW_FORMATTING | MF_USE_TWO_COLUMNS
+        : InvMenu(MF_QUIET_SELECT | MF_ALLOW_FORMATTING
                     | ((show_unknown) ? MF_NOSELECT
                                       : MF_MULTISELECT | MF_ALLOW_FILTER)),
         all_items_known(_all_items_known)
     {
         set_type(menu_type::know);
+        if (!Options.single_column_item_menus)
+            set_flags(get_flags() | MF_USE_TWO_COLUMNS);
         set_more(); // force derived class get_keyhelp()
     }
 
@@ -80,6 +83,14 @@ protected:
         else
             num = -1;
 
+        if (ui::key_exits_popup(key))
+        {
+            if (resetting)
+                return true;
+            lastch = key;
+            return false;
+        }
+
         switch (key)
         {
         case ',':
@@ -95,10 +106,6 @@ protected:
         case '\\':
             if (all_items_known)
                 return true; // skip process_key for '-', it's confusing
-        case CK_ENTER:
-        CASE_ESCAPE
-            if (resetting)
-                return true;
             lastch = key;
             return false;
 
@@ -197,6 +204,10 @@ public:
             name = "manuals";
         else if (item->is_type(OBJ_BOOKS, 0))
             name = "spellbooks";
+        else if (item->is_type(OBJ_JEWELLERY, NUM_RINGS))
+            name = "unknown rings";
+        else if (item->is_type(OBJ_JEWELLERY, NUM_JEWELLERY))
+            name = "unknown amulets";
         else if (item->base_type == OBJ_GOLD)
         {
             name = lowercase_string(item_class_name(item->base_type));
@@ -204,6 +215,8 @@ public:
         }
         else if (item->base_type == OBJ_RUNES)
             name = "runes";
+        else if (item->base_type == OBJ_GEMS)
+            name = "gems";
         else if (item->sub_type == get_max_subtype(item->base_type))
         {
             name = "unknown "
@@ -222,8 +235,7 @@ public:
         }
         else
         {
-            name = item->name(DESC_PLAIN, false, true, false, false,
-                              ISFLAG_KNOW_PLUSES);
+            name = item->name(DESC_PLAIN, false, true, false, false);
             name = pluralise(name);
         }
 
@@ -238,11 +250,11 @@ public:
         return make_stringf(" %c %c %s", hotkeys[0], symbol, name.c_str());
     }
 
-    virtual int highlight_colour() const override
+    virtual int highlight_colour(bool) const override
     {
         if (selected_qty >= 1)
             return WHITE;
-        else if (is_useless_item(*item))
+        else if (is_useless_item(*item, false))
             return DARKGREY;
         else
             return MENU_ITEM_STOCK_COLOUR;
@@ -294,8 +306,7 @@ public:
         description_level_type desctype =
             item->base_type == OBJ_WANDS ? DESC_DBNAME : DESC_PLAIN;
 
-        return " " + item->name(desctype, false, true, false, false,
-                                ISFLAG_KNOW_PLUSES);
+        return " " + item->name(desctype, false, true, false, false);
     }
 };
 
@@ -319,8 +330,8 @@ static bool _identified_item_names(const item_def *it1,
     description_level_type desc =
         it1->base_type == OBJ_JEWELLERY ? DESC_DBNAME : DESC_PLAIN;
 
-    return it1->name(desc, false, true, false, false, ISFLAG_KNOW_PLUSES)
-         < it2->name(desc, false, true, false, false, ISFLAG_KNOW_PLUSES);
+    return it1->name(desc, false, true, false, false)
+         < it2->name(desc, false, true, false, false);
 }
 
 // Allocate (with new) a new item_def with the given base and sub types,
@@ -344,7 +355,7 @@ static void _add_fake_item(object_class_type base, int sub,
         ptmp->quantity = 18;
 
     if (force_known_type)
-        ptmp->flags |= ISFLAG_KNOW_TYPE;
+        ptmp->flags |= ISFLAG_IDENTIFIED;
 
     items.push_back(ptmp);
 
@@ -364,6 +375,7 @@ void check_item_knowledge(bool unknown_items)
     vector<const item_def*> items_food;    //List of foods should come next
 #endif
     vector<const item_def*> items_misc;
+    vector<const item_def*> items_talismans;
     vector<const item_def*> items_other;   //List of other items should go after everything
     vector<SelItem> selected_items;
 
@@ -402,7 +414,14 @@ void check_item_knowledge(bool unknown_items)
             object_class_type i = (object_class_type)ii;
             if (i == OBJ_BOOKS || !item_type_has_ids(i))
                 continue;
-            _add_fake_item(i, get_max_subtype(i), selected_items, items);
+
+            if (i == OBJ_JEWELLERY)
+            {
+                _add_fake_item(i, NUM_RINGS, selected_items, items);
+                _add_fake_item(i, NUM_JEWELLERY, selected_items, items);
+            }
+            else
+                _add_fake_item(i, get_max_subtype(i), selected_items, items);
         }
         // Missiles
         for (int i = 0; i < NUM_MISSILES; i++)
@@ -414,6 +433,7 @@ void check_item_knowledge(bool unknown_items)
             case MI_ARROW:
             case MI_BOLT:
             case MI_SLING_BULLET:
+            case MI_SLUG:
                 continue;
             }
 #endif
@@ -424,6 +444,7 @@ void check_item_knowledge(bool unknown_items)
         {
             if (i == MISC_HORN_OF_GERYON
                 || i == MISC_ZIGGURAT
+                || i == MISC_SHOP_VOUCHER
 #if TAG_MAJOR_VERSION == 34
                 || is_deck_type(i)
                 || i == MISC_BUGGY_EBONY_CASKET
@@ -432,9 +453,9 @@ void check_item_knowledge(bool unknown_items)
                 || i == MISC_RUNE_OF_ZOT
                 || i == MISC_STONE_OF_TREMORS
                 || i == MISC_FAN_OF_GALES
-                || i == MISC_SACK_OF_SPIDERS
                 || i == MISC_LAMP_OF_FIRE
                 || i == MISC_CRYSTAL_BALL_OF_ENERGY
+                || i == MISC_XOMS_CHESSBOARD
 #endif
                 || (i == MISC_QUAD_DAMAGE && !crawl_state.game_is_sprint()))
             {
@@ -442,6 +463,9 @@ void check_item_knowledge(bool unknown_items)
             }
             _add_fake_item(OBJ_MISCELLANY, i, selected_items, items_misc);
         }
+
+        for (int i = 0; i < NUM_TALISMANS; i++)
+            _add_fake_item(OBJ_TALISMANS, i, selected_items, items_talismans);
 
         // N.b. NUM_BOOKS drastically exceeds MAX_SUBTYPES, but it doesn't
         // matter for force_autopickup purposes because we only use 0 and
@@ -455,6 +479,7 @@ void check_item_knowledge(bool unknown_items)
             { OBJ_GOLD, 1 },
             { OBJ_BOOKS, 0 },
             { OBJ_RUNES, NUM_RUNE_TYPES },
+            { OBJ_GEMS, GEM_DUNGEON },
         };
         for (auto e : misc_list)
             _add_fake_item(e.first, e.second, selected_items, items_other);
@@ -466,6 +491,8 @@ void check_item_knowledge(bool unknown_items)
     sort(items_food.begin(), items_food.end(), _identified_item_names);
 #endif
     sort(items_misc.begin(), items_misc.end(), _identified_item_names);
+    // Intentionally don't sort talismans so that they're ordered by tier instead.
+    // (This is dubious!)
 
     KnownMenu menu(unknown_items, all_items_known);
     string stitle;
@@ -492,6 +519,7 @@ void check_item_knowledge(bool unknown_items)
     ml = menu.load_items(items_food, known_item_mangle, ml, false);
 #endif
     ml = menu.load_items(items_misc, known_item_mangle, ml, false);
+    ml = menu.load_items(items_talismans, known_item_mangle, ml, false);
     if (!items_other.empty())
     {
         menu.add_entry(new MenuEntry("Other Items", MEL_SUBTITLE));
@@ -509,6 +537,7 @@ void check_item_knowledge(bool unknown_items)
     deleteAll(items_food);
 #endif
     deleteAll(items_misc);
+    deleteAll(items_talismans);
     deleteAll(items_other);
 
     if (!all_items_known && (last_char == '\\' || last_char == '-'))

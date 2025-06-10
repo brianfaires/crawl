@@ -1,6 +1,6 @@
-define(["jquery", "comm", "./enums", "./map_knowledge", "./messages",
+define(["jquery", "comm", "client", "./enums", "./map_knowledge", "./messages",
         "./options", "./util"],
-function ($, comm, enums, map_knowledge, messages, options, util) {
+function ($, comm, client, enums, map_knowledge, messages, options, util) {
     "use strict";
 
     var player = {}, last_time;
@@ -15,9 +15,12 @@ function ($, comm, enums, map_knowledge, messages, options, util) {
 
     var defense_boosters = {
         "ac": "ice-armoured|protected from physical damage|sanguine armoured"
-              + "|under a protective aura|curled up|fiery-armoured",
-        "ev": "agile|acrobatic|in a heavenly storm",
-        "sh": "divinely shielded",
+              + "|under a protective aura|fiery-armoured|phalanx barrier"
+              + "|trickster",
+        "ev": "^agile|acrobatic|in a heavenly storm",
+
+        // RIP "I am here because empty strings match everything and this does not"
+        "sh": "ephemerally shielded"
     }
 
     /**
@@ -175,10 +178,10 @@ function ($, comm, enums, map_knowledge, messages, options, util) {
     }
     player.inventory_item_desc = inventory_item_desc;
 
-    function wielded_weapon()
+    function wielded_weapon(offhand=false)
     {
         var elem;
-        var wielded = player.equip[enums.equip.WEAPON];
+        var wielded = offhand ? player.offhand_index : player.weapon_index;
         if (wielded == -1)
         {
             elem = $("<span>");
@@ -236,7 +239,10 @@ function ($, comm, enums, map_knowledge, messages, options, util) {
         elem.text(player[type]);
         elem.removeClass();
         if (type == "sh" && player.incapacitated()
-            && player.equip[enums.equip.SHIELD] != -1)
+            && player.offhand_index != -1)
+            // XXX This really doesn't work properly
+            // Orbs, and coglins with offhand weapons, also trigger this...
+            // Amulets of reflection on the other hand, do not...
             elem.addClass("degenerated_defense");
         else if (player.has_status(defense_boosters[type]))
             elem.addClass("boosted_defense");
@@ -324,8 +330,10 @@ function ($, comm, enums, map_knowledge, messages, options, util) {
      */
     function update_stats_pane()
     {
-        $("#stats_titleline").text(player.name + " " + player.title);
-        $("#stats_wizmode").text(player.wizard ? "*WIZARD*" : "");
+        $("#stats_titleline").text(player.name
+                                    + (player.title[0] === "," ? "" : " ")
+                                    + player.title);
+        $("#stats_wizmode").text(player.wizard ? "*WIZARD*" : player.explore ? "*EXPLORE*" : "");
 
         // Setup species
         // TODO: Move to a proper initialisation task
@@ -424,20 +432,37 @@ function ($, comm, enums, map_knowledge, messages, options, util) {
         if (player.depth) place_desc += ":" + player.depth;
         $("#stats_place").text(place_desc);
 
-        var status = "";
+        var tooltip = $("#stats_status_lights_tooltip");
+        $("#stats_status_lights").html("");
         for (var i = 0; i < player.status.length; ++i)
         {
-            var status_inf = player.status[i];
+            let status_inf = player.status[i];
             if (!status_inf.light) continue;
-            status += ("<span class='status_light fg" + status_inf.col + "' "
-                       + "data-desc=\"" + status_inf.desc + "\">"
-                       + status_inf.light + "</span> ");
+            let status = $("<span>");
+            status.addClass("status_light");
+            status.addClass("fg" + status_inf.col);
+            status.text(status_inf.light);
+            status.on("mouseenter mousemove", ev => {
+                tooltip.css({top: ev.pageY + "px"});
+                tooltip.html(util.formatted_string_to_html(status_inf.desc));
+                tooltip.show();
+            });
+            status.on("mouseleave", ev => tooltip.hide());
+            $("#stats_status_lights").append(status, " ");
         }
-        $("#stats_status_lights").html(status);
 
         $("#stats_weapon_letter").text(
-            index_to_letter(player.equip[enums.equip.WEAPON]) + ")");
+            index_to_letter(player.weapon_index) + ")");
         $("#stats_weapon").html(wielded_weapon());
+
+        if (player.offhand_weapon) // Coglin dual wielding
+            $("#stats_offhand_weapon_line").show();
+        else
+            $("#stats_offhand_weapon_line").hide();
+
+        $("#stats_offhand_weapon_letter").text(
+            index_to_letter(player.offhand_index) + ")");
+        $("#stats_offhand_weapon").html(wielded_weapon(true));
 
         $("#stats_quiver").html(quiver());
     }
@@ -450,23 +475,36 @@ function ($, comm, enums, map_knowledge, messages, options, util) {
             $.extend(player.inv[i], data.inv[i]);
             player.inv[i].slot = Number(i); // XX why is i a string?
         }
-        $.extend(player.equip, data.equip);
 
         if (data.inv)
             $("#action-panel").triggerHandler("update");
 
-        delete data.equip;
         delete data.inv;
         delete data.msg;
 
         $.extend(player, data);
 
-        if ("time" in data)
+        // chick if a forced player update has given us an explicit last
+        // time to show in the hud for spectators (only). Otherwise, this value
+        // is calculated on the client-side. (XX this works somewhat differently
+        // than the console/tiles view; reconcile?)
+        if ("time_last_input" in data)
+        {
+            // currently this message should *only* happen for spectators, but
+            // just to be sure..
+            // we don't want to do anything on this message to players,
+            // because the server value can get out of sync with what the js
+            // client is showing.
+            if (client.is_watching())
+                player.time_delta = player.time - player.time_last_input;
+
+            last_time = player.time;
+        }
+        else if ("time" in data)
         {
             if (last_time)
-            {
                 player.time_delta = player.time - last_time;
-            }
+
             last_time = player.time;
             messages.new_command(true);
         }
@@ -520,11 +558,13 @@ function ($, comm, enums, map_knowledge, messages, options, util) {
                 str_max: 0, int_max: 0, dex_max: 0,
                 piety_rank: 0, penance: false,
                 status: [],
-                inv: {}, equip: {},
+                inv: {},
+                weapon_index: -1,
+                offhand_index: -1,
                 quiver_item: -1,
                 unarmed_attack: "",
                 pos: {x: 0, y: 0},
-                wizard: 0,
+                wizard: 0, explore: 0,
                 depth: 0, place: "",
                 contam: 0,
                 noise: 0,
@@ -532,8 +572,6 @@ function ($, comm, enums, map_knowledge, messages, options, util) {
             });
             delete player["old_hp"];
             delete player["old_mp"];
-            for (var i = 0; i < enums.equip.NUM_EQUIP; ++i)
-                player.equip[i] = -1;
             last_time = null;
         });
 

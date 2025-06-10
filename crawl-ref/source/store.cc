@@ -19,9 +19,9 @@
 // get optimized away except for LTO -fwhole-program builds, so merely
 // disabling the function's body is not enough; let's not call them at all.
 #ifdef DEBUG
-# define ASSERT_VALIDITY(x) x assert_validity()
+# define ASSERT_VALIDITY() assert_validity()
 #else
-# define ASSERT_VALIDITY(x)
+# define ASSERT_VALIDITY()
 #endif
 
 CrawlStoreValue::CrawlStoreValue()
@@ -1761,7 +1761,7 @@ static bool _cmp(string a, string b)
 
 void dump_prop_accesses()
 {
-    FILE *f = fopen("prop_accesses", "w");
+    FILE *f = fopen_u("prop_accesses", "w");
     ASSERT(f);
 
     vector<string> props;

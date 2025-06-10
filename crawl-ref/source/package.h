@@ -6,6 +6,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <cstdint>
 #ifdef USE_ZLIB
 #include <zlib.h>
 #endif
@@ -16,7 +17,7 @@ using std::set;
 using std::string;
 using std::vector;
 
-#if !defined(DGAMELAUNCH) && !defined(__ANDROID__) && !defined(DEBUG_DIAGNOSTICS)
+#if !defined(DGAMELAUNCH) && !defined(DEBUG_DIAGNOSTICS)
 #define DO_FSYNC
 #endif
 
@@ -87,7 +88,7 @@ public:
 
     // statistics
     plen_t get_slack();
-    plen_t get_size() const { return file_len; };
+    plen_t get_size() const { return file_len; }
     plen_t get_chunk_fragmentation(const string &name);
     plen_t get_chunk_compressed_length(const string &name);
 private:

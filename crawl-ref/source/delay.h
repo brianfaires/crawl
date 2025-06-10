@@ -10,10 +10,12 @@
 #include "activity-interrupt-type.h"
 #include "command-type.h"
 #include "enum.h"
+#include "equipment-slot.h"
 #include "item-prop-enum.h"
 #include "mpr.h"
 #include "operation-types.h"
 #include "seen-context-type.h"
+#include "transformation.h"
 
 using std::vector;
 
@@ -230,22 +232,23 @@ public:
 class EquipOnDelay : public Delay
 {
     item_def& equip;
+    equipment_slot slot;
     bool was_prompted = false;
 
     void start() override;
 
     void tick() override
     {
-        mprf(MSGCH_MULTITURN_ACTION, "You continue putting on %s.",
-             equip.name(DESC_YOUR).c_str());
+        mprf(MSGCH_MULTITURN_ACTION, "You continue %s %s.",
+             get_verb(), equip.name(DESC_YOUR).c_str());
     }
 
     bool invalidated() override;
 
     void finish() override;
 public:
-    EquipOnDelay(int dur, item_def& item) :
-                 Delay(dur), equip(item)
+    EquipOnDelay(int dur, item_def& item, equipment_slot _slot) :
+                 Delay(dur), equip(item), slot(_slot)
     { }
 
     bool try_interrupt(bool force = false) override;
@@ -259,26 +262,28 @@ public:
     {
         return &item == &equip;
     }
+private:
+    const char* get_verb();
 };
 
 class EquipOffDelay : public Delay
 {
-    const item_def& equip;
+    item_def& equip;
     bool was_prompted = false;
 
     void start() override;
 
     void tick() override
     {
-        mprf(MSGCH_MULTITURN_ACTION, "You continue taking off %s.",
-             equip.name(DESC_YOUR).c_str());
+        mprf(MSGCH_MULTITURN_ACTION, "You continue %s %s.",
+             get_verb(), equip.name(DESC_YOUR).c_str());
     }
 
     bool invalidated() override;
 
     void finish() override;
 public:
-    EquipOffDelay(int dur, const item_def& item) :
+    EquipOffDelay(int dur, item_def& item) :
                    Delay(dur), equip(item)
     { }
 
@@ -293,29 +298,8 @@ public:
     {
         return &item == &equip;
     }
-};
-
-class JewelleryOnDelay : public Delay
-{
-    item_def& jewellery;
-
-    void tick() override;
-
-    void finish() override;
-public:
-    JewelleryOnDelay(int dur, item_def& item) :
-                     Delay(dur), jewellery(item)
-    { }
-
-    const char* name() const override
-    {
-        return "jewellery_on";
-    }
-
-    bool is_being_used(const item_def& item) const override
-    {
-        return &item == &jewellery;
-    }
+private:
+    const char* get_verb();
 };
 
 class MemoriseDelay : public Delay
@@ -653,7 +637,31 @@ public:
     }
 };
 
-class ExsanguinateDelay : public Delay
+class TransformDelay : public Delay
+{
+    transformation form;
+    const item_def *talisman;
+
+    bool was_prompted = false;
+
+    void start() override;
+    void tick() override;
+    bool invalidated() override;
+    void finish() override;
+public:
+    TransformDelay(transformation f, const item_def *t) :
+                   Delay(3), form(f), talisman(t)
+    { }
+
+    bool try_interrupt(bool force = false) override;
+
+    const char* name() const override
+    {
+        return "transform";
+    }
+};
+
+class ImbueDelay : public Delay
 {
     bool was_prompted = false;
 
@@ -661,52 +669,57 @@ class ExsanguinateDelay : public Delay
 
     void tick() override
     {
-        mprf(MSGCH_MULTITURN_ACTION, "You continue bloodletting.");
+        mprf(MSGCH_MULTITURN_ACTION, "You continue imbuing your servitor.");
     }
 
     void finish() override;
 public:
-    ExsanguinateDelay(int dur) : Delay(dur)
+    ImbueDelay(int dur, spell_type _spell) : Delay(dur), spell(_spell)
     { }
 
     bool try_interrupt(bool force = false) override;
 
     const char* name() const override
     {
-        return "exsanguinate";
+        return "imbue_servitor";
     }
+
+private:
+    spell_type spell;
 };
 
-class RevivifyDelay : public Delay
+class ImprintDelay : public Delay
 {
-    bool was_prompted = false;
-
     void start() override;
 
     void tick() override
     {
-        mprf(MSGCH_MULTITURN_ACTION, "You continue your ritual.");
+        mprf(MSGCH_MULTITURN_ACTION, "You continue imprinting.");
     }
 
     void finish() override;
 public:
-    RevivifyDelay(int dur) : Delay(dur)
+    ImprintDelay(int dur, const item_def& _weapon) : Delay(dur), wpn(_weapon)
     { }
 
     bool try_interrupt(bool force = false) override;
 
     const char* name() const override
     {
-        return "revivify";
+        return "imprint_weapon";
     }
+
+private:
+    item_def wpn;
 };
+
 
 void push_delay(shared_ptr<Delay> delay);
 
 template<typename T, typename... Args>
 shared_ptr<Delay> start_delay(Args&&... args)
 {
-    auto delay = make_shared<T>(forward<Args>(args)...);
+    auto delay = make_shared<T>(std::forward<Args>(args)...);
     push_delay(delay);
     return delay;
 }

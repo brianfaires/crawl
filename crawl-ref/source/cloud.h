@@ -54,8 +54,8 @@ struct cloud_tile_info
 
 #define MEPH_HD_CAP 21
 
-#define BLASTSPARK_POWER_KEY "blastspark_power"
-#define MIASMA_IMMUNE_KEY "miasma_immune"
+#define BLASTMOTE_POWER_KEY "blastspark_power"
+#define BLASTMOTE_IMMUNE_KEY "blastmote_immune"
 
 cloud_struct* cloud_at(coord_def pos);
 
@@ -70,6 +70,7 @@ void swap_clouds(coord_def p1, coord_def p2);
 
 coord_def random_walk(coord_def start, int dist);
 
+bool cloud_is_stronger(cloud_type ct, const cloud_struct& cloud);
 void check_place_cloud(cloud_type cl_type, const coord_def& p, int lifetime,
                        const actor *agent, int spread_rate = -1,
                        int excl_rad = -1);
@@ -81,7 +82,7 @@ void place_cloud(cloud_type cl_type, const coord_def& ctarget,
 void manage_clouds();
 void run_cloud_spreaders(int dur);
 string desc_cloud_damage(cloud_type cl_type, bool vs_player);
-int actor_apply_cloud(actor *act);
+void actor_apply_cloud(actor *act);
 bool actor_cloud_immune(const actor &act, const cloud_struct &cloud);
 bool actor_cloud_immune(const actor &act, cloud_type type);
 bool mons_avoids_cloud(const monster* mons, coord_def pos,
@@ -98,7 +99,10 @@ string cloud_type_name(cloud_type type, bool terse = true);
 cloud_type random_smoke_type();
 cloud_type cloud_name_to_type(const string &name);
 const cloud_tile_info& cloud_type_tile_info(cloud_type type);
+bool cloud_is_removed(cloud_type type);
 
 void start_still_winds();
 void end_still_winds();
 void surround_actor_with_cloud(const actor* a, cloud_type cloud);
+
+bool chaos_affects_actor(actor* victim, actor* source);

@@ -74,11 +74,12 @@ namespace rng
 bool coinflip();
 int div_rand_round(int num, int den);
 int div_round_up(int num, int den);
+int div_round_near(int num, int den);
 bool one_chance_in(int a_million);
 bool x_chance_in_y(int x, int y);
 int random2(int max);
 int maybe_random2(int x, bool random_factor);
-int maybe_random_div(int nom, int denom, bool random_factor);
+int maybe_random2_div(int nom, int denom, bool random_factor);
 int maybe_roll_dice(int num, int size, bool random);
 int random_range(int low, int high);
 int random_range(int low, int high, int nrolls);
@@ -223,6 +224,48 @@ struct dice_def
 constexpr dice_def CONVENIENT_NONZERO_DAMAGE{42, 1};
 
 dice_def calc_dice(int num_dice, int max_damage, bool random = true);
+
+template<typename T>
+class power_deducer
+{
+public:
+    virtual T operator()(int pow, bool random = true) const = 0;
+    virtual ~power_deducer() {}
+};
+
+typedef power_deducer<int> tohit_deducer;
+
+template<int adder, int mult_num = 0, int mult_denom = 1>
+class tohit_calculator : public tohit_deducer
+{
+public:
+    int operator()(int pow, bool /*random*/) const override
+    {
+        return adder + pow * mult_num / mult_denom;
+    }
+};
+
+typedef power_deducer<dice_def> dam_deducer;
+
+template<int numdice, int adder, int mult_num, int mult_denom>
+class dicedef_calculator : public dam_deducer
+{
+public:
+    dice_def operator()(int pow, bool /*random*/) const override
+    {
+        return dice_def(numdice, adder + pow * mult_num / mult_denom);
+    }
+};
+
+template<int numdice, int adder, int mult_num, int mult_denom>
+class calcdice_calculator : public dam_deducer
+{
+public:
+    dice_def operator()(int pow, bool random) const override
+    {
+        return calc_dice(numdice, adder + pow * mult_num / mult_denom, random);
+    }
+};
 
 // I must be a random-access iterator.
 template <typename I>

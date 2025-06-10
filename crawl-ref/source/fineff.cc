@@ -8,6 +8,8 @@
 
 #include "fineff.h"
 
+#include "act-iter.h"
+#include "attitude-change.h"
 #include "beam.h"
 #include "bloodspatter.h"
 #include "coordit.h"
@@ -19,6 +21,8 @@
 #include "env.h"
 #include "fight.h"
 #include "god-abil.h"
+#include "god-companions.h"
+#include "god-wrath.h" // lucy_check_meddling
 #include "libutil.h"
 #include "losglobal.h"
 #include "melee-attack.h"
@@ -29,8 +33,11 @@
 #include "mon-cast.h"
 #include "mon-death.h"
 #include "mon-place.h"
+#include "movement.h"
 #include "ouch.h"
 #include "religion.h"
+#include "spl-damage.h"
+#include "spl-monench.h"
 #include "spl-summoning.h"
 #include "state.h"
 #include "stringutil.h"
@@ -118,9 +125,9 @@ bool starcursed_merge_fineff::mergeable(const final_effect &fe) const
     return o && def == o->def;
 }
 
-bool shock_serpent_discharge_fineff::mergeable(const final_effect &fe) const
+bool shock_discharge_fineff::mergeable(const final_effect &fe) const
 {
-    const shock_serpent_discharge_fineff *o = dynamic_cast<const shock_serpent_discharge_fineff *>(&fe);
+    const shock_discharge_fineff *o = dynamic_cast<const shock_discharge_fineff *>(&fe);
     return o && def == o->def;
 }
 
@@ -195,10 +202,10 @@ void deferred_damage_fineff::merge(const final_effect &fe)
     damage += ddamfe->damage;
 }
 
-void shock_serpent_discharge_fineff::merge(const final_effect &fe)
+void shock_discharge_fineff::merge(const final_effect &fe)
 {
-    const shock_serpent_discharge_fineff *ssdfe =
-        dynamic_cast<const shock_serpent_discharge_fineff *>(&fe);
+    const shock_discharge_fineff *ssdfe =
+        dynamic_cast<const shock_discharge_fineff *>(&fe);
     power += ssdfe->power;
 }
 
@@ -269,6 +276,7 @@ void trample_follow_fineff::fire()
         const coord_def old_pos = attack->pos();
         attack->move_to_pos(posn);
         attack->apply_location_effects(old_pos);
+        attack->did_deliberate_movement();
     }
 }
 
@@ -291,8 +299,6 @@ void blink_fineff::fire()
     if (!pal || !pal->alive() || pal->no_tele())
         return;
 
-    int cells_seen = 0;
-    coord_def target;
     for (fair_adjacent_iterator ai(defend->pos()); ai; ++ai)
     {
         // No blinking into teleport closets.
@@ -301,14 +307,10 @@ void blink_fineff::fire()
         // XXX: allow fedhasites to be blinked into plants?
         if (actor_at(*ai) || !pal->is_habitable(*ai))
             continue;
-        cells_seen++;
-        if (one_chance_in(cells_seen))
-            target = *ai;
-    }
-    if (!cells_seen)
-        return;
 
-    pal->blink_to(target);
+        pal->blink_to(*ai);
+        break;
+    }
 }
 
 void teleport_fineff::fire()
@@ -341,7 +343,7 @@ void trj_spawn_fineff::fire()
         ? attitude_creation_behavior(trj->as_monster()->attitude)
         : BEH_HOSTILE;
 
-    // No permanent friendly jellies from an enslaved TRJ.
+    // No permanent friendly jellies from a charmed TRJ.
     if (spawn_beh == BEH_FRIENDLY && !crawl_state.game_is_arena())
         return;
 
@@ -356,10 +358,10 @@ void trj_spawn_fineff::fire()
         if (monster *mons = mons_place(
                               mgen_data(jelly, spawn_beh, jpos, foe,
                                         MG_DONT_COME, GOD_JIYVA)
-                              .set_summoned(trj, 0, 0)))
+                              .set_summoned(trj, 0)))
         {
             // Don't allow milking the Royal Jelly.
-            mons->flags |= MF_NO_REWARD;
+            mons->flags |= MF_NO_REWARD | MF_HARD_RESET;
             spawned++;
         }
     }
@@ -400,22 +402,28 @@ void blood_fineff::fire()
 
 void deferred_damage_fineff::fire()
 {
-    if (actor *df = defender())
-    {
-        if (!fatal)
-        {
-            // Cap non-fatal damage by the defender's hit points
-            // FIXME: Consider adding a 'fatal' parameter to ::hurt
-            //        to better interact with damage reduction/boosts
-            //        which may be applied later.
-            int df_hp = df->is_player() ? you.hp
-                                        : df->as_monster()->hit_points;
-            damage = min(damage, df_hp - 1);
-        }
+    actor *df = defender();
+    if (!df)
+        return;
 
-        df->hurt(attacker(), damage, BEAM_MISSILE, KILLED_BY_MONSTER, "", "",
-                 true, attacker_effects);
+    // Once we actually apply damage to tentacle monsters,
+    // remove their protection from further damage.
+    if (df->props.exists(TENTACLE_LORD_HITS))
+        df->props.erase(TENTACLE_LORD_HITS);
+
+    if (!fatal)
+    {
+        // Cap non-fatal damage by the defender's hit points
+        // FIXME: Consider adding a 'fatal' parameter to ::hurt
+        //        to better interact with damage reduction/boosts
+        //        which may be applied later.
+        int df_hp = df->is_player() ? you.hp
+                                    : df->as_monster()->hit_points;
+        damage = min(damage, df_hp - 1);
     }
+
+    df->hurt(attacker(), damage, BEAM_MISSILE, KILLED_BY_MONSTER, "", "",
+             true, attacker_effects);
 }
 
 static void _do_merge_masses(monster* initial_mass, monster* merge_to)
@@ -440,7 +448,7 @@ static void _do_merge_masses(monster* initial_mass, monster* merge_to)
     behaviour_event(merge_to, ME_EVAL);
 
     // Have to 'kill' the slime doing the merging.
-    monster_die(*initial_mass, KILL_DISMISSED, NON_MONSTER, true);
+    monster_die(*initial_mass, KILL_RESET, NON_MONSTER, true);
 }
 
 void starcursed_merge_fineff::fire()
@@ -508,7 +516,7 @@ void starcursed_merge_fineff::fire()
     }
 }
 
-void shock_serpent_discharge_fineff::fire()
+void shock_discharge_fineff::fire()
 {
     if (!oppressor.alive())
         return;
@@ -520,29 +528,42 @@ void shock_serpent_discharge_fineff::fire()
         return;
     }
 
-    const monster* serpent = defender() ? defender()->as_monster() : nullptr;
+    const int amount = roll_dice(3, 4 + power * 3 / 2);
+    int final_dmg = resist_adjust_damage(&oppressor, BEAM_ELECTRICITY, amount);
+    final_dmg = oppressor.apply_ac(final_dmg, 0, ac_type::half);
+
+    const actor *serpent = defender();
     if (serpent && you.can_see(*serpent))
     {
-        mprf("%s electric aura discharges%s, shocking %s!",
+        mprf("%s %s discharges%s, shocking %s%s",
              serpent->name(DESC_ITS).c_str(),
+             shock_source.c_str(),
              power < 4 ? "" : " violently",
-             oppressor.name(DESC_THE).c_str());
+             oppressor.name(DESC_THE).c_str(),
+             attack_strength_punctuation(final_dmg).c_str());
     }
     else if (you.can_see(oppressor))
     {
-        mprf("The air sparks with electricity, shocking %s!",
-             oppressor.name(DESC_THE).c_str());
+        mprf("The air sparks with electricity, shocking %s%s",
+             oppressor.name(DESC_THE).c_str(),
+             attack_strength_punctuation(final_dmg).c_str());
     }
+
     bolt beam;
     beam.flavour = BEAM_ELECTRICITY;
+    const string name = serpent && serpent->alive() ?
+                        serpent->name(DESC_A, true) :
+                        "a shock serpent"; // dubious
+    oppressor.hurt(serpent, final_dmg, beam.flavour, KILLED_BY_BEAM,
+                   name.c_str(), shock_source.c_str());
 
-    int amount = roll_dice(3, 4 + power * 3 / 2);
-    amount = oppressor.apply_ac(oppressor.beam_resists(beam, amount, true),
-                                0, ac_type::half);
-    oppressor.hurt(serpent, amount, beam.flavour, KILLED_BY_BEAM,
-                                        "a shock serpent", "electric aura");
-    if (amount)
-        oppressor.expose_to_element(beam.flavour, amount);
+    // Do resist messaging
+    if (oppressor.alive())
+    {
+        oppressor.beam_resists(beam, amount, true);
+        if (final_dmg)
+            oppressor.expose_to_element(beam.flavour, final_dmg);
+    }
 }
 
 void explosion_fineff::fire()
@@ -557,7 +578,7 @@ void explosion_fineff::fire()
     if (you.see_cell(beam.target))
     {
         if (typ == EXPLOSION_FINEFF_CONCUSSION)
-            mprf("%s", boom_message.c_str());
+            mpr(boom_message);
         else
             mprf(MSGCH_MONSTER_DAMAGE, MDAM_DEAD, "%s", boom_message.c_str());
     }
@@ -571,12 +592,12 @@ void explosion_fineff::fire()
 
     if (typ == EXPLOSION_FINEFF_CONCUSSION)
     {
-        for (adjacent_iterator ai(beam.target); ai; ++ai)
+        for (fair_adjacent_iterator ai(beam.target); ai; ++ai)
         {
             actor *act = actor_at(*ai);
             if (!act
                 || act->is_stationary()
-                || act->is_monster() && god_protects(act->as_monster()))
+                || act->is_monster() && never_harm_monster(&you, *act->as_monster()))
             {
                 continue;
             }
@@ -606,6 +627,9 @@ void explosion_fineff::fire()
                                         actor_to_death_source(beam.agent()));
         }
     }
+
+    if (you.see_cell(beam.target) && !poof_message.empty())
+        mprf(MSGCH_MONSTER_TIMEOUT, "%s", poof_message.c_str());
 }
 
 void delayed_action_fineff::fire()
@@ -621,7 +645,7 @@ void kirke_death_fineff::fire()
 
     // Revert the player last
     if (you.form == transformation::pig)
-        untransform();
+        return_to_default_form();
 }
 
 void rakshasa_clone_fineff::fire()
@@ -667,6 +691,9 @@ void bennu_revive_fineff::fire()
         newmons->props[OKAWARU_DUEL_TARGET_KEY] = true;
         newmons->props[OKAWARU_DUEL_CURRENT_KEY] = true;
     }
+
+    if (gozag_bribe.ench != ENCH_NONE)
+        newmons->add_ench(gozag_bribe);
 }
 
 void avoided_death_fineff::fire()
@@ -681,12 +708,10 @@ void infestation_death_fineff::fire()
     if (monster *scarab = create_monster(mgen_data(MONS_DEATH_SCARAB,
                                                    BEH_FRIENDLY, posn,
                                                    MHITYOU, MG_AUTOFOE)
-                                         .set_summoned(&you, 0,
-                                                       SPELL_INFESTATION),
+                                         .set_summoned(&you, SPELL_INFESTATION,
+                                                       summ_dur(5), false),
                                          false))
     {
-        scarab->add_ench(mon_enchant(ENCH_FAKE_ABJURATION, 5));
-
         if (you.see_cell(posn) || you.can_see(*scarab))
         {
             mprf("%s bursts from %s!", scarab->name(DESC_A, true).c_str(),
@@ -697,36 +722,30 @@ void infestation_death_fineff::fire()
 
 void make_derived_undead_fineff::fire()
 {
-    if (monster *undead = create_monster(mg))
+    monster *undead = create_monster(mg);
+    if (!undead)
+        return;
+
+    if (!message.empty() && you.can_see(*undead))
+        mpr(message);
+
+    // If the original monster has been levelled up, its HD might be
+    // different from its class HD, in which case its HP should be
+    // rerolled to match.
+    if (undead->get_experience_level() != experience_level)
     {
-        if (!message.empty() && you.can_see(*undead))
-            mpr(message);
+        undead->set_hit_dice(max(experience_level, 1));
+        roll_zombie_hp(undead);
+    }
 
-        // If the original monster has been levelled up, its HD might be
-        // different from its class HD, in which case its HP should be
-        // rerolled to match.
-        if (undead->get_experience_level() != experience_level)
-        {
-            undead->set_hit_dice(max(experience_level, 1));
-            roll_zombie_hp(undead);
-        }
+    if (!agent.empty())
+        mons_add_blame(undead, "animated by " + agent);
 
-        // Fix up custom names
-        if (!mg.mname.empty())
-            name_zombie(*undead, mg.base_type, mg.mname);
-
-        if (mg.god != GOD_YREDELEMNUL)
-        {
-            if (undead->type == MONS_ZOMBIE)
-                undead->props[ANIMATE_DEAD_KEY] = true;
-            else
-            {
-                int dur = undead->type == MONS_SKELETON ? 3 : 5;
-                undead->add_ench(mon_enchant(ENCH_FAKE_ABJURATION, dur));
-            }
-        }
-        if (!agent.empty())
-            mons_add_blame(undead, "animated by " + agent);
+    if (act_immediately)
+    {
+        undead->flags &= ~MF_JUST_SUMMONED;
+        undead->speed_increment = 80;
+        queue_monster_for_action(undead);
     }
 }
 
@@ -750,9 +769,9 @@ void mummy_death_curse_fineff::fire()
     {
         // Mummy killed by trap or something other than the player or
         // another monster, so no curse.
-        case KILL_MISC:
+        case KILL_NON_ACTOR:
         case KILL_RESET:
-        case KILL_DISMISSED:
+        case KILL_RESET_KEEP_ITEMS:
         // Mummy sent to the Abyss wasn't actually killed, so no curse.
         case KILL_BANISHED:
             return;
@@ -786,17 +805,15 @@ void mummy_death_curse_fineff::fire()
         mprf(MSGCH_MONSTER_SPELL, "A malignant aura surrounds %s.",
              victim->name(DESC_THE).c_str());
     }
-    const string cause = make_stringf("%s death curse",
-                            apostrophise(name).c_str());
-    // source is used as a melee source and must be alive
-    // since the mummy is dead now we pass nullptr
-    death_curse(*victim, nullptr, cause, pow);
+    // The real mummy is dead, but we pass along a cached copy save at the time
+    // they died (for morgue purposes)
+    death_curse(*victim, cached_monster_copy_by_mid(dead_mummy), "", pow);
 }
 
 void summon_dismissal_fineff::fire()
 {
     if (defender() && defender()->alive())
-        monster_die(*(defender()->as_monster()), KILL_DISMISSED, NON_MONSTER);
+        monster_die(*(defender()->as_monster()), KILL_TIMEOUT, NON_MONSTER);
 }
 
 void spectral_weapon_fineff::fire()
@@ -806,15 +823,20 @@ void spectral_weapon_fineff::fire()
     if (!defend || !atkr || !defend->alive() || !atkr->alive())
         return;
 
+    if (!weapon || !weapon->defined())
+        return;
+
     const coord_def target = defend->pos();
 
     // Do we already have a spectral weapon?
-    monster* sw = find_spectral_weapon(atkr);
+    monster* sw = find_spectral_weapon(*weapon);
     if (sw)
     {
+        if (sw == defend)
+            return; // don't attack yourself. too silly.
         // Is it already in range?
-        const reach_type sw_range = sw->reach_range();
-        if (sw_range > REACH_NONE
+        const int sw_range = sw->reach_range();
+        if (sw_range > 1
             && can_reach_attack_between(sw->pos(), target, sw_range)
             || adjacent(sw->pos(), target))
         {
@@ -826,20 +848,20 @@ void spectral_weapon_fineff::fire()
     }
 
     // Can we find a nearby space to attack from?
-    const reach_type atk_range = atkr->reach_range();
+    const int atk_range = atkr->reach_range();
     int seen_valid = 0;
     coord_def chosen_pos;
     // Try only spaces adjacent to the attacker.
     for (adjacent_iterator ai(atkr->pos()); ai; ++ai)
     {
         if (actor_at(*ai)
-            || !monster_habitable_grid(MONS_SPECTRAL_WEAPON, env.grid(*ai)))
+            || !monster_habitable_grid(MONS_SPECTRAL_WEAPON, *ai))
         {
             continue;
         }
         // ... and only spaces the weapon could attack the defender from.
         if (grid_distance(*ai, target) > 1
-            && (atk_range <= REACH_NONE
+            && (atk_range <= 1
                 || !can_reach_attack_between(*ai, target, atk_range)))
         {
             continue;
@@ -852,37 +874,61 @@ void spectral_weapon_fineff::fire()
     if (!seen_valid)
         return;
 
-    const item_def *weapon = atkr->weapon();
-    if (!weapon)
-        return;
-
-    mgen_data mg(MONS_SPECTRAL_WEAPON,
-                 atkr->is_player() ? BEH_FRIENDLY
-                                  : SAME_ATTITUDE(atkr->as_monster()),
-                 chosen_pos,
-                 atkr->mindex(),
-                 MG_FORCE_BEH | MG_FORCE_PLACE);
-    mg.set_summoned(atkr, 1, 0);
-    mg.props[TUKIMA_WEAPON] = *weapon;
-    mg.props[TUKIMA_POWER] = 50;
-
-    dprf("spawning at %d,%d", chosen_pos.x, chosen_pos.y);
-
-    monster *mons = create_monster(mg);
+    monster *mons = create_spectral_weapon(*atkr, chosen_pos, *weapon);
     if (!mons)
         return;
 
-    // We successfully made a new one! Kill off the old one.
-    if (sw)
-        end_spectral_weapon(sw, false, true);
-
-    dprf("spawned at %d,%d", mons->pos().x, mons->pos().y);
-
     melee_attack melee_attk(mons, defend);
     melee_attk.attack();
+}
 
-    mons->summoner = atkr->mid;
-    atkr->props[SPECTRAL_WEAPON_KEY].get_int() = mons->mid;
+void lugonu_meddle_fineff::fire() {
+    lucy_check_meddling();
+}
+
+void jinxbite_fineff::fire()
+{
+    actor* defend = defender();
+    if (defend && defend->alive())
+        attempt_jinxbite_hit(*defend);
+}
+
+bool beogh_resurrection_fineff::mergeable(const final_effect &fe) const
+{
+    const beogh_resurrection_fineff *o =
+        dynamic_cast<const beogh_resurrection_fineff *>(&fe);
+    return o && ostracism_only == o->ostracism_only;
+}
+
+void beogh_resurrection_fineff::fire()
+{
+    beogh_resurrect_followers(ostracism_only);
+}
+
+void dismiss_divine_allies_fineff::fire()
+{
+    if (god == GOD_BEOGH)
+        beogh_do_ostracism();
+    else
+        dismiss_god_summons(god);
+}
+
+void death_spawn_fineff::fire()
+{
+    create_monster(mg);
+}
+
+void splinterfrost_fragment_fineff::fire()
+{
+    if (!msg.empty())
+        mprf(MSGCH_MONSTER_DAMAGE, MDAM_DEAD, "%s", msg.c_str());
+
+    beam.fire();
+}
+
+void detonation_fineff::fire()
+{
+    do_catalyst_explosion(posn, weapon);
 }
 
 // Effects that occur after all other effects, even if the monster is dead.
@@ -897,4 +943,7 @@ void fire_final_effects()
         env.final_effects.pop_back();
         eff->fire();
     }
+
+    // Clear all cached monster copies
+    env.final_effect_monster_cache.clear();
 }

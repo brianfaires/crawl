@@ -28,6 +28,7 @@
 #include "tile-env.h"
 #include "english.h"
 #include "files.h"
+#include "ghost.h"
 #include "initfile.h"
 #include "item-prop.h"
 #include "item-status-flag-type.h"
@@ -674,22 +675,12 @@ void map_lines::apply_grid_overlay(const coord_def &c, bool is_layout)
                 if (colour)
                     feat = tile_dngn_coloured(feat, colour);
 
-                int offset = 0;
-                if ((*overlay)(x, y).last_tile)
-                    offset = tile_dngn_count(feat) - 1;
-                else
-                    offset = random2(tile_dngn_count(feat));
-
                 if (!has_floor && env.grid(gc) == DNGN_FLOOR)
-                    tile_env.flv(gc).floor = feat + offset;
+                    tile_env.flv(gc).floor = feat;
                 else if (!has_rock && env.grid(gc) == DNGN_ROCK_WALL)
-                    tile_env.flv(gc).wall = feat + offset;
+                    tile_env.flv(gc).wall = feat;
                 else
-                {
-                    if ((*overlay)(x, y).no_random)
-                        offset = 0;
-                    tile_env.flv(gc).feat = feat + offset;
-                }
+                    tile_env.flv(gc).feat = feat;
             }
         }
 }
@@ -1090,7 +1081,7 @@ void map_lines::extend(int min_width, int min_height, char fill)
             for (int x = 0; x < old_width; ++x)
                 (*new_overlay)(x, y) = (*overlay)(x, y);
 
-        overlay = move(new_overlay);
+        overlay = std::move(new_overlay);
     }
 }
 
@@ -1434,6 +1425,16 @@ map_corner_t map_lines::merge_subvault(const coord_def &mtl,
 
             // Set keyspec index for this subvault.
             (*overlay)(x, y).keyspec_idx = idx;
+
+            // Apply kprops to this glyph from subvault tags
+            for (const auto &tag : vmap.get_tags_unsorted())
+            {
+                const feature_property_type prop = str_to_fprop(tag);
+                if (prop == FPROP_NONE)
+                    continue;
+
+                (*overlay)(x, y).property |= prop;
+            }
         }
 
     dprf(DIAG_DNGN, "Merged subvault '%s' at %d,%d x %d,%d",
@@ -1601,7 +1602,7 @@ void map_lines::rotate(bool clockwise)
         for (int i = xs, y = 0; i != xe; i += xi, ++y)
             for (int j = ys, x = 0; j != ye; j += yi, ++x)
                 (*new_overlay)(x, y) = (*overlay)(i, j);
-        overlay = move(new_overlay);
+        overlay = std::move(new_overlay);
     }
 
     map_width = lines.size();
@@ -3016,6 +3017,9 @@ bool map_def::is_minivault() const
 // built on it.
 bool map_def::is_overwritable_layout() const
 {
+    // XX this code apparently does *not* check whether something is a layout.
+    // In almost all cases "overwritable" and "layout" coincide, but there are
+    // cases where they don't...
 #ifdef DEBUG_TAG_PROFILING
     ASSERT(cache_overwritable == has_tag("overwritable"));
 #endif
@@ -3808,7 +3812,7 @@ void mons_list::parse_mons_spells(mons_spec &spec, vector<string> &spells)
 mon_enchant mons_list::parse_ench(string &ench_str, bool perm)
 {
     vector<string> ep = split_string(":", ench_str);
-    if (ep.size() > (perm ? 2 : 3))
+    if (ep.size() > static_cast<size_t>(perm ? 2 : 3))
     {
         error = make_stringf("bad %sench specifier: \"%s\"",
                              perm ? "perm_" : "",
@@ -3903,8 +3907,10 @@ mons_list::mons_spec_slot mons_list::parse_mons_spec(string spec)
         }
 
         mspec.genweight = find_weight(mon_str);
-        if (mspec.genweight == TAG_UNFOUND || mspec.genweight <= 0)
+        if (mspec.genweight == TAG_UNFOUND)
             mspec.genweight = 10;
+        else if (mspec.genweight <= 0)
+            mspec.genweight = 0;
 
         mspec.generate_awake = strip_tag(mon_str, "generate_awake");
         mspec.patrolling     = strip_tag(mon_str, "patrolling");
@@ -3965,6 +3971,10 @@ mons_list::mons_spec_slot mons_list::parse_mons_spec(string spec)
         if (mspec.hd == TAG_UNFOUND)
             mspec.hd = 0;
 
+        mspec.exp = strip_number_tag(mon_str, "exp:");
+        if (mspec.exp == TAG_UNFOUND)
+            mspec.exp = 0;
+
         mspec.hp = strip_number_tag(mon_str, "hp:");
         if (mspec.hp == TAG_UNFOUND)
             mspec.hp = 0;
@@ -3975,7 +3985,23 @@ mons_list::mons_spec_slot mons_list::parse_mons_spec(string spec)
         else if (dur < 1 || dur > 6)
             dur = 0;
 
-        mspec.abjuration_duration = dur;
+        // XXX: Hard-coding dependence on summon degree is awkward, but
+        //      actually randomizing the timer, per summon, in vault code is
+        //      also awkward.
+        if (dur > 0)
+            mspec.summon_duration = summ_dur(dur);
+
+        // Orc apostle power and band power
+        int pow = strip_number_tag(mon_str, "pow:");
+        if (pow != TAG_UNFOUND)
+            mspec.props[APOSTLE_POWER_KEY] = pow;
+        int band_pow = strip_number_tag(mon_str, "bandpow:");
+        if (band_pow != TAG_UNFOUND)
+        {
+            if (pow != TAG_UNFOUND)
+                band_pow = pow;
+            mspec.props[APOSTLE_BAND_POWER_KEY] = band_pow;
+        }
 
         string shifter_name = replace_all_of(strip_tag_prefix(mon_str, "shifter:"), "_", " ");
 
@@ -3999,11 +4025,15 @@ mons_list::mons_spec_slot mons_list::parse_mons_spec(string spec)
                                 s_type.c_str());
                 return slot;
             }
-            if (mspec.abjuration_duration == 0)
+            if (mspec.summon_duration == 0)
             {
                 error = "marked summon with no duration";
                 return slot;
             }
+
+            // XXX: This shouldn't always be true, but is true for all current
+            //      uses of this in actual vaults.
+            mspec.extra_monster_flags |= MF_ACTUAL_SUMMON;
         }
 
         mspec.summon_type = summon_type;
@@ -4013,7 +4043,7 @@ mons_list::mons_spec_slot mons_list::parse_mons_spec(string spec)
         {
             non_actor_summoner = replace_all_of(non_actor_summoner, "_", " ");
             mspec.non_actor_summoner = non_actor_summoner;
-            if (mspec.abjuration_duration == 0)
+            if (mspec.summon_duration == 0)
             {
                 error = "marked summon with no duration";
                 return slot;
@@ -4066,7 +4096,7 @@ mons_list::mons_spec_slot mons_list::parse_mons_spec(string spec)
             }
             // Store name along with the tile.
             mspec.props[MONSTER_TILE_NAME_KEY].get_string() = tile;
-            mspec.props[MONSTER_TILE_KEY] = short(index);
+            mspec.props[MONSTER_TILE_KEY] = int(index);
         }
 
         string dbname = strip_tag_prefix(mon_str, "dbname:");
@@ -4208,7 +4238,7 @@ mons_list::mons_spec_slot mons_list::parse_mons_spec(string spec)
             MAYBE_COPY(MUTANT_BEAST_FACETS);
             MAYBE_COPY(MGEN_BLOB_SIZE);
             MAYBE_COPY(MGEN_NUM_HEADS);
-            MAYBE_COPY(MGEN_NO_AUTO_CRUMBLE);
+            MAYBE_COPY(APOSTLE_TYPE_KEY);
 #undef MAYBE_COPY
         }
 
@@ -4250,8 +4280,8 @@ mons_list::mons_spec_slot mons_list::parse_mons_spec(string spec)
                     ? unrand->sub_type : item.sub_type;
 
                 const auto def_slot = mons_class_is_animated_weapon(type)
-                    ? EQ_WEAPON
-                    : EQ_BODY_ARMOUR;
+                    ? SLOT_WEAPON
+                    : SLOT_BODY_ARMOUR;
 
                 if (get_item_slot(base, sub) != def_slot)
                 {
@@ -4366,24 +4396,26 @@ void mons_list::get_zombie_type(string s, mons_spec &spec) const
     if (base_monster.props.exists(MGEN_NUM_HEADS))
         spec.props[MGEN_NUM_HEADS] = base_monster.props[MGEN_NUM_HEADS];
 
-    const int zombie_size = mons_zombie_size(spec.monbase);
-    if (!zombie_size)
+    spec.type = zombie_montypes[mod];
+    switch (spec.type)
     {
-        spec.type = MONS_PROGRAM_BUG;
-        return;
-    }
-    if (mod == 1 && mons_class_flag(spec.monbase, M_NO_ZOMBIE))
-    {
-        spec.type = MONS_PROGRAM_BUG;
-        return;
-    }
-    if (mod == 2 && mons_class_flag(spec.monbase, M_NO_SKELETON))
-    {
-        spec.type = MONS_PROGRAM_BUG;
-        return;
+    case MONS_SIMULACRUM:
+    case MONS_SPECTRAL_THING:
+        if (mons_class_can_be_spectralised(spec.monbase))
+            return;
+        break;
+    case MONS_SKELETON:
+        if (!mons_has_skeleton(spec.monbase))
+            break;
+        // fallthrough to MONS_ZOMBIE
+    case MONS_ZOMBIE:
+    default:
+        if (mons_class_can_be_zombified(spec.monbase))
+            return;
+        break;
     }
 
-    spec.type = zombie_montypes[mod];
+    spec.type = MONS_PROGRAM_BUG;
 }
 
 mons_spec mons_list::get_hydra_spec(const string &name) const
@@ -4451,7 +4483,7 @@ mons_spec mons_list::get_slime_spec(const string &name) const
 
 /**
  * Build a monster specification for a specified pillar of salt. The pillar of
- * salt won't crumble over time, since that seems unuseful for any version of
+ * salt won't crumble over time, since that seems useful for any version of
  * this function.
  *
  * @param name      The description of the pillar of salt; e.g.
@@ -4470,7 +4502,6 @@ mons_spec mons_list::get_salt_spec(const string &name) const
 
     mons_spec spec(MONS_PILLAR_OF_SALT);
     spec.monbase = _fixup_mon_type(base_mon.type);
-    spec.props[MGEN_NO_AUTO_CRUMBLE] = true;
     return spec;
 }
 
@@ -4484,7 +4515,7 @@ mons_spec mons_list::get_salt_spec(const string &name) const
 //    yellow draconian or draconian knight - the monster specified.
 //
 // Others:
-//    any draconian => any random draconain
+//    any draconian => any random draconian
 //    any base draconian => any unspecialised coloured draconian.
 //    any nonbase draconian => any specialised coloured draconian.
 //    any <colour> draconian => any draconian of the colour.
@@ -4609,6 +4640,7 @@ static int _mutant_beast_xl(const string &tier)
 
 mons_spec mons_list::mons_by_name(string name) const
 {
+    name = lowercase(name);
     name = replace_all_of(name, "_", " ");
     name = replace_all(name, "random", "any");
 
@@ -4654,6 +4686,25 @@ mons_spec mons_list::mons_by_name(string name) const
 
     if (ends_with(name, "-shaped pillar of salt"))
         return get_salt_spec(name);
+
+    if (ends_with(name, " apostle"))
+    {
+        mons_spec spec = MONS_ORC_APOSTLE;
+        const auto m_index = name.find(" apostle");
+        const string trimmed = name.substr(0, m_index);
+        vector<string> segments = split_string(" ", trimmed);
+
+        // No subtype specified
+        if (segments.size() < 2)
+            return spec;
+
+        if (segments.size() > 2 || lowercase(segments[0]) != "orc")
+            return MONS_PROGRAM_BUG; // non-matching formating
+
+        spec.props[APOSTLE_TYPE_KEY] = apostle_type_by_name(segments[1]);
+
+        return spec;
+    }
 
     const auto m_index = name.find(" mutant beast");
     if (m_index != string::npos)
@@ -4950,7 +5001,7 @@ int str_to_ego(object_class_type item_type, string ego_str)
         "protection",
         "draining",
         "speed",
-        "vorpal",
+        "heavy",
 #if TAG_MAJOR_VERSION == 34
         "flame",
         "frost",
@@ -5003,6 +5054,7 @@ int str_to_ego(object_class_type item_type, string ego_str)
 #endif
         "datura",
         "atropa",
+        "disjunction",
         nullptr
     };
     COMPILE_CHECK(ARRAYSZ(missile_brands) == NUM_REAL_SPECIAL_MISSILES);
@@ -5073,7 +5125,7 @@ int item_list::parse_acquirement_source(const string &source)
 
 bool item_list::monster_corpse_is_valid(monster_type *mons,
                                         const string &name,
-                                        bool skeleton)
+                                        bool need_skeleton)
 {
     if (*mons == RANDOM_NONBASE_DRACONIAN)
     {
@@ -5094,7 +5146,7 @@ bool item_list::monster_corpse_is_valid(monster_type *mons,
         return false;
     }
 
-    if (skeleton && !mons_skeleton(*mons))
+    if (need_skeleton && !mons_has_skeleton(*mons))
     {
         error = make_stringf("'%s' has no skeleton", name.c_str());
         return false;
@@ -5205,29 +5257,8 @@ bool item_list::parse_single_spec(item_spec& result, string s)
 
     string ego_str  = strip_tag_prefix(s, "ego:");
 
-    string id_str = strip_tag_prefix(s, "ident:");
-    if (id_str == "all")
-        result.props[IDENT_KEY].get_int() = ISFLAG_IDENT_MASK;
-    else if (!id_str.empty())
-    {
-        vector<string> ids = split_string("|", id_str);
-        int id = 0;
-        for (const auto &is : ids)
-        {
-            if (is == "type")
-                id |= ISFLAG_KNOW_TYPE;
-            else if (is == "pluses")
-                id |= ISFLAG_KNOW_PLUSES;
-            else if (is == "properties")
-                id |= ISFLAG_KNOW_PROPERTIES;
-            else
-            {
-                error = make_stringf("Bad identify status: %s", id_str.c_str());
-                return false;
-            }
-        }
-        result.props[IDENT_KEY].get_int() = id;
-    }
+    if (strip_tag(s, "pre_id"))
+        result.props[IDENT_KEY] = true;
 
     if (strip_tag(s, "good_item"))
         result.level = ISPEC_GOOD_ITEM;
@@ -5262,6 +5293,8 @@ bool item_list::parse_single_spec(item_spec& result, string s)
         result.props[UNOBTAINABLE_KEY] = true;
     if (strip_tag(s, "no_exclude"))
         result.props[NO_EXCLUDE_KEY] = true;
+    if (strip_tag(s, "chaotic"))
+        result.props[CHAOTIC_ITEM_KEY] = true;
 
     const int mimic = strip_number_tag(s, "mimic:");
     if (mimic != TAG_UNFOUND)
@@ -5280,9 +5313,67 @@ bool item_list::parse_single_spec(item_spec& result, string s)
     if (!custom_name.empty())
         result.props[ITEM_NAME_KEY] = custom_name;
 
+    string original = s;
     const int plus = strip_number_tag(s, "plus:");
-    if (plus != TAG_UNFOUND)
+    if (plus == TAG_UNFOUND)
+    {
+        const string num = strip_tag_prefix(original, "plus:");
+        if (!num.empty())
+        {
+            error = make_stringf("Bad item plus: %s", num.c_str());
+            return false;
+        }
+    }
+    else
         result.props[PLUS_KEY].get_int() = plus;
+
+    string artprops = strip_tag_prefix(s, "artprops:");
+    if (!artprops.empty())
+    {
+        auto &fixed_artp = result.props[FIXED_PROPS_KEY].get_table();
+        vector<string> prop_list = split_string("&", artprops);
+        for (auto prop_def : prop_list)
+        {
+            vector<string> prop_parts = split_string(":", prop_def, true,
+                    false, 1);
+
+            const auto prop = artp_type_from_name(prop_parts[0]);
+            if (prop == ARTP_NUM_PROPERTIES)
+            {
+                error = make_stringf("Unknown artefact property: %s",
+                        prop_parts[0].c_str());
+                return false;
+            }
+
+            int val = 1;
+            if (prop_parts.size() == 2 && !parse_int(prop_parts[1].c_str(), val))
+            {
+                error = make_stringf("Bad artefact property value: %s",
+                        prop_parts[1].c_str());
+                return false;
+            }
+
+            if (prop == ARTP_BRAND)
+            {
+                error = make_stringf("Item brand can only be set with the "
+                        "'ego:' tag.");
+                return false;
+            }
+
+            const string prop_name = artp_name(prop);
+            if (!artp_value_is_valid(prop, val))
+            {
+                error = make_stringf("Bad value for artefact property %s: %d",
+                        prop_name.c_str(), val);
+                return false;
+            }
+
+            fixed_artp[prop_name] = val;
+        }
+
+        // Setting fixed properties always make the item randart.
+        result.level = ISPEC_RANDART;
+    }
 
     if (strip_tag(s, "no_uniq"))
         result.allow_uniques = 0;
@@ -5493,6 +5584,16 @@ bool item_list::parse_single_spec(item_spec& result, string s)
     else
         parse_raw_name(s, result);
 
+    // XXX: Ideally we'd have a common function to check validate plus values
+    // by item type and subtype.
+    if ((result.base_type == OBJ_ARMOUR || result.base_type == OBJ_WEAPONS)
+        && plus != TAG_UNFOUND
+        && abs(plus) > 30)
+    {
+        error = make_stringf("Item plus too high: %d", plus);
+        return false;
+    }
+
     if (!error.empty())
         return false;
 
@@ -5598,6 +5699,12 @@ void item_list::parse_random_by_class(string c, item_spec &spec)
         spec.sub_type = NUM_JEWELLERY;
         return;
     }
+    if (c == "hex wand")
+    {
+        spec.base_type = OBJ_WANDS;
+        spec.sub_type = item_for_set(ITEM_SET_HEX_WANDS);
+        return;
+    }
     if (c == "beam wand")
     {
         spec.base_type = OBJ_WANDS;
@@ -5610,10 +5717,31 @@ void item_list::parse_random_by_class(string c, item_spec &spec)
         spec.sub_type = item_for_set(ITEM_SET_BLAST_WANDS);
         return;
     }
-    if (c == "concealment scroll")
+    if (c == "ally scroll")
     {
         spec.base_type = OBJ_SCROLLS;
-        spec.sub_type = item_for_set(ITEM_SET_CONCEAL_SCROLLS);
+        spec.sub_type = item_for_set(ITEM_SET_ALLY_SCROLLS);
+        return;
+    }
+
+    if (c == "area misc")
+    {
+        spec.base_type = OBJ_MISCELLANY;
+        spec.sub_type = item_for_set(ITEM_SET_AREA_MISCELLANY);
+        return;
+    }
+
+    if (c == "ally misc")
+    {
+        spec.base_type = OBJ_MISCELLANY;
+        spec.sub_type = item_for_set(ITEM_SET_ALLY_MISCELLANY);
+        return;
+    }
+
+    if (c == "control misc")
+    {
+        spec.base_type = OBJ_MISCELLANY;
+        spec.sub_type = item_for_set(ITEM_SET_CONTROL_MISCELLANY);
         return;
     }
 

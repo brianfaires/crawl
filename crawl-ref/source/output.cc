@@ -25,16 +25,19 @@
 #include "god-abil.h"
 #include "god-passive.h"
 #include "initfile.h"
+#include "invent.h"
 #include "item-name.h"
 #include "item-prop.h"
 #include "jobs.h"
 #include "lang-fake.h"
 #include "libutil.h"
+#include "macro.h" // command_to_string
 #include "menu.h"
 #include "message.h"
 #include "misc.h"
 #include "mutation.h"
 #include "notes.h"
+#include "ouch.h"
 #include "player-equip.h"
 #include "player-stats.h"
 #include "prompt.h"
@@ -54,7 +57,38 @@
 #include "xom.h"
 
 
+static bool _is_using_small_layout()
+{
 #ifdef USE_TILE_LOCAL
+    return tiles.is_using_small_layout();
+#endif
+    return false;
+}
+
+static string _level_description_string_hud()
+{
+    const PlaceInfo& place = you.get_place_info();
+    string short_name = branches[place.branch].shortname;
+
+    if (brdepth[place.branch] > 1)
+        short_name += make_stringf(":%d", you.depth);
+    // Indefinite articles
+    else if (place.branch != BRANCH_PANDEMONIUM
+             && place.branch != BRANCH_DESOLATION
+             && place.branch != BRANCH_ARENA
+             && !is_connected_branch(place.branch))
+    {
+        short_name = article_a(short_name);
+    }
+    return short_name;
+}
+
+#ifdef USE_TILE_LOCAL
+
+static bool _low_vertical_space()
+{
+    return crawl_view.hudsz.y < 30;
+}
 
 /*
  * this glorious piece of code works by:
@@ -64,16 +98,30 @@
     - using the current state to decide what and where to actually
       render each part of the HUD
 
-  12345678901234567890
-1 Nameaname
-2 TrDk(Mak)
-3  St Dx In
-4  nn nn nn
-5  AC SH EV
-6  nn nn nn
-7 W: foobar
-8 Q: 20 baz
-9 XXXXXXXXX      status lights
+   123456789
+ 1 Nameaname
+ 2 TrDk
+ 3 Lugonu
+ 4 *.....
+ 5
+ 6 St Dx In
+ 7 nn nn nn
+ 8 AC SH EV
+ 9 nn nn nn
+10 XL Next
+11 10 25%
+12
+13 Noise
+14 ########
+15 Place
+16 Dungeo:10
+17 Time
+18 1234.5
+19
+20 W: foobar
+22 Abil: Bes
+23
+24 XXXXXXXXX      status lights
 .
 y  HPP MPP
  */
@@ -86,112 +134,161 @@ enum touchui_states
 {
     TOUCH_S_INIT  = 0x0,
     TOUCH_S_NULL  = 0x1,
-    TOUCH_T_MP    = 0x0104,
-    TOUCH_T_AC    = 0x0105,
-    TOUCH_T_EV    = 0x0106,
-    TOUCH_T_SH    = 0x0107,
-    TOUCH_T_STR   = 0x1305,
-    TOUCH_T_INT   = 0x1306,
-    TOUCH_T_DEX   = 0x1307,
-    TOUCH_V_PLACE = 0x1308,
-    TOUCH_T_HP    = 0x0103,
-    TOUCH_V_HP    = 0x0203, // dummy location
-    TOUCH_V_MP    = 0x0904,
-    TOUCH_V_AC    = 0x0505,
-    TOUCH_V_EV    = 0x0506,
-    TOUCH_V_SH    = 0x0507,
-    TOUCH_V_STR   = 0x1805,
-    TOUCH_V_INT   = 0x1806,
-    TOUCH_V_DEX   = 0x1807,
-    TOUCH_V_XL    = 0x0108,
-    TOUCH_T_WP    = 0x0109,
-    TOUCH_T_QV    = 0x010A,
-    TOUCH_V_WP    = 0x0209, // dummy
-    TOUCH_V_QV    = 0x020A, // dummy
     TOUCH_V_TITLE = 0x0101,
     TOUCH_V_TITL2 = 0x0102,
-    TOUCH_V_LIGHT = 0x010B,
+    TOUCH_V_GOD   = 0x0202, // dummy
+    TOUCH_V_GOD2  = 0x0302, // dummy
+    TOUCH_T_HP    = 0x0103,
+    TOUCH_V_HP    = 0x0203, // dummy
+    TOUCH_T_MP    = 0x0104,
+    TOUCH_V_MP    = 0x0204, // dummy
+    TOUCH_T_AC    = 0x0105,
+    TOUCH_V_AC    = 0x0505,
+    TOUCH_T_EV    = 0x0106,
+    TOUCH_V_EV    = 0x0506,
+    TOUCH_T_SH    = 0x0107,
+    TOUCH_V_SH    = 0x0507,
+    TOUCH_T_STR   = 0x1305,
+    TOUCH_V_STR   = 0x1805,
+    TOUCH_T_INT   = 0x1306,
+    TOUCH_V_INT   = 0x1806,
+    TOUCH_T_DEX   = 0x1307,
+    TOUCH_V_DEX   = 0x1807,
+    TOUCH_T_XL    = 0x0108,
+    TOUCH_V_XL    = 0x0508,
+    TOUCH_V_XL2   = 0x0E08,
+    TOUCH_T_PLACE = 0x1308,
+    TOUCH_V_PLACE = 0x1A08,
+    TOUCH_T_NOISE = 0x0109,
+    TOUCH_V_NOISE = 0x0809,
+    TOUCH_V_NOISW = 0x0B09, // wizard mode
+    TOUCH_V_NOISX = 0x1109, // extra wide
+    TOUCH_T_TIME  = 0x1309,
+    TOUCH_V_TIME  = 0x1909,
+    TOUCH_T_WP    = 0x010A,
+    TOUCH_V_WP    = 0x020A, // dummy
+    TOUCH_T_QV    = 0x010B,
+    TOUCH_V_QV    = 0x020B, // dummy
+    TOUCH_V_LIGHT = 0x010C,
 };
 touchui_states TOUCH_UI_STATE = TOUCH_S_INIT;
 static void _cgotoxy_touchui(int x, int y, GotoRegion region = GOTO_CRT)
 {
-//    printf("go to (%d,%d): ",x,y);
-    if (tiles.is_using_small_layout())
+    bool super_small = _low_vertical_space();
+    if (_is_using_small_layout())
         TOUCH_UI_STATE = (touchui_states)((x<<8)+y);
-//    printf("[%x]: ",TOUCH_UI_STATE);
+    else
+        TOUCH_UI_STATE = TOUCH_S_INIT;
     switch (TOUCH_UI_STATE)
     {
         case TOUCH_V_HP:
-        case TOUCH_T_MP:
+        case TOUCH_V_MP:
         case TOUCH_V_TITLE:
         case TOUCH_V_TITL2:
-        case TOUCH_V_XL:
-        case TOUCH_V_PLACE:
         case TOUCH_S_NULL:
             // no special behaviour for these
             break;
-        case TOUCH_T_STR:
+        case TOUCH_V_GOD:
             x = 1; y = 3;
             break;
-        case TOUCH_T_INT:
-            x = 4; y = 3;
-            break;
-        case TOUCH_T_DEX:
-            x = 7; y = 3;
-            break;
-        case TOUCH_T_AC:
-            x = 1; y = 5;
-            break;
-        case TOUCH_T_EV:
-            x = 4; y = 5;
-            break;
-        case TOUCH_T_SH:
-            x = 7; y = 5;
-            break;
-        case TOUCH_V_STR:
+        case TOUCH_V_GOD2:
             x = 1; y = 4;
             break;
-        case TOUCH_V_INT:
-            x = 4; y = 4;
+        case TOUCH_T_AC:
+            x = 1; y = (super_small) ? 5 : 6;
             break;
-        case TOUCH_V_DEX:
-            x = 7; y = 4;
+        case TOUCH_T_EV:
+            x = 4; y = (super_small) ? 5 : 6;
+            break;
+        case TOUCH_T_SH:
+            x = 7; y = (super_small) ? 5 : 6;
             break;
         case TOUCH_V_AC:
-            x = 2; y = 6;
+            x = 1; y = (super_small) ? 6 : 7;
             break;
         case TOUCH_V_EV:
-            x = 5; y = 6;
+            x = 4; y = (super_small) ? 6 : 7;
             break;
         case TOUCH_V_SH:
-            x = 8; y = 6;
+            x = 7; y = (super_small) ? 6 : 7;
+            break;
+        case TOUCH_T_STR:
+            x = 1; y = (super_small) ? 7 : 8;
+            break;
+        case TOUCH_T_INT:
+            x = 4; y = (super_small) ? 7 : 8;
+            break;
+        case TOUCH_T_DEX:
+            x = 7; y = (super_small) ? 7 : 8;
+            break;
+        case TOUCH_V_STR:
+            x = 1; y = (super_small) ? 8 : 9;
+            break;
+        case TOUCH_V_INT:
+            x = 4; y = (super_small) ? 8 : 9;
+            break;
+        case TOUCH_V_DEX:
+            x = 7; y = (super_small) ? 8 : 9;
+            break;
+        case TOUCH_T_XL:
+            x = 1; y = (super_small) ? 9 : 10;
+            break;
+        case TOUCH_V_XL:
+            x = 1; y = (super_small) ? 10 : 11;
+            break;
+        case TOUCH_V_XL2:
+            x = 4; y = (super_small) ? 10 : 11;
+            break;
+        case TOUCH_T_NOISE:
+            x = 1; y = (super_small) ? 11 : 13;
+            break;
+        case TOUCH_V_NOISE:
+            x = 1; y = (super_small) ? 12 : 14;
+            break;
+        case TOUCH_V_NOISW:
+            x = 4; y = (super_small) ? 12 : 14;
+            break;
+        case TOUCH_V_NOISX:
+            x = 9; y = (super_small) ? 12 : 14;
+            break;
+        case TOUCH_T_PLACE:
+            x = 1; y = (super_small) ? 13 : 15;
+            break;
+        case TOUCH_V_PLACE:
+            x = 1; y = (super_small) ? 14 : 16;
+            break;
+        case TOUCH_T_TIME:
+            x = 1; y = (super_small) ? 15 : 17;
+            break;
+        case TOUCH_V_TIME:
+            x = 1; y = (super_small) ? 16 : 18;
             break;
         case TOUCH_T_WP:
-            x = 1; y = 7;
-            break;
-        case TOUCH_T_QV:
-            x = 1; y = 8;
+            x = 1; y = (super_small) ? 17 : 20;
             break;
         case TOUCH_V_WP:
-            x = 4; y = 7;
+            x = 4; y = (super_small) ? 17 : 20;
+            break;
+        case TOUCH_T_QV:
+            x = 1; y = (super_small) ? 18 : 21;
             break;
         case TOUCH_V_QV:
-            x = 4; y = 8;
+            x = 4; y = (super_small) ? 18 : 21;
             break;
         case TOUCH_V_LIGHT:
-            x = 1; y = 9;
+            x = 1; y = (super_small) ? 19 : 23;
             break;
         case TOUCH_T_HP:
             x = 2; y = crawl_view.hudsz.y;
             break;
-        case TOUCH_V_MP:
+        case TOUCH_T_MP:
             x = 6; y = crawl_view.hudsz.y;
             break;
         default:
             // reset state
             TOUCH_UI_STATE = TOUCH_S_INIT;
     }
-//    printf("(%d,%d): ",x,y);
+    y = min(y, crawl_view.hudsz.y);
     cgotoxy(x,y,region);
 }
 
@@ -199,21 +296,21 @@ static void _cprintf_touchui(const char *format, ...)
 {
     va_list args;
     string  buf;
+    vector<string> parts;
     va_start(args, format);
     buf = vmake_stringf(format, args);
 
     switch (TOUCH_UI_STATE)
     {
-        case TOUCH_T_MP:
         case TOUCH_V_TITL2:
-        case TOUCH_V_XL:
-        case TOUCH_V_PLACE:
         case TOUCH_S_NULL:
             // don't draw these
-//            printf("X! %s\n",buf.c_str());
             break;
         case TOUCH_T_HP:
             TOUCH_UI_STATE = TOUCH_V_HP;
+            break;
+        case TOUCH_T_MP:
+            TOUCH_UI_STATE = TOUCH_V_MP;
             break;
         case TOUCH_V_TITLE:
             cprintf("%s", you.your_name.c_str());
@@ -224,11 +321,41 @@ static void _cprintf_touchui(const char *format, ...)
             cprintf("%3s", buf.c_str());
             TOUCH_UI_STATE = TOUCH_S_NULL;
             break;
+        case TOUCH_T_STR:
+        case TOUCH_T_INT:
+        case TOUCH_T_DEX:
+        case TOUCH_T_AC:
+        case TOUCH_T_EV:
+        case TOUCH_T_SH:
         case TOUCH_V_STR:
         case TOUCH_V_INT:
         case TOUCH_V_DEX:
-            // rjustify to 3 chars on these
-            cprintf("%3s", buf.c_str());
+        case TOUCH_V_AC:
+        case TOUCH_V_EV:
+        case TOUCH_V_SH:
+            buf = buf.substr(0, 2);
+            trim_string(buf);
+            cprintf("%2s", buf.c_str());
+            break;
+        case TOUCH_T_XL:
+            cprintf("XL Next");
+            break;
+        case TOUCH_T_PLACE:
+            cprintf("Place");
+            break;
+        case TOUCH_V_PLACE:
+            parts = split_string(":", _level_description_string_hud());
+            if (parts.size() == 1)
+                cprintf("%-9s", parts[0].substr(0,9).c_str());
+            else
+                cprintf("%s:%s", parts[0].substr(0,8-parts[1].size()).c_str(), parts[1].c_str());
+            break;
+        case TOUCH_T_NOISE:
+            cprintf("Noise");
+            break;
+        case TOUCH_T_TIME:
+            buf = buf.substr(0, buf.size()-1);
+            cprintf(buf.c_str());
             break;
         case TOUCH_T_WP:
             TOUCH_UI_STATE = TOUCH_V_WP;
@@ -238,14 +365,8 @@ static void _cprintf_touchui(const char *format, ...)
             TOUCH_UI_STATE = TOUCH_V_QV;
             cprintf("%s", buf.c_str());
             break;
-        case TOUCH_V_WP:
-        case TOUCH_V_QV:
-            // get rid of the hotkey; somewhat pointless in a touch-screen ui :)
-            cprintf(buf.substr(3,10).c_str());
-            break;
 
         default:
-//            printf("p: %s\n",buf.c_str());
             cprintf("%s", buf.c_str());
     }
     va_end(args);
@@ -265,13 +386,11 @@ static void _nowrap_eol_cprintf_touchui(const char *format, ...)
             // don't print these
             break;
         case TOUCH_V_TITL2:
-            cprintf("%s%s %.4s", species::get_abbrev(you.species),
-                                 get_job_abbrev(you.char_class),
-                                 god_name(you.religion).c_str());
+            cprintf("%s%s", species::get_abbrev(you.species),
+                            get_job_abbrev(you.char_class));
             TOUCH_UI_STATE = TOUCH_S_NULL; // suppress whatever else it was going to print
             break;
         default:
-//            printf("q: %s\n",buf.c_str());
             nowrap_eol_cprintf("%s", buf.c_str());
     }
     va_end(args);
@@ -355,8 +474,10 @@ public:
             // Maybe this should use textbackground too?
             textcolour(BLACK + m_empty * 16);
 
-            if (cx < disp)
+            if (cx < disp && cx < old_disp)
                 textcolour(BLACK + m_default * 16);
+            else if (cx < disp)
+                textcolour(BLACK + m_change_pos * 16);
             else if (cx < sub_disp)
                 textcolour(BLACK + YELLOW * 16);
             else if (old_disp >= sub_disp && cx < old_disp)
@@ -502,20 +623,19 @@ static bool _boosted_mp()
 
 static bool _boosted_ac()
 {
-    return you.armour_class() > you.base_ac(1);
+    return you.armour_class_scaled(100) > you.base_ac(100);
 }
 
 static bool _boosted_ev()
 {
-    return you.duration[DUR_AGILITY]
-           || you.props.exists(WU_JIAN_HEAVENLY_STORM_KEY)
-           || acrobat_boost_active();
+    return you.evasion_scaled(100) > you.evasion_scaled(100, true);
 }
 
 static bool _boosted_sh()
 {
-    return you.duration[DUR_DIVINE_SHIELD]
-           || qazlal_sh_boost() > 0
+    return qazlal_sh_boost() > 0
+           || (you.get_mutation_level(MUT_EPHEMERAL_SHIELD)
+                && you.duration[DUR_EPHEMERAL_SHIELD])
            || (you.get_mutation_level(MUT_CONDENSATION_SHIELD)
                 && !you.duration[DUR_ICEMAIL_DEPLETED]);
 }
@@ -553,23 +673,25 @@ void update_turn_count()
     const int turncount_start_x = 19 + 6;
     int ypos = 9;
     // TODO: unify this with the calculation in print_stats
-    if (you.has_mutation(MUT_HP_CASTING))
+    if (you.has_mutation(MUT_HP_CASTING) && !_is_using_small_layout())
         ypos--;
-#ifdef USE_TILE_LOCAL
-    if (tiles.is_using_small_layout())
-        ypos--;
-#endif
     CGOTOXY(turncount_start_x, ypos, GOTO_STAT);
 
     textcolour(HUD_VALUE_COLOUR);
     string time = Options.show_game_time
         ? make_stringf("%.1f", you.elapsed_time / 10.0)
         : make_stringf("%d", you.num_turns);
-    time += make_stringf(" (%.1f)",
-            (you.elapsed_time - you.elapsed_time_at_last_input) / 10.0);
 
-    CPRINTF("%s",
-        chop_string(time, crawl_view.hudsz.x - turncount_start_x + 1).c_str());
+    if (!_is_using_small_layout())
+    {
+        time += make_stringf(" (%.1f)",
+                (you.elapsed_time - you.elapsed_time_at_last_input) / 10.0);
+        CPRINTF("%s",
+            chop_string(time, crawl_view.hudsz.x - turncount_start_x + 1).c_str());
+    }
+    else
+        CPRINTF("%s", chop_string(time, 7).c_str());
+
     textcolour(LIGHTGREY);
 }
 
@@ -584,35 +706,51 @@ static int _count_digits(int val)
     return 1;
 }
 
-static const equipment_type e_order[] =
+static const equipment_slot slot_order[] =
 {
-    EQ_WEAPON, EQ_SHIELD, EQ_BODY_ARMOUR, EQ_HELMET, EQ_CLOAK,
-    EQ_GLOVES, EQ_BOOTS, EQ_AMULET, EQ_LEFT_RING, EQ_RIGHT_RING,
-    EQ_RING_ONE, EQ_RING_TWO, EQ_RING_THREE, EQ_RING_FOUR,
-    EQ_RING_FIVE, EQ_RING_SIX, EQ_RING_SEVEN, EQ_RING_EIGHT,
-    EQ_RING_AMULET,
+    SLOT_WEAPON, SLOT_OFFHAND, SLOT_WEAPON_OR_OFFHAND, SLOT_BODY_ARMOUR,
+    SLOT_HAUNTED_AUX,
+    SLOT_HELMET, SLOT_CLOAK, SLOT_GLOVES, SLOT_BOOTS, SLOT_BARDING,
+    SLOT_AMULET, SLOT_RING, SLOT_GIZMO
 };
 
 static void _print_stats_equip(int x, int y)
 {
     CGOTOXY(x, y, GOTO_STAT);
     textcolour(HUD_CAPTION_COLOUR);
-    cprintf((species::arm_count(you.species) > 2) ? "Eq: " : "Equip: ");
+
+    int total_slots = 0;
+    for (int i = SLOT_FIRST_STANDARD; i < NUM_EQUIP_SLOTS; ++i)
+        total_slots += you.equipment.num_slots[i];
+
+    cprintf(total_slots > 8 ? "Eq: " : "Equip: ");
     textcolour(LIGHTGREY);
-    for (equipment_type eqslot : e_order)
+    for (equipment_slot slot : slot_order)
     {
-        if (you_can_wear(eqslot))
-        {
-            if (you.slot_item(eqslot))
-            {
-                cglyph_t g = get_item_glyph(*(you.slot_item(eqslot)));
-                g.col = element_colour(g.col, !Options.animate_equip_bar);
-                formatted_string::parse_string(glyph_to_tagstr(g)).display();
-            }
-            else if (!you_can_wear(eqslot, true))
+        const int num_slots = you.equipment.num_slots[slot];
+        if (num_slots == 0)
+            continue;
+
+        if (slot_is_melded(slot))
+            for (int i = 0; i < num_slots; ++i)
                 cprintf(" ");
-            else
-                cprintf(".");
+        else
+        {
+            vector<player_equip_entry> entries = you.equipment.get_slot_entries(slot);
+            for (int i = 0; i < num_slots; ++i)
+            {
+                if (i >= (int)entries.size())
+                    cprintf(".");
+                else if (entries[i].is_overflow)
+                    cprintf(" ");
+                else
+                {
+                    const item_def& item = entries[i].get_item();
+                    cglyph_t g = get_item_glyph(item);
+                    g.col = element_colour(g.col, !Options.animate_equip_bar);
+                    formatted_string::parse_string(glyph_to_tagstr(g)).display();
+                }
+            }
         }
     }
     you.gear_change = false;
@@ -634,7 +772,7 @@ static void _print_stats_noise(int x, int y)
     bool silence = silenced(you.pos());
     int level = silence ? 0 : you.get_noise_perception(true);
     textcolour(HUD_CAPTION_COLOUR);
-    cprintf("Noise: ");
+    CPRINTF("Noise: ");
     colour_t noisecolour;
 
     // This is calibrated roughly so that in an open-ish area:
@@ -677,6 +815,9 @@ static void _print_stats_noise(int x, int y)
         bar_position = 7;
     }
 
+    if (_is_using_small_layout())
+        Noise_Bar.horiz_bar_width--;
+
     if (silence)
     {
         CGOTOXY(x + bar_position, y, GOTO_STAT);
@@ -714,7 +855,7 @@ static void _print_stats_noise(int x, int y)
     // intentional non-reset: after it has started drawing, we always redraw
     // noise. There's not a lot of cost to this, and the logic for detecting
     // if/when silenced status has changed is extremely annoying. So
-    // you.redraw_noise is esentially only used to keep the noise bar from
+    // you.redraw_noise is essentially only used to keep the noise bar from
     // drawing while the game is starting up. (If someone can figure out how
     // to correctly detect all the silence special cases, feel free to add that
     // in and I will see if you succeeded -advil.)
@@ -722,12 +863,22 @@ static void _print_stats_noise(int x, int y)
 
 static void _print_stats_gold(int x, int y)
 {
-    CGOTOXY(x, y, GOTO_STAT);
     textcolour(HUD_CAPTION_COLOUR);
-    CPRINTF("Gold:");
-    CGOTOXY(x+6, y, GOTO_STAT);
+    if (!_is_using_small_layout())
+    {
+        CGOTOXY(x, y, GOTO_STAT);
+        CPRINTF("Gold:");
+        CGOTOXY(x+6, y, GOTO_STAT);
+    }
+    else
+    {
+        CGOTOXY(3, 2, GOTO_STAT);
+        CPRINTF("Gd ");
+    }
     if (you.duration[DUR_GOZAG_GOLD_AURA])
         textcolour(LIGHTBLUE);
+    else if (you.attribute[ATTR_VOUCHER] > 0)
+        textcolour(MAGENTA);
     else
         textcolour(HUD_VALUE_COLOUR);
     CPRINTF("%-6d", you.gold);
@@ -786,12 +937,17 @@ static void _print_stats_mp(int x, int y)
     for (int i = 11-col; i > 0; i--)
         CPRINTF(" ");
 
-#ifdef TOUCH_UI
-    if (tiles.is_using_small_layout())
-        MP_Bar.vdraw(6, 10, you.magic_points, you.max_magic_points);
+#ifdef USE_TILE_LOCAL
+    if (_is_using_small_layout())
+    {
+        if (_low_vertical_space())
+            MP_Bar.vdraw(6, 19, you.magic_points, you.max_magic_points);
+        else
+            MP_Bar.vdraw(6, 24, you.magic_points, you.max_magic_points);
+    }
     else
 #endif
-    MP_Bar.draw(19, y, you.magic_points, you.max_magic_points);
+        MP_Bar.draw(19, y, you.magic_points, you.max_magic_points);
 
     you.redraw_magic_points = false;
 }
@@ -837,8 +993,13 @@ static void _print_stats_hp(int x, int y)
         CPRINTF(" ");
 
 #ifdef USE_TILE_LOCAL
-    if (tiles.is_using_small_layout())
-        HP_Bar.vdraw(2, 10, you.hp, you.hp_max);
+    if (_is_using_small_layout())
+    {
+        if (_low_vertical_space())
+            HP_Bar.vdraw(2, 19, you.hp, you.hp_max);
+        else
+            HP_Bar.vdraw(2, 24, you.hp, you.hp_max);
+    }
     else
 #endif
         HP_Bar.draw(19, y, you.hp, you.hp_max, you.hp - max(0, poison_survival()));
@@ -848,7 +1009,7 @@ static void _print_stats_hp(int x, int y)
 
 static short _get_stat_colour(stat_type stat)
 {
-    if (you.duration[stat_zero_duration(stat)])
+    if (you.stat(stat) <= 0)
         return LIGHTRED;
 
     // Check the stat_colour option for warning thresholds.
@@ -860,10 +1021,6 @@ static short _get_stat_colour(stat_type stat)
     if (you.duration[DUR_DIVINE_STAMINA])
         return LIGHTBLUE;  // no end of effect warning
 
-    // Stat is degenerated.
-    if (you.stat_loss[stat] > 0)
-        return YELLOW;
-
     return HUD_VALUE_COLOUR;
 }
 
@@ -873,10 +1030,7 @@ static void _print_stat(stat_type stat, int x, int y)
 
     textcolour(_get_stat_colour(stat));
     CPRINTF("%d", you.stat(stat, false));
-
-    if (you.stat_loss[stat] > 0)
-        CPRINTF(" (%d)  ", you.max_stat(stat));
-    else
+    if (!_is_using_small_layout())
         CPRINTF("       ");
 }
 
@@ -889,10 +1043,10 @@ static void _print_stats_ac(int x, int y)
     else if (you.corrosion_amount())
         text_col = RED;
 
-    string ac = make_stringf("%2d ", you.armour_class());
+    string ac = make_stringf("%2d ", you.armour_class_scaled(1));
 #ifdef WIZARD
-    if (you.wizard)
-        ac += make_stringf("(%d%%) ", you.gdr_perc());
+    if (you.wizard && !_is_using_small_layout())
+        ac += make_stringf("(%d%%) ", you.gdr_perc(false));
 #endif
     textcolour(text_col);
     CGOTOXY(x+4, y, GOTO_STAT);
@@ -916,38 +1070,68 @@ static void _print_stats_ac(int x, int y)
 static void _print_stats_ev(int x, int y)
 {
     CGOTOXY(x+4, y, GOTO_STAT);
-    textcolour(you.duration[DUR_PETRIFYING]
-               || you.cannot_act() ? RED
-                                   : _boosted_ev() ? LIGHTBLUE
-                                                    : HUD_VALUE_COLOUR);
-    CPRINTF("%2d ", you.evasion());
+
+    // Color EV based on whether temporary effects are raising or lowering it
+    const int bonus = you.evasion_scaled(100) - you.evasion_scaled(100, true);
+    textcolour(bonus < 0 ? RED
+                         : bonus > 0 ? LIGHTBLUE
+                                     : HUD_VALUE_COLOUR);
+    CPRINTF("%2d ", you.evasion_scaled(1));
 
     you.redraw_evasion = false;
 }
 
 /**
- * Get the appropriate colour for the UI text describing the player's weapon.
- * (Or hands/ice fists/etc, as appropriate.)
+ * Get the appropriate colour for the UI text describing the given weapon.
  *
- * @return     A colour enum for the player's weapon.
+ * @return     A colour enum for the given weapon.
  */
-static int _wpn_name_colour()
+static int _wpn_name_colour(const item_def &wpn)
 {
     if (you.corrosion_amount())
         return RED;
 
-    if (you.weapon())
-    {
-        const item_def& wpn = *you.weapon();
+    const string prefix = item_prefix(wpn);
+    const int prefcol = menu_colour(wpn.name(DESC_INVENTORY),
+                                    prefix, "stats", false);
+    if (prefcol != -1)
+        return prefcol;
+    return LIGHTGREY;
+}
 
-        const string prefix = item_prefix(wpn);
-        const int prefcol = menu_colour(wpn.name(DESC_INVENTORY), prefix, "stats");
-        if (prefcol != -1)
-            return prefcol;
-        return LIGHTGREY;
-    }
+static string _wpn_name_corroded(const item_def &weapon)
+{
+    if (!you.corrosion_amount() || weapon.base_type != OBJ_WEAPONS)
+        return weapon.name(DESC_PLAIN, true);
 
-    return get_form()->uc_colour;
+    item_def wpn_copy = weapon;
+    wpn_copy.plus -= you.corrosion_amount();
+    return wpn_copy.name(DESC_PLAIN, true);
+}
+
+static void _print_unarmed_name()
+{
+    textcolour(HUD_CAPTION_COLOUR);
+    const string slot_name = "-) ";
+    CPRINTF("%s", slot_name.c_str());
+    textcolour(you.corrosion_amount() ? RED : get_form()->uc_colour);
+    const int max_name_width = crawl_view.hudsz.x - slot_name.size();
+    CPRINTF("%s", chop_string(you.unarmed_attack_name(),
+                              max_name_width).c_str());
+    textcolour(LIGHTGREY);
+}
+
+static void _print_weapon_name(const item_def &weapon, int width)
+{
+    textcolour(HUD_CAPTION_COLOUR);
+    const char slot_letter = index_to_letter(weapon.link);
+    const string slot_name = make_stringf("%c) ", slot_letter);
+    CPRINTF("%s", slot_name.c_str());
+    textcolour(_wpn_name_colour(weapon));
+    const int max_name_width = width - slot_name.size();
+    const string name = _wpn_name_corroded(weapon);
+    CPRINTF("%s", chop_string(name, max_name_width).c_str());
+    textcolour(LIGHTGREY);
 }
 
 /**
@@ -957,7 +1141,6 @@ static int _wpn_name_colour()
  */
 static void _print_stats_wp(int y)
 {
-    string text;
     if (mouse_control::current_mode() == MOUSE_MODE_NORMAL
         && (you.running > 0 || you.running < 0 && Options.travel_delay == -1))
     {
@@ -966,27 +1149,18 @@ static void _print_stats_wp(int y)
 
     CGOTOXY(1, y, GOTO_STAT);
 
-    if (you.weapon())
+    const item_def *weapon = you.weapon();
+    const item_def *offhand = you.offhand_weapon();
+    if (weapon && offhand)
     {
-        item_def wpn = *you.weapon(); // copy
-
-        if (you.corrosion_amount() && wpn.base_type == OBJ_WEAPONS)
-            wpn.plus -= 4 * you.corrosion_amount();
-
-        text = wpn.name(DESC_PLAIN, true, false, true);
+        _print_weapon_name(*weapon, crawl_view.hudsz.x/2-1);
+        CPRINTF("  ");
+        _print_weapon_name(*offhand, crawl_view.hudsz.x/2-1);
     }
+    else if (weapon || offhand)
+        _print_weapon_name(weapon ? *weapon : *offhand, crawl_view.hudsz.x);
     else
-        text = you.unarmed_attack_name();
-
-    textcolour(HUD_CAPTION_COLOUR);
-    const char slot_letter = you.weapon() ? index_to_letter(you.weapon()->link)
-                                          : '-';
-    const string slot_name = make_stringf("%c) ", slot_letter);
-    CPRINTF("%s", slot_name.c_str());
-    textcolour(_wpn_name_colour());
-    const int max_name_width = crawl_view.hudsz.x - slot_name.size();
-    CPRINTF("%s", chop_string(text, max_name_width).c_str());
-    textcolour(LIGHTGREY);
+        _print_unarmed_name();
 
     you.wield_change  = false;
 }
@@ -1002,7 +1176,7 @@ static void _print_stats_qv(int y)
 
     formatted_string qdesc = quiver::get_secondary_action()->quiver_description();
 #ifdef USE_TILE_LOCAL
-    const int max_width = crawl_view.hudsz.x - (tiles.is_using_small_layout() ? 0 : 4);
+    const int max_width = crawl_view.hudsz.x - (_is_using_small_layout() ? 0 : 4);
 #else
     const int max_width = crawl_view.hudsz.x - 4;
 #endif
@@ -1061,14 +1235,15 @@ static void _get_status_lights(vector<status_light>& out)
     {
         STATUS_ORB,
         STATUS_ZOT,
-        STATUS_STR_ZERO, STATUS_INT_ZERO, STATUS_DEX_ZERO,
-        STATUS_ALIVE_STATE,
+        STATUS_STAT_ZERO,
         DUR_PARALYSIS,
         DUR_CONF,
         DUR_PETRIFYING,
         DUR_PETRIFIED,
         DUR_BERSERK,
         DUR_TELEPORT,
+        DUR_ENKINDLED,
+        STATUS_MNEMOPHAGE,
         DUR_HASTE,
         DUR_SLOW,
         STATUS_SPEED,
@@ -1119,7 +1294,7 @@ static void _print_status_lights(int y)
 #endif
 
 #ifdef USE_TILE_LOCAL
-    if (!tiles.is_using_small_layout())
+    if (!_is_using_small_layout())
     {
 #endif
     size_t i_light = 0;
@@ -1132,9 +1307,9 @@ static void _print_status_lights(int y)
         if (end_x <= crawl_view.hudsz.x)
         {
             textcolour(lights[i_light].colour);
-            CPRINTF("%s", lights[i_light].text.c_str());
+            NOWRAP_EOL_CPRINTF("%s", lights[i_light].text.c_str());
             if (end_x < crawl_view.hudsz.x)
-                CPRINTF(" ");
+                NOWRAP_EOL_CPRINTF(" ");
             ++i_light;
         }
         else
@@ -1178,6 +1353,9 @@ static void _print_status_lights(int y)
     }
 #endif
 
+    // Reset cursor position so it doesn't complain if we completely fill our space.
+    CGOTOXY(1, 1, GOTO_STAT);
+
     you.redraw_status_lights = false;
 }
 
@@ -1192,13 +1370,9 @@ static void _draw_wizmode_flag(const char *word)
 static void _redraw_title()
 {
     const unsigned int WIDTH = crawl_view.hudsz.x;
-    string title = you.your_name + " " + filtered_lang(player_title());
-    const bool small_layout =
-#ifdef USE_TILE_LOCAL
-                              tiles.is_using_small_layout();
-#else
-                              false;
-#endif
+    string title = filtered_lang(player_title());
+    title = you.your_name + (title[0] == ',' ? "" : " ") + title;
+    const bool small_layout = _is_using_small_layout();
 
     if (small_layout)
         title = you.your_name;
@@ -1224,7 +1398,7 @@ static void _redraw_title()
 
     // Line 1: Foo the Bar    *WIZARD*
     CGOTOXY(1, 1, GOTO_STAT);
-    textcolour(small_layout && you.wizard ? LIGHTMAGENTA : YELLOW);
+    textcolour(small_layout && (you.wizard || you.explore) ? LIGHTMAGENTA : YELLOW);
     CPRINTF("%s", chop_string(title, WIDTH).c_str());
     if (you.wizard && !small_layout)
         _draw_wizmode_flag("WIZARD");
@@ -1240,7 +1414,7 @@ static void _redraw_title()
     // Minotaur [of God] [Piety]
     textcolour(YELLOW);
     CGOTOXY(1, 2, GOTO_STAT);
-    string species = species::name(you.species);
+    string species = player_species_name();
     NOWRAP_EOL_CPRINTF("%s", species.c_str());
     if (you_worship(GOD_NO_GOD))
     {
@@ -1248,9 +1422,11 @@ static void _redraw_title()
             && !you.has_mutation(MUT_FORLORN) // XX is this necessary?
             && !had_gods())
         {
+            if (small_layout)
+                CGOTOXY(3, 2, GOTO_STAT);
             string godpiety = "**....";
             textcolour(DARKGREY);
-            if ((unsigned int)(strwidth(species) + strwidth(godpiety) + 1) <= WIDTH)
+            if (small_layout || ((unsigned int)(strwidth(species) + strwidth(godpiety) + 1) <= WIDTH))
                 NOWRAP_EOL_CPRINTF(" %s", godpiety.c_str());
             clear_to_end_of_line();
         }
@@ -1262,7 +1438,14 @@ static void _redraw_title()
     }
     else
     {
-        string god = " of ";
+        string god;
+        if (small_layout)
+        {
+            CGOTOXY(2, 2, GOTO_STAT);
+            god = "";
+        }
+        else
+            god = " of ";
         god += you_worship(GOD_JIYVA) ? god_name_jiyva(true)
                                       : god_name(you.religion);
         NOWRAP_EOL_CPRINTF("%s", god.c_str());
@@ -1270,7 +1453,12 @@ static void _redraw_title()
         string piety = _god_asterisks();
         textcolour(_god_status_colour(YELLOW));
         const unsigned int textwidth = (unsigned int)(strwidth(species) + strwidth(god) + strwidth(piety) + 1);
-        if (textwidth <= WIDTH)
+        if (small_layout)
+        {
+            CGOTOXY(3, 2, GOTO_STAT);
+            NOWRAP_EOL_CPRINTF("%s", piety.c_str());
+        }
+        else if (textwidth <= WIDTH)
             NOWRAP_EOL_CPRINTF(" %s", piety.c_str());
         else if (textwidth == (WIDTH + 1))
         {
@@ -1331,7 +1519,10 @@ void print_stats()
     int rows_hidden = 0;
     // hide the MP bar for djinni
     if (you.has_mutation(MUT_HP_CASTING))
-        rows_hidden++;
+    {
+        if (!_is_using_small_layout())
+            rows_hidden++;
+    }
     else if (you.redraw_magic_points)
         _print_stats_mp(1, 4);
 
@@ -1353,6 +1544,8 @@ void print_stats()
         CGOTOXY(1, 8 - rows_hidden, GOTO_STAT);
         textcolour(Options.status_caption_colour);
         CPRINTF("XL: ");
+        if (_is_using_small_layout())
+            CGOTOXY(5, 8, GOTO_STAT);
         textcolour(HUD_VALUE_COLOUR);
         CPRINTF("%2d ", you.experience_level);
         if (you.experience_level >= you.get_max_xl())
@@ -1360,7 +1553,10 @@ void print_stats()
         else
         {
             textcolour(Options.status_caption_colour);
-            CPRINTF("Next: ");
+            if (!_is_using_small_layout())
+                CPRINTF("Next: ");
+            else
+                CGOTOXY(14, 8, GOTO_STAT);
             textcolour(HUD_VALUE_COLOUR);
             CPRINTF("%2d%% ", get_exp_progress());
         }
@@ -1368,20 +1564,13 @@ void print_stats()
     }
 
     // Line 9 is Noise and Turns
-#ifdef USE_TILE_LOCAL
-    if (tiles.is_using_small_layout())
-        rows_hidden++;
-    else
-#endif
+    if (Options.equip_bar)
     {
-        if (Options.equip_bar)
-        {
-             if (you.gear_change || you.wield_change)
-                _print_stats_equip(1, 9 - rows_hidden);
-        }
-        else if (you.redraw_noise)
-            _print_stats_noise(1, 9 - rows_hidden);
+         if (you.gear_change || you.wield_change)
+            _print_stats_equip(1, 9 - rows_hidden);
     }
+    else if (you.redraw_noise)
+        _print_stats_noise(1, 9 - rows_hidden);
 
     if (you.wield_change)
         _print_stats_wp(10 - rows_hidden);
@@ -1397,39 +1586,19 @@ void print_stats()
 #endif
 }
 
-static string _level_description_string_hud()
-{
-    const PlaceInfo& place = you.get_place_info();
-    string short_name = branches[place.branch].shortname;
-
-    if (brdepth[place.branch] > 1)
-        short_name += make_stringf(":%d", you.depth);
-    // Indefinite articles
-    else if (place.branch != BRANCH_PANDEMONIUM
-             && place.branch != BRANCH_DESOLATION
-             && place.branch != BRANCH_ARENA
-             && !is_connected_branch(place.branch))
-    {
-        short_name = article_a(short_name);
-    }
-    return short_name;
-}
-
 void print_stats_level()
 {
     int ypos = 8;
     // TODO: unify this with the calculation in print_stats
-    if (you.has_mutation(MUT_HP_CASTING))
+    if (you.has_mutation(MUT_HP_CASTING) && !_is_using_small_layout())
         ypos--;
-#ifdef USE_TILE_LOCAL
-    if (tiles.is_using_small_layout())
-        ypos--;
-#endif
 
-    cgotoxy(19, ypos, GOTO_STAT);
+    CGOTOXY(19, ypos, GOTO_STAT);
     textcolour(HUD_CAPTION_COLOUR);
     CPRINTF("Place: ");
 
+    if (_is_using_small_layout())
+        CGOTOXY(26, ypos, GOTO_STAT);
     textcolour(HUD_VALUE_COLOUR);
 #ifdef DEBUG_DIAGNOSTICS
     CPRINTF("(%d) ", env.absdepth0 + 1);
@@ -1441,6 +1610,8 @@ void print_stats_level()
 void draw_border()
 {
     textcolour(HUD_CAPTION_COLOUR);
+
+    CGOTOXY(1,1, GOTO_CRT);
     clrscr();
 
     textcolour(Options.status_caption_colour);
@@ -1448,7 +1619,7 @@ void draw_border()
     int ac_pos;
     // TODO: unify this calculation with rows_hidden in print_stats in a
     // non-insane way
-    if (you.has_mutation(MUT_HP_CASTING))
+    if (you.has_mutation(MUT_HP_CASTING) && !_is_using_small_layout())
         ac_pos = 4;
     else
         ac_pos = 5;
@@ -1477,8 +1648,8 @@ void draw_border()
 #ifndef USE_TILE_LOCAL
 void smallterm_warning()
 {
-    clrscr();
     CGOTOXY(1,1, GOTO_CRT);
+    clrscr();
     CPRINTF("Your terminal window is too small; please resize to at least %d,%d", MIN_COLS, MIN_LINES);
 }
 #endif
@@ -1774,8 +1945,6 @@ int update_monster_pane()
             textbackground(BLACK);
         }
 
-        assert_valid_cursor_pos();
-
         if (mons.empty())
             return -1;
 
@@ -1790,78 +1959,16 @@ int update_monster_pane()
 }
 #endif
 
-// Converts a numeric resistance to its symbolic counterpart.
-// Can handle any maximum level. The default is for single level resistances
-// (the most common case). Negative resistances are allowed.
-// Resistances with a maximum of up to 4 are spaced (arbitrary choice), and
-// starting at 5 levels, they are continuous.
-// params:
-//  level : actual resistance level
-//  max : maximum number of levels of the resistance
-//  immune : overwrites normal pip display for full immunity
-static string _itosym(int level, int max = 1, bool immune = false)
-{
-    if (max < 1)
-        return "";
-
-    if (immune)
-        return Options.char_set == CSET_ASCII ? "inf" : "\u221e"; //"∞"
-
-    string sym;
-    bool spacing = (max >= 5) ? false : true;
-
-    while (max > 0)
-    {
-        if (level == 0)
-            sym += ".";
-        else if (level > 0)
-        {
-            sym += "+";
-            --level;
-        }
-        else // negative resistance
-        {
-            sym += "x";
-            ++level;
-        }
-        sym += (spacing) ? " " : "";
-        --max;
-    }
-    return sym;
-}
-
 static const char *s_equip_slot_names[] =
 {
-    "Weapon", "Cloak",  "Helmet", "Gloves", "Boots",
-    "Shield", "Body Armour", "Left Ring", "Right Ring", "Amulet",
-    "First Ring", "Second Ring", "Third Ring", "Fourth Ring",
-    "Fifth Ring", "Sixth Ring", "Seventh Ring", "Eighth Ring",
-    "Amulet Ring"
+    "Weapon", "Offhand", "Armour", "Helmet", "Gloves", "Boots",
+    "Barding", "Cloak", "Ring", "Amulet", "Gizmo"
 };
 
-const char *equip_slot_to_name(int equip)
+int equip_slot_by_name(const char *s)
 {
-    COMPILE_CHECK(ARRAYSZ(s_equip_slot_names) == NUM_EQUIP);
-
-    if (equip == EQ_RINGS
-        || equip >= EQ_FIRST_JEWELLERY && equip <= EQ_LAST_JEWELLERY && equip != EQ_AMULET)
-    {
-        return "Ring";
-    }
-
-    if (equip == EQ_BOOTS && you.wear_barding())
-        return "Barding";
-
-    if (equip < EQ_FIRST_EQUIP || equip >= NUM_EQUIP)
-        return "";
-
-    return s_equip_slot_names[equip];
-}
-
-int equip_name_to_slot(const char *s)
-{
-    for (int i = EQ_FIRST_EQUIP; i < NUM_EQUIP; ++i)
-        if (!strcasecmp(s_equip_slot_names[i], s))
+    for (int i = SLOT_FIRST_STANDARD; i <= SLOT_LAST_STANDARD; ++i)
+        if (!strcasecmp(s_equip_slot_names[i - SLOT_FIRST_STANDARD], s))
             return i;
 
     return -1;
@@ -1916,7 +2023,7 @@ static string _stealth_bar(int label_length, int sw)
     const int unadjusted_pips = stealth_pips();
     const int bar_len = 10;
     const int num_high_pips = unadjusted_pips % bar_len;
-    static const vector<char> pip_tiers = { '.', '+', '*', '#', '!' };
+    static const vector<char> pip_tiers = { ' ', '+', '*', '#', '!' };
     const int max_tier = pip_tiers.size() - 1;
     const int low_tier = min(unadjusted_pips / bar_len, max_tier);
     const int high_tier = min(low_tier + 1, max_tier);
@@ -1936,42 +2043,50 @@ static void _print_overview_screen_equip(column_composer& cols,
 {
     sw = min(max(sw, 79), 640);
 
-    for (equipment_type eqslot : e_order)
+    for (equipment_slot slot : slot_order)
     {
-        // leave space for all the ring slots
-        if (species::arm_count(you.species) > 2
-            && eqslot != EQ_WEAPON
-            && !you_can_wear(eqslot))
-        {
-            continue;
-        }
-
-        if (species::arm_count(you.species) <= 2
-            && eqslot >= EQ_RING_ONE && eqslot <= EQ_RING_EIGHT)
-        {
-            continue;
-        }
-
-        if (eqslot == EQ_RING_AMULET && !you_can_wear(eqslot))
+        // Skip slots the player doesn't have any of
+        const int num_slots = you.equipment.num_slots[slot];
+        if (num_slots == 0)
             continue;
 
-        const string slot_name_lwr = lowercase_string(equip_slot_to_name(eqslot));
-
+        const string slot_name_lwr = lowercase_string(equip_slot_name(slot));
+        const bool slot_melded = slot_is_melded(slot);
         string str;
 
-        if (you.slot_item(eqslot))
+        vector<player_equip_entry> equipped = you.equipment.get_slot_entries(slot);
+        for (int i = 0; i < num_slots; ++i)
         {
-            // The player has something equipped.
-            const item_def& item = *you.slot_item(eqslot);
-            const bool melded    = you.melded[eqslot];
+            if (i >= (int)equipped.size())
+            {
+                // Some special-cased messages:
+                if (slot == SLOT_WEAPON && i == 0)
+                    str = "  - " + you.unarmed_attack_name();
+                else if (slot_melded)
+                    str = "<darkgrey>(" + slot_name_lwr + " unavailable)</darkgrey>";
+                else
+                    str = "<darkgrey>(no " + slot_name_lwr + ")</darkgrey>";
+
+                cols.add_formatted(1, str, false);
+                continue;
+            }
+            else if (equipped[i].is_overflow)
+            {
+                str = "  <darkgrey>[" + slot_name_lwr + " occupied]</darkgrey>";
+                cols.add_formatted(1, str, false);
+                continue;
+            }
+
+            const item_def& item = equipped[i].get_item();
+            const bool melded    = equipped[i].melded;
             const string prefix = item_prefix(item);
-            const int prefcol = menu_colour(item.name(DESC_INVENTORY), prefix);
+            const int prefcol = menu_colour(item.name(DESC_INVENTORY), prefix, "resists", false);
             const int col = prefcol == -1 ? LIGHTGREY : prefcol;
 
             // Colour melded equipment dark grey.
             string colname = melded ? "darkgrey" : colour_to_str(col);
 
-            const int item_idx   = you.equip[eqslot];
+            const int item_idx   = equipped[i].item;
             const char equip_char = index_to_letter(item_idx);
 
             str = make_stringf(
@@ -1980,41 +2095,19 @@ static void _print_overview_screen_equip(column_composer& cols,
                      colname.c_str(),
                      melded ? "melded " : "",
                      chop_string(item.name(DESC_PLAIN, true),
-                                 melded ? sw - 43 : sw - 36, false).c_str(),
+                                 melded ? sw - 32 : sw - 25, false).c_str(),
                      colname.c_str());
             equip_chars.push_back(equip_char);
+
+            cols.add_formatted(1, str.c_str(), false);
         }
-        else if (eqslot == EQ_WEAPON
-                 && you.skill(SK_UNARMED_COMBAT))
-        {
-            str = "  - Unarmed";
-        }
-        else if (eqslot == EQ_WEAPON
-                 && you.form == transformation::blade_hands)
-        {
-            const bool plural = you.arm_count() > 1;
-            str = string("  - Blade Hand") + (plural ? "s" : "");
-        }
-        else if (eqslot == EQ_BOOTS && you.wear_barding())
-            str = "<darkgrey>(no " + slot_name_lwr + ")</darkgrey>";
-        else if (!you_can_wear(eqslot))
-            str = "<darkgrey>(" + slot_name_lwr + " unavailable)</darkgrey>";
-        else if (!you_can_wear(eqslot, true))
-        {
-            str = "<darkgrey>(" + slot_name_lwr +
-                               " currently unavailable)</darkgrey>";
-        }
-        else if (you_can_wear(eqslot) == MB_MAYBE)
-            str = "<darkgrey>(" + slot_name_lwr + " restricted)</darkgrey>";
-        else
-            str = "<darkgrey>(no " + slot_name_lwr + ")</darkgrey>";
-        cols.add_formatted(2, str.c_str(), false);
     }
 }
 
 static string _overview_screen_title(int sw)
 {
-    string title = make_stringf(" %s ", player_title().c_str());
+    string title = player_title();
+    title = (title[0] == ',' ? "" : " ") + title + " ";
 
     string species_job = make_stringf("(%s %s)",
                                       species::name(you.species).c_str(),
@@ -2128,13 +2221,6 @@ static int _god_status_colour(int default_colour)
     return default_colour;
 }
 
-static bool _player_statrotted()
-{
-    return you.strength(false) != you.max_strength()
-        || you.intel(false) != you.max_intel()
-        || you.dex(false) != you.max_dex();
-}
-
 static vector<formatted_string> _get_overview_stats()
 {
     formatted_string entry;
@@ -2146,9 +2232,6 @@ static vector<formatted_string> _get_overview_stats()
 
     if (player_drained())
         col1 += 1;
-
-    if (_player_statrotted())
-        col3 += 2;
 
     column_composer cols(4, col1, col1 + col2, col1 + col2 + col3);
 
@@ -2217,7 +2300,7 @@ static vector<formatted_string> _get_overview_stats()
     else
         entry.textcolour(HUD_VALUE_COLOUR);
 
-    entry.cprintf("%2d", you.armour_class());
+    entry.cprintf("%2d", you.armour_class_scaled(1));
 
     cols.add_formatted(1, entry.to_colour_string(), false);
     entry.clear();
@@ -2230,7 +2313,7 @@ static vector<formatted_string> _get_overview_stats()
     else
         entry.textcolour(HUD_VALUE_COLOUR);
 
-    entry.cprintf("%2d", you.evasion());
+    entry.cprintf("%2d", you.evasion_scaled(1));
 
     cols.add_formatted(1, entry.to_colour_string(), false);
     entry.clear();
@@ -2254,8 +2337,6 @@ static vector<formatted_string> _get_overview_stats()
     entry.textcolour(_get_stat_colour(STAT_STR));
 
     entry.cprintf("%2d", you.strength(false));
-    if (you.strength(false) != you.max_strength())
-        entry.cprintf(" (%d)", you.max_strength());
 
     cols.add_formatted(2, entry.to_colour_string(), false);
     entry.clear();
@@ -2266,8 +2347,6 @@ static vector<formatted_string> _get_overview_stats()
     entry.textcolour(_get_stat_colour(STAT_INT));
 
     entry.cprintf("%2d", you.intel(false));
-    if (you.intel(false) != you.max_intel())
-        entry.cprintf(" (%d)", you.max_intel());
 
     cols.add_formatted(2, entry.to_colour_string(), false);
     entry.clear();
@@ -2278,8 +2357,6 @@ static vector<formatted_string> _get_overview_stats()
     entry.textcolour(_get_stat_colour(STAT_DEX));
 
     entry.cprintf("%2d", you.dex(false));
-    if (you.dex(false) != you.max_dex())
-        entry.cprintf(" (%d)", you.max_dex());
 
     cols.add_formatted(2, entry.to_colour_string(), false);
     entry.clear();
@@ -2368,7 +2445,7 @@ static string _resist_composer(const char * name, int spacing, int value,
     string out;
     out += _determine_colour_string(pos_resist ? value : -value, max, immune);
     out += chop_string(name, spacing);
-    out += _itosym(value, max, immune);
+    out += desc_resist(value, max, immune);
 
     return out;
 }
@@ -2376,8 +2453,9 @@ static string _resist_composer(const char * name, int spacing, int value,
 static vector<formatted_string> _get_overview_resistances(
     vector<char> &equip_chars, int sw)
 {
-    // 3 columns, splits at columns 20, 33
-    column_composer cols(3, 20, 33);
+    // Two columns, split at column 22.
+    column_composer cols(2, 22);
+
     // First column, resist name is up to 8 chars
     int cwidth = 8;
     string out;
@@ -2397,16 +2475,14 @@ static vector<formatted_string> _get_overview_resistances(
     const int relec = player_res_electricity(false);
     out += _resist_composer("rElec", cwidth, relec) + "\n";
 
-    const int rcorr = you.res_corr(false);
+    const int rcorr = player_res_corrosion(false);
     out += _resist_composer("rCorr", cwidth, rcorr) + "\n";
 
-    const int rmuta = (you.rmut_from_item()
-                       || you.get_mutation_level(MUT_MUTATION_RESISTANCE) == 3);
-    if (rmuta)
-        out += _resist_composer("rMut", cwidth, rmuta) + "\n";
+    const int sinv = you.can_see_invisible();
+    out += _resist_composer("SInv", cwidth, sinv) + "\n";
 
     const int rmagi = player_willpower() / WL_PIP;
-    out += _resist_composer("Will", cwidth, rmagi, 5, true,
+    out += _resist_composer("Will", cwidth, rmagi, MAX_WILL_PIPS, true,
                             player_willpower() == WILL_INVULN) + "\n";
 
     out += _stealth_bar(cwidth, 20) + "\n";
@@ -2415,72 +2491,24 @@ static vector<formatted_string> _get_overview_resistances(
     out += chop_string("HPRegen", cwidth);
     out += make_stringf("%d.%02d/turn\n", regen/100, regen%100);
 
-    out += chop_string("MPRegen", cwidth);
+    if (!you.has_mutation(MUT_HP_CASTING))
+    {
+        out += chop_string("MPRegen", cwidth);
 #if TAG_MAJOR_VERSION == 34
-    const bool etheric = player_equip_unrand(UNRAND_ETHERIC_CAGE);
-    const int mp_regen = player_mp_regen() //round up
-                         + (etheric ? 50 : 0); // on average
-    out += make_stringf("%d.%02d/turn%s\n", mp_regen / 100, mp_regen % 100,
-                        etheric ? "*" : "");
+        const bool etheric = you.unrand_equipped(UNRAND_ETHERIC_CAGE);
+        const int mp_regen = player_mp_regen() //round up
+                            + (etheric ? 50 : 0); // on average
+        out += make_stringf("%d.%02d/turn%s\n", mp_regen / 100, mp_regen % 100,
+                            etheric ? "*" : "");
 #else
-    const int mp_regen = player_mp_regen(); // round up
-    out += make_stringf("%d.%02d/turn\n", mp_regen / 100, mp_regen % 100);
+        const int mp_regen = player_mp_regen(); // round up
+        out += make_stringf("%d.%02d/turn\n", mp_regen / 100, mp_regen % 100);
 #endif
+    }
 
     cols.add_formatted(0, out, false);
 
-    // Second column, resist name is 9 chars
-    out.clear();
-    cwidth = 9;
-    const int rinvi = you.can_see_invisible();
-    out += _resist_composer("SeeInvis", cwidth, rinvi) + "\n";
-
-    const int faith = you.faith();
-    out += _resist_composer("Faith", cwidth, faith) + "\n";
-
-    const int rspir = you.spirit_shield();
-    out += _resist_composer("Spirit", cwidth, rspir) + "\n";
-
-    const int reflect = you.reflection();
-    out += _resist_composer("Reflect", cwidth, reflect) + "\n";
-
-    const int harm = you.extra_harm();
-    out += _resist_composer("Harm", cwidth, harm) + "\n";
-
-    const int rampage = you.rampaging();
-    const string rampage_name = you.has_mutation(MUT_ROLLPAGE) ? "Roll" :
-                                                                 "Rampage";
-    out += _resist_composer(rampage_name.c_str(), cwidth, rampage, 1, true,
-                            player_equip_unrand(UNRAND_SEVEN_LEAGUE_BOOTS))
-           + "\n";
-
-    const int archmagi = you.archmagi();
-    if (archmagi)
-        out += _resist_composer("Archmagi", cwidth, archmagi, archmagi) + "\n";
-
-    const int rclarity = you.clarity();
-    if (rclarity)
-        out += _resist_composer("Clarity", cwidth, rclarity) + "\n";
-
-    const int anger_rate = you.angry();
-    if (anger_rate && !you.stasis() && !rclarity && !you.is_lifeless_undead())
-        out += make_stringf("Rage     %d%%\n", anger_rate);
-
-    // Fo don't need a reminder that they can't teleport
-    if (!you.stasis())
-    {
-        if (you.no_tele())
-            out += _resist_composer("NoTele", cwidth, 1, 1, false) + "\n";
-        else if (get_teleportitis_level())
-            out += _resist_composer("Rnd*Tele", cwidth, 1, 1, false) + "\n";
-    }
-
-    const int no_cast = you.no_cast();
-    if (no_cast)
-        out += _resist_composer("NoCast", cwidth, 1, 1, false);
-
-    cols.add_formatted(1, out, false);
-
+    // Second column.
     _print_overview_screen_equip(cols, equip_chars, sw);
 
     return cols.formatted_lines();
@@ -2492,14 +2520,12 @@ public:
     overview_popup() {};
     vector<char> equip_chars;
 private:
-    bool process_key(int ch) override
+    maybe_bool process_key(int ch) override
     {
         if (find(equip_chars.begin(), equip_chars.end(), ch) != equip_chars.end())
         {
             item_def& item = you.inv[letter_to_index(ch)];
-            if (!describe_item(item))
-                return false;
-            return true;
+            return describe_item(item);
         }
         return formatted_scroller::process_key(ch);
     };
@@ -2565,12 +2591,133 @@ string dump_overview_screen()
     return text;
 }
 
+static string _extra_passive_effects()
+{
+    vector<string> passives;
+
+    // Fo don't need a reminder that they can't teleport
+    if (!you.stasis() && you.no_tele(false, false))
+        passives.emplace_back("no teleportation");
+
+    if (you.no_cast())
+        passives.emplace_back("no spellcasting");
+
+    if (you.inaccuracy())
+    {
+        passives.emplace_back(
+            make_stringf("inaccuracy (-%d)", you.inaccuracy_penalty()).c_str());
+    }
+
+    const int anger = you.angry();
+    if (anger && !you.stasis() && !you.clarity() && !you.is_lifeless_undead())
+    {
+        passives.emplace_back(
+            make_stringf("random rage (%d%%)", anger).c_str());
+    }
+
+    const int corrode = you.scan_artefacts(ARTP_CORRODE);
+    if (corrode)
+    {
+        passives.emplace_back(
+            make_stringf("corrode self (%d%%)",
+                         corrosion_chance(corrode)).c_str());
+    }
+
+    const int slow = you.scan_artefacts(ARTP_SLOW);
+    if (you.scan_artefacts(ARTP_SLOW))
+    {
+        passives.emplace_back(
+            make_stringf("slow self (%d%%)", slow).c_str());
+    }
+
+    const int harm = you.extra_harm();
+    if (harm)
+    {
+        passives.emplace_back(
+            make_stringf("harm (+%d%% outgoing, +%d%% incoming)",
+                         outgoing_harm_amount(harm),
+                         incoming_harm_amount(harm)).c_str());
+    }
+
+    if (you.wearing_ego(OBJ_ARMOUR, SPARM_MAYHEM))
+        passives.emplace_back("mayhem");
+
+    if (you.missile_repulsion())
+        passives.emplace_back("repel missiles");
+
+    if (you.reflection())
+        passives.emplace_back("reflection");
+
+    if (player_acrobatic())
+        passives.emplace_back("acrobat");
+
+    if (you.clarity())
+        passives.emplace_back("clarity");
+
+    if (you.rmut_from_item()
+        || you.get_mutation_level(MUT_MUTATION_RESISTANCE) == 3)
+    {
+        passives.emplace_back("resist mutation");
+    }
+
+    if (you.spirit_shield())
+        passives.emplace_back("guardian spirit");
+
+    if (you.rampaging())
+    {
+        const bool infinite = you.unrand_equipped(UNRAND_SEVEN_LEAGUE_BOOTS);
+        const char *inf = Options.char_set == CSET_ASCII ? "+inf"
+                                                          : "+\u221e"; //"∞"
+        passives.emplace_back(
+            make_stringf("%s%s",
+                         you.has_mutation(MUT_ROLLPAGE) ? "roll" : "rampage",
+                         infinite ? inf : "").c_str());
+    }
+
+    if (you.faith())
+        passives.emplace_back("faith");
+
+    const int wizardry = player_wizardry();
+    if (wizardry)
+        passives.emplace_back(make_stringf("wizardry (x%d)", wizardry));
+
+    if (you.archmagi())
+        passives.emplace_back("archmagi");
+
+    const int channel = player_channelling();
+    if (channel)
+    {
+        passives.emplace_back(
+            make_stringf("channel magic (%d%%)", 20 * channel).c_str());
+    }
+
+    if (you.infusion_amount())
+    {
+        passives.emplace_back(
+            make_stringf("infuse magic (%d %s)",
+                         you.infusion_amount(),
+                         you.has_mutation(MUT_HP_CASTING) ? "HP"
+                                                          : "MP").c_str());
+    }
+
+    if (passives.empty())
+        return "no passive effects";
+    else
+        return comma_separated_line(passives.begin(), passives.end(),
+                                    ", ", ", ");
+
+}
+
 /// Creates rows of short descriptions for current status effects, mutations,
 /// and runes/Orbs of Zot.
-string _status_mut_rune_list(int sw)
+static string _status_mut_rune_list(int sw)
 {
+    // print passive information
+    string text = "<w>%:</w> ";
+    text += _extra_passive_effects();
+
     // print status information
-    string text = "<w>@:</w> ";
+    text += "\n<w>@:</w> ";
     vector<string> status;
 
     status_info inf;
@@ -2613,7 +2760,7 @@ string _status_mut_rune_list(int sw)
     if (!runes.empty())
     {
         text += make_stringf("\n<w>%s:</w> %d/%d rune%s: %s",
-                    stringize_glyph(get_item_symbol(SHOW_ITEM_MISCELLANY)).c_str(),
+                    command_to_string(CMD_DISPLAY_RUNES).c_str(),
                     (int)runes.size(), you.obtainable_runes,
                     you.obtainable_runes == 1 ? "" : "s",
                     comma_separated_line(runes.begin(), runes.end(),

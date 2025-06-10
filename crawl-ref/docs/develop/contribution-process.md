@@ -27,8 +27,9 @@ turnaround time.
 Users with +v are members of the devteam and have commit access. Developers
 often discuss what they are working on on the channel and request comments
 before commits. Therefore the channel is logged to archive discussion and
-decisions made there. The archive can be found here:
+decisions made there. The archives can be found here:
 
+    http://crawl.akrasiac.org/logs/cheibriados/
     http://s-z.org/crawl-dev/
 
 ### Writing a proposal for gameplay-related contributions
@@ -36,7 +37,7 @@ decisions made there. The archive can be found here:
 For proposals that would have a significant impact on gameplay, it's good to
 get feedback and discussion from experienced crawl players. One place to start
 is the [Game Design Discussion
-board](https://crawl.develz.org/tavern/viewforum.php?f=8) (GDD) on the official
+board](https://tavern.dcss.io/c/back-room/gdd/9) (GDD) on the official
 Tavern forums. Please follow the GDD discussion guidelines posted at the top of
 that forum.
 
@@ -124,7 +125,10 @@ would prefer this to be limited to small changes like vaults or artwork.
   get merged faster, all things being equal. A *very common* mistake is to
   put a lot of text in the PR first comment, and leave the commit message blank.
   Usually, this will require a devteam member to manually copy information
-  from the PR and reformat for a commit message, slowing the process.
+  from the PR and reformat for a commit message, slowing the process. Additionally,
+  commit messages should be formatted according to standard Git conventions; see
+  https://www.freecodecamp.org/news/writing-good-commit-messages-a-practical-guide/
+  for a list of common conventions.
 * PRs that fix bugs are very likely to get merged in some form (though you may
   receive suggestions for alternative strategies for fixing the bug).
 * PRs that change gameplay in particular need to be carefully thought out, and

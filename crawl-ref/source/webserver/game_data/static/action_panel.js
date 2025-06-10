@@ -219,7 +219,7 @@ function ($, comm, client, cr, enums, options, player, icons, gui, main,
             hide_settings();
         });
 
-        // Triggering this function on keyup might be too agressive,
+        // Triggering this function on keyup might be too aggressive,
         // but at least the player doesn't have to press Enter to confirm changes
         $("#action-panel-settings input[type=radio],input[type=number]")
             .on("change keyup", function (e) {
@@ -339,7 +339,8 @@ function ($, comm, client, cr, enums, options, player, icons, gui, main,
         }
     }
 
-    function draw_action(texture, tiles, item, offset, scale, needs_cursor, text)
+    function draw_action(texture, tiles, item, offset, scale, needs_cursor,
+                         text, useless)
     {
         if (item && draw_glyphs)
         {
@@ -376,6 +377,15 @@ function ($, comm, client, cr, enums, options, player, icons, gui, main,
         if (needs_cursor)
         {
             renderer.draw_icon(icons.CURSOR3,
+                               _horizontal() ? offset : 0,
+                               _horizontal() ? 0 : offset,
+                               undefined, undefined,
+                               scale);
+        }
+
+        if (useless)
+        {
+            renderer.draw_icon(icons.OOR_MESH,
                                _horizontal() ? offset : 0,
                                _horizontal() ? 0 : offset,
                                undefined, undefined,
@@ -473,7 +483,7 @@ function ($, comm, client, cr, enums, options, player, icons, gui, main,
             let cursor_required = selected == idx + NUM_RESERVED_BUTTONS;
 
             draw_action(main, item.tile, item, offset, adjusted_scale,
-                        cursor_required, qty);
+                        cursor_required, qty, item.useless);
         });
 
         if (available_length < required_length)

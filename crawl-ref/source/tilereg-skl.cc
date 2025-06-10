@@ -81,11 +81,11 @@ int SkillRegion::handle_mouse(wm_mouse_event &event)
         {
             tiles.set_need_redraw();
             if (Options.skill_focus == SKM_FOCUS_OFF)
-                you.train[skill] = (training_status)!you.train[skill];
+                set_training_status(skill, (training_status)!you.train[skill]);
             else
             {
-                you.train[skill] = (training_status)
-                    ((you.train[skill] + 1) % NUM_TRAINING_STATUSES);
+                set_training_status(skill, (training_status)
+                    ((you.train[skill] + 1) % NUM_TRAINING_STATUSES));
             }
             reset_training();
         }
@@ -183,6 +183,12 @@ static int _get_aptitude_tile(const int apt)
     case  3: return TILEI_NUM_PLUS3;
     case  4: return TILEI_NUM_PLUS4;
     case  5: return TILEI_NUM_PLUS5;
+    case  6: return TILEI_NUM_PLUS6;
+    case  7: return TILEI_NUM_PLUS7;
+    case  8: return TILEI_NUM_PLUS8;
+    case  9: return TILEI_NUM_PLUS9;
+    case 10: return TILEI_NUM_PLUS10;
+    case 11: return TILEI_NUM_PLUS11;
     case 0:
     default: return TILEI_NUM_ZERO;
     }

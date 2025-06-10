@@ -19,8 +19,8 @@ enum attribute_type
                                 // sight of the player while in the Abyss.
     ATTR_DIVINE_VIGOUR,         // strength of Ely's Divine Vigour
     ATTR_DIVINE_STAMINA,        // strength of Zin's Divine Stamina
-    ATTR_DIVINE_SHIELD,         // strength of TSO's Divine Shield
 #if TAG_MAJOR_VERSION == 34
+    ATTR_DIVINE_SHIELD,         // strength of TSO's Divine Shield
     ATTR_WEAPON_SWAP_INTERRUPTED,
 #endif
     ATTR_GOLD_FOUND,
@@ -32,7 +32,7 @@ enum attribute_type
     ATTR_NOISES,
     ATTR_SHADOWS,              // Lantern of shadows effect.
     ATTR_UNUSED2,              // was ATTR_FRUIT_FOUND
-    ATTR_FLIGHT_UNCANCELLABLE, // Potion of flight is in effect.
+    ATTR_FLIGHT_UNCANCELLABLE, // Potion of enlightenment is in effect.
     ATTR_INVIS_UNCANCELLABLE,  // Spell/potion of invis is in effect.
 #endif
     ATTR_PERM_FLIGHT,          // Cache for flight from equipment
@@ -47,16 +47,14 @@ enum attribute_type
     ATTR_TEMP_MUTATIONS,       // Number of temporary mutations the player has.
     ATTR_TEMP_MUT_XP,          // Amount of XP remaining before some temp muts
                                // will be removed
+#if TAG_MAJOR_VERSION == 34
     ATTR_NEXT_RECALL_TIME,     // aut remaining until next ally will be recalled
     ATTR_NEXT_RECALL_INDEX,    // index+1 into recall_list for next recall
-#if TAG_MAJOR_VERSION == 34
     ATTR_EVOKER_XP,            // How much xp remaining until next evoker charge
 #endif
     ATTR_SEEN_BEOGH,           // Did an orc priest already offer conversion?
-#if TAG_MAJOR_VERSION == 34
-    ATTR_XP_DRAIN,             // Severity of current skill drain
-#endif
-    ATTR_SEARING_RAY,          // Are we currently firing a searing ray?
+    ATTR_CHANNELLED_SPELL,     // Which spell are we currently channelling?
+    ATTR_CHANNEL_DURATION,     // How many turns have we been channelling it?
     ATTR_RECITE_TYPE,          // Recitation type.
     ATTR_RECITE_SEED,          // Recite text seed.
 #if TAG_MAJOR_VERSION == 34
@@ -70,8 +68,8 @@ enum attribute_type
 #if TAG_MAJOR_VERSION == 34
     ATTR_REPEL_MISSILES,       // Repel missiles active
     ATTR_DEFLECT_MISSILES,     // Deflect missiles active
-#endif
     ATTR_PORTAL_PROJECTILE,    // Accuracy bonus during portal projectile
+#endif
     ATTR_GOD_WRATH_XP,         // How much XP before our next god wrath check?
     ATTR_GOD_WRATH_COUNT,      // Number of stored retributions
     ATTR_NEXT_DRAGON_TIME,     // aut remaining until Dragon's Call summons another
@@ -93,7 +91,8 @@ enum attribute_type
     ATTR_LAST_FLIGHT_STATUS,   // Whether SPARM_FLIGHT should be restored after form change
     ATTR_GOZAG_FIRST_POTION,   // Gozag's free first usage of Potion Petition.
 #endif
-    ATTR_STAT_LOSS_XP,         // Unmodified XP needed for stat recovery.
+    ATTR_STAT_ZERO,            // Whether one of the player's stats has fallen
+                               // to zero or below (and they have been notified).
 #if TAG_MAJOR_VERSION == 34
     ATTR_SURGE_REMOVED,        // Was surge power applied to next evocation.
     ATTR_PAKELLAS_EXTRA_MP,    // MP to be collected to get a !magic from P
@@ -105,5 +104,7 @@ enum attribute_type
     ATTR_WALL_JUMP_READY,      // Ready to perform a wall jump.
 #endif
     ATTR_DEATHS_DOOR_HP,       // How much HP we should have under Death's Door
+    ATTR_VOUCHER,              // How many shop vouchers you have
+    ATTR_TRAITOR,              // God who has been abandoned with an invocations title
     NUM_ATTRIBUTES
 };

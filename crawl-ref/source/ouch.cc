@@ -21,11 +21,13 @@
 #endif
 
 #include "artefact.h"
+#include "act-iter.h"
 #include "art-enum.h"
 #include "beam.h"
 #include "chardump.h"
 #include "cloud.h"
 #include "colour.h"
+#include "database.h"
 #include "delay.h"
 #include "dgn-event.h"
 #include "end.h"
@@ -40,10 +42,13 @@
 #include "item-prop.h"
 #include "items.h"
 #include "libutil.h"
+#include "melee-attack.h"
 #include "message.h"
 #include "mgen-data.h"
 #include "mon-death.h"
 #include "mon-place.h"
+#include "mon-speak.h"
+#include "mon-tentacle.h"
 #include "mon-util.h"
 #include "mutation.h"
 #include "nearby-danger.h"
@@ -59,11 +64,14 @@
 #include "shopping.h"
 #include "shout.h"
 #include "spl-clouds.h"
+#include "spl-damage.h"
 #include "spl-goditem.h"
+#include "spl-monench.h"
 #include "spl-selfench.h"
 #include "state.h"
 #include "stringutil.h"
 #include "teleport.h"
+#include "terrain.h"
 #include "transform.h"
 #include "tutorial.h"
 #include "view.h"
@@ -79,7 +87,7 @@ void maybe_melt_player_enchantments(beam_type flavour, int damage)
             if (!you.duration[DUR_ICEMAIL_DEPLETED])
             {
                 if (you.has_mutation(MUT_ICEMAIL))
-                    mprf(MSGCH_DURATION, "Your icy defenses dissipate!");
+                    mprf(MSGCH_DURATION, "Your icy defences dissipate!");
                 else
                     mprf(MSGCH_DURATION, "Your condensation shield dissipates!");
             }
@@ -154,7 +162,7 @@ int check_your_resists(int hurted, beam_type flavour, string source,
             canned_msg(MSG_YOU_RESIST);
         else if (hurted > original && doEffects)
         {
-            mpr("You feel a terrible chill!");
+            mpr("The cold chills you terribly!");
             xom_is_stimulated(200);
         }
         break;
@@ -178,17 +186,22 @@ int check_your_resists(int hurted, beam_type flavour, string source,
             // used with this beam type (as it does not provide a valid beam).
             ASSERT(beam);
 
+            int pois = div_rand_round(beam->damage.num * beam->damage.size, 2);
+            pois = 3 + random_range(pois * 2 / 3, pois * 4 / 3);
+
+            // If Concentrate Venom is active, we apply the normal amount of
+            // poison this beam would have applied on TOP of the curare effect.
+            //
+            // This is all done through the curare_actor method for better messaging.
             if (beam->origin_spell == SPELL_SPIT_POISON &&
                 beam->agent(true)->is_monster() &&
                 beam->agent(true)->as_monster()->has_ench(ENCH_CONCENTRATE_VENOM))
             {
-                curare_actor(beam->agent(), &you, 2, "concentrated venom",
-                             beam->agent(true)->name(DESC_PLAIN));
+                curare_actor(beam->agent(), &you, "concentrated venom",
+                             beam->agent(true)->name(DESC_PLAIN), pois);
             }
             else
             {
-                int pois = div_rand_round(beam->damage.num * beam->damage.size, 3);
-                pois = 3 + random_range(pois * 2 / 3, pois * 4 / 3);
                 poison_player(pois, source, kaux);
 
                 if (player_res_poison() > 0)
@@ -205,7 +218,7 @@ int check_your_resists(int hurted, beam_type flavour, string source,
             // See also melee-attack.cc:_print_resist_messages() which cannot be
             // used with this beam type (as it does not provide a valid beam).
             ASSERT(beam);
-            int pois = div_rand_round(beam->damage.num * beam->damage.size, 3);
+            int pois = div_rand_round(beam->damage.num * beam->damage.size, 2);
             pois = 3 + random_range(pois * 2 / 3, pois * 4 / 3);
 
             const int resist = player_res_poison();
@@ -234,7 +247,7 @@ int check_your_resists(int hurted, beam_type flavour, string source,
             canned_msg(MSG_YOU_PARTIALLY_RESIST);
         else if (hurted > original && doEffects)
         {
-            mpr("You feel a painful chill!");
+            mpr("The ice freezes you terribly!");
             xom_is_stimulated(200);
         }
         break;
@@ -267,6 +280,7 @@ int check_your_resists(int hurted, beam_type flavour, string source,
         break;
 
     case BEAM_HOLY:
+    case BEAM_FOUL_FLAME:
     {
         hurted = resist_adjust_damage(&you, flavour, hurted);
         if (hurted < original && doEffects)
@@ -278,6 +292,47 @@ int check_your_resists(int hurted, beam_type flavour, string source,
         }
         break;
     }
+
+    case BEAM_DEVASTATION:
+        if (doEffects)
+            you.strip_willpower(beam->agent(), random_range(8, 14));
+        break;
+
+    case BEAM_UMBRAL_TORCHLIGHT:
+        if (you.holiness() & ~(MH_NATURAL | MH_DEMONIC | MH_HOLY)
+            || beam->agent(true)->is_player())
+        {
+            hurted = 0;
+        }
+        break;
+
+    case BEAM_WARPING:
+        if (doEffects
+            && x_chance_in_y(get_warp_space_chance(beam->ench_power), 100))
+        {
+            you.blink();
+        }
+        break;
+
+    case BEAM_SEISMIC:
+        if (you.airborne())
+            hurted = hurted / 3;
+        break;
+
+    case BEAM_BOLAS:
+        if (doEffects)
+        {
+            if (you.is_insubstantial() || you.is_amorphous())
+                mpr("The bolas passes through you!");
+            else if (you.unrand_equipped(UNRAND_SLICK_SLIPPERS))
+                mpr("You slip free of the bolas.");
+            else
+            {
+                you.set_duration(DUR_NO_MOMENTUM, random_range(4, 8), 0,
+                "The bolas wraps around you and binds you in place!");
+            }
+        }
+        break;
 
     default:
         break;
@@ -311,18 +366,25 @@ void expose_player_to_element(beam_type flavour, int strength, bool slow_cold_bl
     qazlal_element_adapt(flavour, strength);
 
     if (flavour == BEAM_COLD && slow_cold_blooded
-        && you.get_mutation_level(MUT_COLD_BLOODED)
+        && (you.get_mutation_level(MUT_COLD_BLOODED)
+            || you.form == transformation::serpent)
         && you.res_cold() <= 0 && coinflip())
     {
         you.slow_down(0, strength);
     }
 
-    if (flavour == BEAM_WATER && you.duration[DUR_LIQUID_FLAMES])
+    if (flavour == BEAM_WATER && you.duration[DUR_STICKY_FLAME])
     {
         mprf(MSGCH_WARN, "The flames go out!");
-        you.duration[DUR_LIQUID_FLAMES] = 0;
-        you.props.erase(STICKY_FLAMER_KEY);
-        you.props.erase(STICKY_FLAME_AUX_KEY);
+        end_sticky_flame_player();
+    }
+
+    if (you.form == transformation::aqua
+        && get_beam_resist_type(flavour) == BEAM_COLD && coinflip())
+    {
+        if (!you.duration[DUR_FROZEN])
+            mpr("Your body starts to freeze solid!");
+        you.increase_duration(DUR_FROZEN, random_range(5, 10), 50);
     }
 }
 
@@ -345,10 +407,9 @@ void lose_level()
     calc_hp();
     calc_mp();
 
-    char buf[200];
-    sprintf(buf, "HP: %d/%d MP: %d/%d",
-            you.hp, you.hp_max, you.magic_points, you.max_magic_points);
-    take_note(Note(NOTE_XP_LEVEL_CHANGE, you.experience_level, 0, buf));
+    take_note(Note(NOTE_XP_LEVEL_CHANGE, you.experience_level, 0,
+        make_stringf("HP: %d/%d MP: %d/%d",
+                you.hp, you.hp_max, you.magic_points, you.max_magic_points)));
 
     you.redraw_title = true;
     you.redraw_experience = true;
@@ -373,9 +434,11 @@ void lose_level()
  * @param announce_full     Whether to print messages even when fully resisting
  *                          the drain.
  * @param ignore_protection Whether to ignore the player's rN.
+ * @param quiet             Whether to hide all messages that would be printed
+ *                          by this.
  * @return                  Whether draining occurred.
  */
-bool drain_player(int power, bool announce_full, bool ignore_protection)
+bool drain_player(int power, bool announce_full, bool ignore_protection, bool quiet)
 {
     if (crawl_state.disables[DIS_AFFLICTIONS])
         return false;
@@ -384,7 +447,7 @@ bool drain_player(int power, bool announce_full, bool ignore_protection)
 
     if (protection == 3)
     {
-        if (announce_full)
+        if (announce_full && !quiet)
             canned_msg(MSG_YOU_RESIST);
 
         return false;
@@ -392,7 +455,8 @@ bool drain_player(int power, bool announce_full, bool ignore_protection)
 
     if (protection > 0)
     {
-        canned_msg(MSG_YOU_PARTIALLY_RESIST);
+        if (!quiet)
+            canned_msg(MSG_YOU_PARTIALLY_RESIST);
         power /= (protection * 2);
     }
 
@@ -407,7 +471,8 @@ bool drain_player(int power, bool announce_full, bool ignore_protection)
         dprf("Drained by %d max hp (%d total)", mhp, you.hp_max_adj_temp);
         calc_hp();
 
-        mpr("You feel drained.");
+        if (!quiet)
+            mpr("You feel drained.");
         xom_is_stimulated(15);
         return true;
     }
@@ -525,7 +590,7 @@ static void _maybe_spawn_rats(int dam, kill_method_type death_type)
 {
     if (dam <= 0
         || death_type == KILLED_BY_POISON
-        || !player_equip_unrand(UNRAND_RATSKIN_CLOAK))
+        || !you.unrand_equipped(UNRAND_RATSKIN_CLOAK))
     {
         return;
     }
@@ -548,10 +613,10 @@ static void _maybe_spawn_rats(int dam, kill_method_type death_type)
         return;
 
     mgen_data mg(mon, BEH_FRIENDLY, you.pos(), MHITYOU);
+    mg.set_summoned(&you, SPELL_NO_SPELL, summ_dur(3), false);
     mg.flags |= MG_FORCE_BEH; // don't mention how much it hates you before it appears
     if (monster *m = create_monster(mg))
     {
-        m->add_ench(mon_enchant(ENCH_FAKE_ABJURATION, 3));
         mprf("%s scurries out from under your cloak.", m->name(DESC_A).c_str());
         // We should return early in the case of no_love or no_allies,
         // so this is more a sanity check.
@@ -572,6 +637,65 @@ static void _maybe_summon_demonic_guardian(int dam, kill_method_type death_type)
     {
         check_demonic_guardian();
     }
+}
+
+// The time-warped blood mutation grants haste to
+// your allies when you're brought below half health.
+void _maybe_blood_hastes_allies()
+{
+    if (you.hp * 2 > you.hp_max
+        || !you.has_mutation(MUT_TIME_WARPED_BLOOD)
+        || you.duration[DUR_TIME_WARPED_BLOOD_COOLDOWN])
+    {
+        return;
+    }
+
+    vector<monster*> targetable;
+    int target_count = you.get_mutation_level(MUT_TIME_WARPED_BLOOD) * 2;
+    int affected = 0;
+    int time = random_range(20, 30);
+
+    you.duration[DUR_TIME_WARPED_BLOOD_COOLDOWN] = 1;
+
+    for (monster_near_iterator mi(you.pos(), LOS_NO_TRANS); mi; ++mi)
+    {
+        // Try to look for valid allies that aren't already hasted,
+        // and which would properly function when given haste.
+        if (mi->alive() && mons_attitude(**mi) == ATT_FRIENDLY
+            && !mi->berserk_or_frenzied() && you.can_see(**mi)
+            && !mi->has_ench(ENCH_HASTE)
+            && !mi->is_peripheral())
+        {
+            targetable.emplace_back(*mi);
+        }
+    }
+
+    if (targetable.empty())
+    {
+       mpr("Your atemporal blood churns to no real effect.");
+       return;
+    }
+
+    // Affect the highest HD allies you have.
+    shuffle_array(targetable);
+    sort(targetable.begin(), targetable.end(),
+         [](const monster* a, const monster* b)
+         {return a->get_hit_dice() > b->get_hit_dice();});
+
+    for (monster *application: targetable)
+    {
+        if (affected < target_count)
+        {
+             flash_tile(application->pos(), BLUE, 0);
+             animation_delay(15, true);
+             application->add_ench(mon_enchant(ENCH_HASTE, 0, &you,
+                                   time * BASELINE_DELAY));
+             affected++;
+        }
+    }
+
+    if (affected > 0)
+        mpr("The spilling of your atemporal blood hastes your allies!");
 }
 
 static void _maybe_spawn_monsters(int dam, kill_method_type death_type,
@@ -610,8 +734,8 @@ static void _maybe_spawn_monsters(int dam, kill_method_type death_type,
         for (int i = 0; i < how_many; ++i)
         {
             const int mindex = damager->alive() ? damager->mindex() : MHITNOT;
-            mgen_data mg(mon, BEH_FRIENDLY, you.pos(), mindex);
-            mg.set_summoned(&you, 2, 0, you.religion);
+            mgen_data mg(mon, BEH_FRIENDLY, you.pos(), mindex, MG_NONE, you.religion);
+            mg.set_summoned(&you, 0, summ_dur(2));
 
             if (create_monster(mg))
                 count_created++;
@@ -672,31 +796,8 @@ static void _powered_by_pain(int dam)
 
 static void _maybe_fog(int dam)
 {
-    const int minpiety = have_passive(passive_t::hit_smoke)
-        ? piety_breakpoint(rank_for_passive(passive_t::hit_smoke) - 1)
-        : piety_breakpoint(2); // Xom
-
     const int upper_threshold = you.hp_max / 2;
-    const int lower_threshold = upper_threshold
-                                - upper_threshold
-                                  * (you.piety - minpiety)
-                                  / (MAX_PIETY - minpiety);
-    if (have_passive(passive_t::hit_smoke)
-        && (dam > 0 && you.form == transformation::shadow
-            || dam >= lower_threshold
-               && x_chance_in_y(dam - lower_threshold,
-                                upper_threshold - lower_threshold)))
-    {
-        mpr("You emit a cloud of dark smoke.");
-        big_cloud(CLOUD_BLACK_SMOKE, &you, you.pos(), 50, 4 + random2(5));
-    }
-    else if (player_equip_unrand(UNRAND_THIEF)
-             && dam > you.hp_max / 10 && coinflip())
-    {
-        mpr("With a swish of your cloak, you release a cloud of fog.");
-        big_cloud(random_smoke_type(), &you, you.pos(), 50, 8 + random2(8));
-    }
-    else if (you_worship(GOD_XOM) && x_chance_in_y(dam, 30 * upper_threshold))
+    if (you_worship(GOD_XOM) && x_chance_in_y(dam, 30 * upper_threshold))
     {
         mprf(MSGCH_GOD, "You emit a cloud of colourful smoke!");
         big_cloud(CLOUD_XOM_TRAIL, &you, you.pos(), 50, 4 + random2(5), -1);
@@ -704,14 +805,137 @@ static void _maybe_fog(int dam)
     }
 }
 
-static void _deteriorate(int dam)
+static void _maybe_splash_water(int dam)
 {
-    if (x_chance_in_y(you.get_mutation_level(MUT_DETERIORATION), 4)
-        && dam > you.hp_max / 10)
+    if (you.form != transformation::aqua)
+        return;
+
+    const int percent = dam * 100 / you.hp_max;
+
+    if (percent < 10 && !one_chance_in(percent))
+        return;
+
+    // Assume the player can fill 25 tiles will all their hp (with some randomisation).
+    int water = div_rand_round(percent, 2);
+
+    if (water == 0)
+        return;
+
+    vector<coord_def> spots;
+    for (distance_iterator di(you.pos(), true, false, 3); di; ++di)
     {
-        mprf(MSGCH_WARN, "Your body deteriorates!");
-        lose_stat(STAT_RANDOM, 1);
+        if (you.see_cell_no_trans(*di)
+            && feat_has_dry_floor(env.grid(*di))
+            && !feat_is_critical(env.grid(*di)))
+        {
+            spots.push_back(*di);
+        }
     }
+
+    // spots is neatly ordered from player->outwards. random_spots is completely
+    // randomized. We mostly pick from spots, with a smaller chance to pick from
+    // random spots, so that the splash tends to build outward from the player,
+    // but slightly unevenly.
+    vector<coord_def> random_spots = spots;
+    shuffle_array(random_spots);
+
+    water = min(water, (int)spots.size());
+
+    if (water == 0)
+        return;
+
+    mpr("You splash onto the ground.");
+    for (int i = 0; i < water; ++i)
+    {
+        const coord_def pos = one_chance_in(3) ? random_spots[i] : spots[i];
+        temp_change_terrain(pos, DNGN_SHALLOW_WATER, random_range(80, 110),
+                            TERRAIN_CHANGE_AQUA_FORM, MID_PLAYER);
+    }
+}
+
+static void _maybe_hive_swarm()
+{
+    if (you.form != transformation::hive
+        || you.allies_forbidden()
+        || you.hp * 2 > you.hp_max
+        || you.duration[DUR_HIVE_COOLDOWN])
+    {
+        return;
+    }
+
+    mgen_data mg(MONS_KILLER_BEE, BEH_FRIENDLY, you.pos(), MHITYOU, MG_FORCE_BEH | MG_AUTOFOE);
+    mg.set_summoned(&you, MON_SUMM_HIVE, random_range(12, 18) * BASELINE_DELAY, false).set_range(1, 3);
+    mg.hd = 5;
+
+    const int num = div_rand_round(get_form()->get_effect_size(), 10);
+    bool made_mon = false;
+    for (int i = 0; i < num; ++i)
+    {
+        if (monster *swarmer = create_monster(mg))
+        {
+            made_mon = true;
+            swarmer->add_ench(ENCH_BERSERK);
+            swarmer->add_ench(ENCH_CONCENTRATE_VENOM);
+        }
+    }
+
+    if (made_mon)
+    {
+        mpr("Angry insects swarm out of your body to defend their hive!");
+        you.duration[DUR_HIVE_COOLDOWN] = 1;
+    }
+}
+
+static void _maybe_medusa_lithotoxin()
+{
+    if (you.form != transformation::medusa
+        || you.hp * 10 > you.hp_max * 6
+        || you.duration[DUR_MEDUSA_COOLDOWN])
+    {
+        return;
+    }
+
+    vector<monster*> targs;
+    for (radius_iterator ri(you.pos(), 3, C_SQUARE, LOS_NO_TRANS, true); ri; ++ri)
+        if (monster* mon = monster_at(*ri))
+            if (!mon->wont_attack() && mon->has_ench(ENCH_POISON))
+                targs.push_back(mon);
+
+    if (targs.empty())
+        return;
+
+    draw_ring_animation(you.pos(), 3, LIGHTGREY, 0U, true, 25);
+    mprf("Your pain echoes through the poison around you!");
+    for (monster* targ : targs)
+    {
+        if (x_chance_in_y(get_form()->get_effect_chance(), 100))
+            targ->petrify(&you);
+        else
+            simple_monster_message(*targ, " resists.");
+    }
+
+    you.duration[DUR_MEDUSA_COOLDOWN] = 1;
+}
+
+static void _handle_poor_constitution(int dam)
+{
+    const int level = you.get_mutation_level(MUT_POOR_CONSTITUTION);
+
+    if (level == 0)
+        return;
+
+    if (dam > you.hp_max / 15 && one_chance_in(level == 1 ? 9 : 6))
+    {
+        you.weaken(nullptr, 20);
+
+        if (level == 2 && one_chance_in(2))
+            you.slow_down(nullptr, random_range(8, 15));
+    }
+}
+
+int corrosion_chance(int sources)
+{
+    return 3 * sources;
 }
 
 /**
@@ -720,9 +944,8 @@ static void _deteriorate(int dam)
 static void _maybe_corrode()
 {
     int corrosion_sources = you.scan_artefacts(ARTP_CORRODE);
-    int degree = binomial(corrosion_sources, 3);
-    if (degree > 0)
-        you.corrode_equipment("Your corrosive artefact", degree);
+    if (x_chance_in_y(corrosion_chance(corrosion_sources), 100))
+        you.corrode(nullptr, "Your corrosive artefact");
 }
 
 /**
@@ -731,8 +954,43 @@ static void _maybe_corrode()
 static void _maybe_slow()
 {
     int slow_sources = you.scan_artefacts(ARTP_SLOW);
-    for (int degree = binomial(slow_sources, 1); degree > 0; degree--)
+    if (x_chance_in_y(slow_sources, 100))
         slow_player(10 + random2(5));
+}
+
+/**
+ * Maybe silence the player after taking damage if they're wearing *Silence.
+ **/
+static void _maybe_silence()
+{
+    int silence_sources = you.scan_artefacts(ARTP_SILENCE);
+    if (x_chance_in_y(silence_sources, 100))
+        silence_player(4 + random2(7));
+}
+/**
+ * Maybe disable scrolls after taking damage if the player has MUT_READ_SAFETY.
+ **/
+static void _maybe_disable_scrolls()
+{
+    int mut_level = you.get_mutation_level(MUT_READ_SAFETY);
+    if (mut_level && !you.duration[DUR_NO_SCROLLS] && x_chance_in_y(mut_level, 100))
+    {
+        mpr("You feel threatened and lose the ability to read scrolls!");
+        you.increase_duration(DUR_NO_SCROLLS, 10 + random2(5));
+    }
+}
+
+/**
+ * Maybe disable potions after taking damage if the player has MUT_DRINK_SAFETY.
+ **/
+static void _maybe_disable_potions()
+{
+    int mut_level = you.get_mutation_level(MUT_DRINK_SAFETY);
+    if (mut_level && !you.duration[DUR_NO_POTIONS] && x_chance_in_y(mut_level, 100))
+    {
+        mpr("You feel threatened and lose the ability to drink potions!");
+        you.increase_duration(DUR_NO_POTIONS, 10 + random2(5));
+    }
 }
 
 static void _place_player_corpse(bool explode)
@@ -768,15 +1026,25 @@ static void _wizard_restore_life()
 }
 #endif
 
+int outgoing_harm_amount(int levels)
+{
+    // +30% damage if opp has one level of harm, +45% with two
+    return 15 * (levels + 1);
+}
+
+int incoming_harm_amount(int levels)
+{
+    // +20% damage if you have one level of harm, +30% with two
+    return 10 * (levels + 1);
+}
+
 static int _apply_extra_harm(int dam, mid_t source)
 {
     monster* damager = monster_by_mid(source);
-    // Don't check for monster amulet if there source isn't a monster
     if (damager && damager->extra_harm())
-        return dam * 13 / 10; // +30% damage when the opponent has harm
-    else if (you.extra_harm())
-        return dam * 6 / 5; // +20% damage when you have harm
-
+        dam = dam * (100 + outgoing_harm_amount(damager->extra_harm())) / 100;
+    if (you.extra_harm())
+        dam = dam * (100 + incoming_harm_amount(you.extra_harm())) / 100;
     return dam;
 }
 
@@ -807,20 +1075,112 @@ int do_shave_damage(int dam)
 }
 #endif
 
-// Determine what's threatening for purposes of no drink and no scroll mutation.
-// The statuses are guaranteed not to happen if the incoming damage is less
-// than 12/5% max hp and if the remaining hp is higher than 50/80% based on the
-// mutation tier. Otherwise, they scale up with damage taken and with lower
-// health, becoming certain at 50/20% max health damage.
-static bool _is_damage_threatening (int damage_fraction_of_hp, int mut_level)
+/// Let Sigmund crow in triumph.
+static void _triumphant_mons_speech(actor *killer)
 {
-    const int hp_fraction = you.hp * 100 / you.hp_max;
-    const int safe_damage_fraction = mut_level == 1 ? 12 : 5;
-    const int scary_damage_fraction = mut_level == 1 ? 50 : 20;
-    return damage_fraction_of_hp > safe_damage_fraction
-            && hp_fraction <= 100 - scary_damage_fraction + safe_damage_fraction
-            && (damage_fraction_of_hp + random2(scary_damage_fraction) >= scary_damage_fraction
-                || random2(100) > hp_fraction);
+    if (!killer || !killer->alive())
+        return;
+
+    monster* mon = killer->as_monster();
+    if (mon && !mon->wont_attack())
+        mons_speaks(mon);  // They killed you and they meant to.
+}
+
+static void _god_death_messages(kill_method_type death_type,
+                                const actor *killer)
+{
+    const bool left_corpse = death_type != KILLED_BY_DISINT
+                             && death_type != KILLED_BY_LAVA;
+
+    const mon_holy_type holi = you.holiness();
+    const bool was_undead = bool(holi & MH_UNDEAD);
+    const bool was_nonliving = bool(holi & MH_NONLIVING);
+
+    string key = god_name(you.religion) + " death";
+
+    string key_extended = key;
+    if (left_corpse)
+        key_extended += " corpse";
+    if (was_undead)
+        key_extended += " undead";
+    if (was_nonliving)
+        key_extended += " nonliving";
+
+    // For gods with death messages in the database, first try key_extended.
+    // If that doesn't produce anything, try key.
+    //
+    // This means that the default god death message is "@God_name@ death".
+    string result = getSpeakString(key_extended);
+    if (result.empty())
+        result = getSpeakString(key);
+    if (!result.empty())
+        god_speaks(you.religion, result.c_str());
+
+    xom_death_message(death_type);
+
+    if (left_corpse)
+    {
+        if (will_have_passive(passive_t::goldify_corpses))
+            mprf(MSGCH_GOD, "Your body crumbles into a pile of gold.");
+
+        if (you.religion == GOD_NEMELEX_XOBEH)
+            nemelex_death_message();
+    }
+
+    if (killer)
+    {
+        // If you ever worshipped Beogh, and you get killed by a Beogh
+        // worshipper, Beogh will appreciate it.
+        if (you.worshipped[GOD_BEOGH] && killer->is_monster()
+            && killer->deity() == GOD_BEOGH)
+        {
+            string msg;
+            if (you.religion == GOD_BEOGH)
+            {
+                msg = " appreciates " + killer->name(DESC_ITS)
+                        + " killing of a heretic priest.";
+            }
+            else
+            {
+                msg = " appreciates " + killer->name(DESC_ITS)
+                        + " killing of an apostate.";
+            }
+            simple_god_message(msg.c_str(), false, GOD_BEOGH);
+        }
+
+        // Doesn't depend on Okawaru worship - you can still lose the duel
+        // after abandoning.
+        if (killer->props.exists(OKAWARU_DUEL_TARGET_KEY))
+        {
+            const string msg = " crowns " + killer->name(DESC_THE, true)
+                                + " victorious!";
+            simple_god_message(msg.c_str(), false, GOD_OKAWARU);
+        }
+    }
+}
+
+static void _print_endgame_messages(scorefile_entry &se)
+{
+    const kill_method_type death_type = (kill_method_type) se.get_death_type();
+    const bool non_death = death_type == KILLED_BY_QUITTING
+                        || death_type == KILLED_BY_WINNING
+                        || death_type == KILLED_BY_LEAVING;
+    if (non_death)
+        return;
+
+
+    canned_msg(MSG_YOU_DIE);
+
+    actor* killer = se.killer();
+    _triumphant_mons_speech(killer);
+    _god_death_messages(death_type, killer);
+
+    flush_prev_message();
+    viewwindow(); // don't do for leaving/winning characters
+    update_screen();
+
+    if (crawl_state.game_is_hints())
+        hints_death_screen();
 }
 
 /** Hurt the player. Isn't it fun?
@@ -831,9 +1191,12 @@ static bool _is_damage_threatening (int damage_fraction_of_hp, int mut_level)
  *  @param aux what did they do it with?
  *  @param see_source whether the attacker was visible to you
  *  @param death_source_name the attacker's name if it is already dead.
+ *  @param skip_multipliers Whether to ignore harm/vitrify/etc.
+ *  @param skip_awaken Whether this damage will skip waking a sleeping player.
  */
 void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
-          bool see_source, const char *death_source_name)
+          bool see_source, const char *death_source_name, bool skip_multipliers,
+          bool skip_awaken)
 {
     ASSERT(!crawl_state.game_is_arena());
     if (you.duration[DUR_TIME_STEP])
@@ -844,9 +1207,22 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
 
     int drain_amount = 0;
 
-    // Multiply damage if scarf of harm is in play
-    if (dam != INSTANT_DEATH)
+    // Marionettes will never hurt the player with their spells (even if they
+    // have somehow killed themselves in the process)
+    if (monster* mon_source = cached_monster_copy_by_mid(source))
+    {
+        if (mon_source->attitude == ATT_MARIONETTE)
+            dam = 0;
+    }
+
+    // Multiply damage if Harm or Vitrify is in play. (Poison is multiplied earlier.)
+    if (dam != INSTANT_DEATH && death_type != KILLED_BY_POISON && !skip_multipliers)
+    {
         dam = _apply_extra_harm(dam, source);
+
+        if (you.duration[DUR_VITRIFIED])
+            dam = dam * 150 / 100;
+    }
 
 #if TAG_MAJOR_VERSION == 34
     if (can_shave_damage() && dam != INSTANT_DEATH
@@ -858,11 +1234,8 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
 
     if (dam != INSTANT_DEATH)
     {
-        if (you.form == transformation::shadow)
-        {
-            drain_amount = (dam - (dam / 2));
-            dam /= 2;
-        }
+        if (you.form == transformation::slaughter)
+            dam = dam * 10 / 15;
         if (you.may_pruneify() && you.cannot_act())
             dam /= 2;
         if (you.petrified())
@@ -874,8 +1247,8 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
     interrupt_activity(activity_interrupt::hp_loss, &hpl);
 
     // Don't wake the player with fatal or poison damage.
-    if (dam > 0 && dam < you.hp && death_type != KILLED_BY_POISON)
-        you.check_awaken(500);
+    if (dam > 0 && dam < you.hp && death_type != KILLED_BY_POISON && !skip_awaken)
+        you.wake_up();
 
     const bool non_death = death_type == KILLED_BY_QUITTING
                         || death_type == KILLED_BY_WINNING
@@ -893,49 +1266,16 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
     {
         // death's door protects against everything but falling into
         // water/lava, Zot, excessive rot, leaving the dungeon, or quitting.
-        if (you.duration[DUR_DEATHS_DOOR])
+        // Likewise, dreamshard protects you until the start of your next turn.
+        if (you.duration[DUR_DEATHS_DOOR] || you.props.exists(DREAMSHARD_KEY))
             return;
         // the dreamshard necklace protects from any fatal blow or death source
-        // that death's door would protect from, plus a chance of activating on
-        // hits for more than 80% of a player's remaining hitpoints
-        // (but doesn't activate while in death's door)
-        else if (player_equip_unrand(UNRAND_DREAMSHARD_NECKLACE)
-                 && (dam >= you.hp
-                     || ((dam * 100) / you.hp) > 80 && coinflip()))
+        // that death's door would protect from.
+        else if (you.unrand_equipped(UNRAND_DREAMSHARD_NECKLACE)
+                 && dam >= you.hp)
         {
             dreamshard_shatter();
             return;
-        }
-    }
-
-    if (dam > 0 && death_type != KILLED_BY_POISON)
-    {
-        int damage_fraction_of_hp = dam * 100 / you.hp_max;
-
-        // Check _is_damage_threatening separately for read and drink so they
-        // don't always trigger in unison when you have both.
-        if (you.get_mutation_level(MUT_READ_SAFETY))
-        {
-            if (_is_damage_threatening(damage_fraction_of_hp,
-                                       you.get_mutation_level(MUT_READ_SAFETY)))
-            {
-                if (!you.duration[DUR_NO_SCROLLS])
-                    mpr("You feel threatened and lose the ability to read scrolls!");
-
-                you.increase_duration(DUR_NO_SCROLLS, 1 + random2(dam), 30);
-            }
-        }
-
-        if (you.get_mutation_level(MUT_DRINK_SAFETY))
-        {
-            if (_is_damage_threatening(damage_fraction_of_hp,
-                                       you.get_mutation_level(MUT_DRINK_SAFETY)))
-            {
-                if (!you.duration[DUR_NO_POTIONS])
-                    mpr("You feel threatened and lose the ability to drink potions!");
-
-                you.increase_duration(DUR_NO_POTIONS, 1 + random2(dam), 30);
-            }
         }
     }
 
@@ -952,12 +1292,12 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
             mp = min(mp, you.magic_points);
 
             dam -= mp;
-            drain_mp(mp);
+            drain_mp(mp, true);
 
             // Wake players who took fatal damage exactly equal to current HP,
-            // but had it reduced below fatal threshhold by spirit shield.
+            // but had it reduced below fatal threshold by spirit shield.
             if (dam < you.hp)
-                you.check_awaken(500);
+                you.wake_up();
 
             if (dam <= 0 && you.hp > 0)
                 return;
@@ -968,7 +1308,7 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
             simple_god_message(" protects you from harm!");
             // Ensure divine intervention wakes sleeping players. Necessary
             // because we otherwise don't wake players who take fatal damage.
-            you.check_awaken(500);
+            you.wake_up();
             return;
         }
 
@@ -1010,14 +1350,19 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
             take_note(Note(NOTE_HP_CHANGE, you.hp, you.hp_max,
                            damage_desc.c_str()));
 
-            _deteriorate(dam);
+            _handle_poor_constitution(dam);
             _maybe_ru_retribution(dam, source);
             _maybe_inflict_anguish(dam, source);
             _maybe_spawn_monsters(dam, death_type, source);
             _maybe_spawn_rats(dam, death_type);
             _maybe_summon_demonic_guardian(dam, death_type);
             _maybe_fog(dam);
+            _maybe_blood_hastes_allies();
             _powered_by_pain(dam);
+            makhleb_celebrant_bloodrite();
+            _maybe_splash_water(dam);
+            _maybe_hive_swarm();
+            _maybe_medusa_lithotoxin();
             if (sanguine_armour_valid())
                 activate_sanguine_armour();
             refresh_meek_bonus();
@@ -1025,6 +1370,9 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
             {
                 _maybe_corrode();
                 _maybe_slow();
+                _maybe_silence();
+                _maybe_disable_scrolls();
+                _maybe_disable_potions();
             }
             if (drain_amount > 0)
                 drain_player(drain_amount, true, true);
@@ -1103,6 +1451,8 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
                 take_note(Note(NOTE_DEATH, you.hp, you.hp_max,
                                 death_desc.c_str()), true);
                 _wizard_restore_life();
+                take_note(Note(NOTE_DEATH, you.hp, you.hp_max,
+                                "You cheat death using unusual wizardly powers."), true);
                 return;
             }
         }
@@ -1115,7 +1465,8 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
         if (!non_death)
             tutorial_death_message();
 
-        screen_end_game("");
+        // only quitting can lead to this?
+        screen_end_game("", game_exit::quit);
     }
 
     // Okay, so you're dead.
@@ -1129,6 +1480,8 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
         you.deaths++;
         you.lives--;
         you.pending_revival = true;
+
+        take_note(Note(NOTE_LOSE_LIFE, you.lives));
 
         stop_delay(true);
 
@@ -1148,7 +1501,7 @@ void ouch(int dam, kill_method_type death_type, mid_t source, const char *aux,
 
     // Prevent bogus notes.
     activate_notes(false);
-
+    _print_endgame_messages(se);
     end_game(se);
 }
 

@@ -104,7 +104,7 @@ void wizard_create_spec_monster_name()
     {
         // Try again with habitat HT_LAND.
         // (Will be changed to the necessary terrain type in dgn_place_monster.)
-        place = find_newmons_square(MONS_NO_MONSTER, you.pos());
+        place = find_newmons_square(MONS_NO_MONSTER, you.pos(), 2, you.current_vision);
     }
 
     if (!in_bounds(place))
@@ -122,71 +122,6 @@ void wizard_create_spec_monster_name()
     {
         mprf(MSGCH_DIAGNOSTICS, "Unable to place monster.");
         return;
-    }
-
-    // FIXME: This is a bit useless, seeing how you cannot set the
-    // ghost's stats, brand or level, among other things.
-    if (mspec.type == MONS_PLAYER_GHOST)
-    {
-        unsigned short idx = env.mgrid(place);
-
-        if (idx >= MAX_MONSTERS || env.mons[idx].type != MONS_PLAYER_GHOST)
-        {
-            for (idx = 0; idx < MAX_MONSTERS; idx++)
-            {
-                if (env.mons[idx].type == MONS_PLAYER_GHOST
-                    && env.mons[idx].alive())
-                {
-                    break;
-                }
-            }
-        }
-
-        if (idx >= MAX_MONSTERS)
-        {
-            mpr("Couldn't find player ghost, probably going to crash.");
-            more();
-            return;
-        }
-
-        monster    &mon = env.mons[idx];
-        ghost_demon ghost;
-
-        ghost.name = random_choose("John Doe", "Jane Doe", "Jay Doe");
-
-        char input_str[80];
-        msgwin_get_line("Make player ghost which species? (case-sensitive) ",
-                        input_str, sizeof(input_str));
-
-        species_type sp_id = species::from_abbrev(input_str);
-        if (sp_id == SP_UNKNOWN)
-            sp_id = species::from_str(input_str);
-        if (sp_id == SP_UNKNOWN)
-        {
-            mpr("No such species, making it Human.");
-            sp_id = SP_HUMAN;
-        }
-        ghost.species = static_cast<species_type>(sp_id);
-
-        msgwin_get_line("Give player ghost which background? ",
-                        input_str, sizeof(input_str));
-
-        int job_id = get_job_by_abbrev(input_str);
-
-        if (job_id == JOB_UNKNOWN)
-            job_id = get_job_by_name(input_str);
-
-        if (job_id == JOB_UNKNOWN)
-        {
-            mpr("No such background, making it a Fighter.");
-            job_id = JOB_FIGHTER;
-        }
-        ghost.job = static_cast<job_type>(job_id);
-        ghost.xl = 7;
-        ghost.max_hp = 20;
-        ASSERT(debug_check_ghost(ghost));
-
-        mon.set_ghost(ghost);
     }
 }
 
@@ -263,18 +198,16 @@ void debug_list_monsters()
         count++;
         prev_name = name;
 
-        int exp = exper_value(*mi);
+        int exp = exp_value(*mi);
         total_exp += exp;
         if (!mons_is_unique(mi->type))
             total_nonuniq_exp += exp;
 
         if ((mi->flags & (MF_WAS_NEUTRAL | MF_NO_REWARD))
-            || mi->has_ench(ENCH_ABJ))
+            || mi->is_summoned())
         {
             continue;
         }
-        if (mi->flags & MF_PACIFIED)
-            exp /= 2;
 
         total_adj_exp += exp;
     }
@@ -303,14 +236,26 @@ void debug_list_monsters()
     }
 }
 
-static const char* ht_names[] =
+static string _habitat_debug_name(habitat_type ht)
 {
-    "land",
-    "amphibious",
-    "water",
-    "lava",
-    "amphibious_lava",
-};
+    string result;
+    if (ht & HT_DRY_LAND)
+        result += "dry_land|";
+    if (ht & HT_SHALLOW_WATER)
+        result += "shallow_water|";
+    if (ht & HT_DEEP_WATER)
+        result += "deep_water|";
+    if (ht & HT_LAVA)
+        result += "lava|";
+    if (ht & HT_MALIGN_GATEWAY)
+        result += "malign_gateway|";
+    if (ht >= (HT_MALIGN_GATEWAY << 1))
+        result += "INVALID|";
+    if (result.empty())
+        return "none";
+    result.pop_back();
+    return result;
+}
 
 // Prints a number of useful (for debugging, that is) stats on monsters.
 void debug_stethoscope(int mon)
@@ -365,16 +310,15 @@ void debug_stethoscope(int mon)
 
     // Print stats and other info.
     mprf(MSGCH_DIAGNOSTICS,
-         "HD=%d/%d (%u) HP=%d/%d AC=%d(%d) EV=%d(%d) WL=%d XP=%d SP=%d "
+         "HD=%d/%d HP=%d/%d AC=%d(%d) EV=%d(%d) WL=%d XP=%d SP=%d "
          "energy=%d%s%s mid=%u num=%d stealth=%d flags=%04" PRIx64,
          mons.get_hit_dice(),
          mons.get_experience_level(),
-         mons.experience,
          mons.hit_points, mons.max_hit_points,
          mons.base_armour_class(), mons.armour_class(),
          mons.base_evasion(), mons.evasion(),
          mons.willpower(),
-         exper_value(mons),
+         exp_value(mons),
          mons.speed, mons.speed_increment,
          mons.base_monster != MONS_NO_MONSTER ? " base=" : "",
          mons.base_monster != MONS_NO_MONSTER ?
@@ -384,20 +328,17 @@ void debug_stethoscope(int mon)
     if (mons.damage_total)
     {
         mprf(MSGCH_DIAGNOSTICS,
-             "pdam=%1.1f/%d (%d%%)",
-             0.5 * mons.damage_friendly, mons.damage_total,
+             "pdam=%d/%d (%d%%)",
+             mons.damage_friendly, mons.damage_total,
              50 * mons.damage_friendly / mons.damage_total);
     }
 
     // Print habitat and behaviour information.
-    const habitat_type hab = mons_habitat(mons);
-
-    COMPILE_CHECK(ARRAYSZ(ht_names) == NUM_HABITATS);
     const actor * const summoner = actor_by_mid(mons.summoner);
     mprf(MSGCH_DIAGNOSTICS,
          "hab=%s beh=%s(%d) foe=%s(%d) mem=%d target=(%d,%d) "
          "firing_pos=(%d,%d) patrol_point=(%d,%d) god=%s%s",
-         (hab >= 0 && hab < NUM_HABITATS) ? ht_names[hab] : "INVALID",
+         _habitat_debug_name(mons_habitat(mons)).c_str(),
          mons.asleep()                    ? "sleep"
          : mons.behaviour == BEH_BATTY   ? "flitting"
          : mons_is_wandering(mons)       ? "wander"
@@ -431,7 +372,7 @@ void debug_stethoscope(int mon)
          mons.res_elec(),
          mons.res_poison(),
          mons.res_negative_energy(),
-         mons.res_acid(),
+         mons.res_corr(),
          mons.res_sticky_flame() ? "yes" : "no",
          mons.res_miasma() ? "yes" : "no");
 
@@ -465,7 +406,7 @@ void debug_stethoscope(int mon)
                 continue;
 
             // this is arguably redundant with mons_list::parse_mons_spells
-            // specificially the bit that turns names into flags
+            // specifically the bit that turns names into flags
             static const map<mon_spell_slot_flag, string> flagnames = {
                 { MON_SPELL_EMERGENCY,  "E" },
                 { MON_SPELL_NATURAL,    "N" },
@@ -578,7 +519,7 @@ void debug_make_monster_shout(monster* mon)
 
     if (type == 's')
         for (int i = 0; i < num_times; ++i)
-            monster_shout(mon, mons_shouts(mon->type, false));
+            monster_shout(*mon, mons_shouts(mon->type, false));
     else
     {
         if (mon->invisible())
@@ -604,36 +545,19 @@ void debug_make_monster_shout(monster* mon)
     mpr("== Done ==");
 }
 
-void wizard_gain_monster_level(monster* mon)
-{
-    // Give monster as much experience as it can hold,
-    // but cap the levels gained to just 1.
-    bool worked = mon->gain_exp(INT_MAX - mon->experience, 1);
-    if (!worked)
-        simple_monster_message(*mon, " seems unable to mature further.", MSGCH_WARN);
-
-    // (The gain_exp() method will chop the monster's experience down
-    // to half-way between its new level and the next, so we needn't
-    // worry about it being left with too much experience.)
-}
-
 void wizard_apply_monster_blessing(monster* mon)
 {
-    mprf(MSGCH_PROMPT, "Apply blessing of (B)eogh, The (S)hining One, or (R)andomly? ");
+    mprf(MSGCH_PROMPT, "Apply blessing of the (S)hining One? ");
 
     char type = (char) getchm(KMC_DEFAULT);
     type = toalower(type);
 
-    if (type != 'b' && type != 's' && type != 'r')
+    if (type != 's')
     {
         canned_msg(MSG_OK);
         return;
     }
-    god_type god = GOD_NO_GOD;
-    if (type == 'b' || type == 'r' && coinflip())
-        god = GOD_BEOGH;
-    else
-        god = GOD_SHINING_ONE;
+    god_type god = GOD_SHINING_ONE;
 
     if (!bless_follower(mon, god, true))
         mprf("%s won't bless this monster for you!", god_name(god).c_str());
@@ -733,6 +657,12 @@ void wizard_move_player_or_monster(const coord_def& where)
     crawl_state.cancel_cmd_again();
     crawl_state.cancel_cmd_repeat();
 
+    if (!in_bounds(where))
+    {
+        mpr("Cannot move out of bounds.");
+        return;
+    }
+
     static bool already_moving = false;
 
     if (already_moving)
@@ -763,8 +693,7 @@ void wizard_move_player_or_monster(const coord_def& where)
 
 void wizard_make_monster_summoned(monster* mon)
 {
-    int summon_type = 0;
-    if (mon->is_summoned(nullptr, &summon_type) || summon_type != 0)
+    if (mon->is_summoned())
     {
         mprf(MSGCH_PROMPT, "Monster is already summoned.");
         return;
@@ -778,61 +707,42 @@ void wizard_make_monster_summoned(monster* mon)
         return;
     }
 
-    mprf(MSGCH_PROMPT, "[a] clone [b] animated [c] chaos [d] miscast [e] zot");
-    mprf(MSGCH_PROMPT, "[f] wrath [h] aid   [m] misc    [s] spell");
-
-    mprf(MSGCH_PROMPT, "Which summon type? ");
-
-    char choice = toalower(getchm());
-
-    if (!(choice >= 'a' && choice <= 'h') && choice != 'm' && choice != 's')
+    vector<WizardEntry> choices =
     {
-        canned_msg(MSG_OK);
+        {'a', "clone", MON_SUMM_CLONE}, {'b', "animated", MON_SUMM_ANIMATE},
+        {'c', "chaos", MON_SUMM_CHAOS}, {'d', "miscast", MON_SUMM_MISCAST},
+        {'e', "zot", MON_SUMM_ZOT}, {'f', "wrath", MON_SUMM_WRATH},
+        {'h', "aid", MON_SUMM_AID}, {'m', "misc", 0},
+        {'s', "spell", 's'},
+    };
+
+    auto menu = WizardMenu("Which summon type (ESC to exit)?", choices);
+    if (!menu.run(true))
         return;
-    }
 
-    int type = 0;
-
-    switch (choice)
+    int type = menu.result();
+    if ('s' == type)
     {
-        case 'a': type = MON_SUMM_CLONE; break;
-        case 'b': type = MON_SUMM_ANIMATE; break;
-        case 'c': type = MON_SUMM_CHAOS; break;
-        case 'd': type = MON_SUMM_MISCAST; break;
-        case 'e': type = MON_SUMM_ZOT; break;
-        case 'f': type = MON_SUMM_WRATH; break;
-        case 'h': type = MON_SUMM_AID; break;
-        case 'm': type = 0; break;
+        char specs[80];
 
-        case 's':
+        msgwin_get_line("Cast which spell by name? ",
+                        specs, sizeof(specs));
+
+        if (specs[0] == '\0')
         {
-            char specs[80];
-
-            msgwin_get_line("Cast which spell by name? ",
-                            specs, sizeof(specs));
-
-            if (specs[0] == '\0')
-            {
-                canned_msg(MSG_OK);
-                return;
-            }
-
-            spell_type spell = spell_by_name(specs, true);
-            if (spell == SPELL_NO_SPELL)
-            {
-                mprf(MSGCH_PROMPT, "No such spell.");
-                return;
-            }
-            type = (int) spell;
-            break;
+            canned_msg(MSG_OK);
+            return;
         }
 
-        default:
-            die("Invalid summon type choice.");
-            break;
+        spell_type spell = spell_by_name(specs, true);
+        if (spell == SPELL_NO_SPELL)
+        {
+            mprf(MSGCH_PROMPT, "No such spell.");
+            return;
+        }
+        type = (int) spell;
     }
-
-    mon->mark_summoned(dur, true, type);
+    mon->mark_summoned(type, dur);
     mpr("Monster is now summoned.");
 }
 
@@ -1072,7 +982,7 @@ void debug_miscast(int target_index)
     }
 
     // Handle repeats ourselves since miscasts are likely to interrupt
-    // command repetions, especially if the player is the target.
+    // command repetitions, especially if the player is the target.
     int repeats = prompt_for_int("Number of repetitions? ", true);
     if (repeats < 1)
     {

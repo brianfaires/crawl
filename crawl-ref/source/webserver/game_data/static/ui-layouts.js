@@ -1,6 +1,7 @@
 define(["jquery", "comm", "client", "./ui", "./enums", "./cell_renderer",
-    "./util", "./scroller", "./tileinfo-main", "./tileinfo-gui", "./tileinfo-player"],
-function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
+    "./util", "./scroller", "./tileinfo-main", "./tileinfo-gui",
+    "./tileinfo-player", "./options"],
+function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player, options) {
     "use strict";
 
     var describe_scale = 2.0;
@@ -8,19 +9,12 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
     function fmt_body_txt(txt)
     {
         return txt
-            // preserve all leading spaces
-            .split("\n")
-            .map(function (s) { return s.replace(/^\s+/, function (m)
-                    {
-                        // TODO: or mark as preformatted? something else?
-                        return m.replace(/\s/g, "&nbsp;");
-                    }).trim();
-                })
-            .join("\n")
             // convert double linebreaks into paragraph markers
             .split("\n\n")
-            .map(function (s) { return "<p>" + s + "</p>"; })
-            .filter(function (s) { return s !== "<p></p>"; })
+            .map(function (s) {
+                return "<pre>" + util.formatted_string_to_html(s) + "</pre>";
+            })
+            .filter(function (s) { return s !== "<pre></pre>"; })
             .join("")
             // replace single linebreaks with manual linebreaks
             .split("\n")
@@ -67,8 +61,8 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
                 renderer.draw_from_texture(spell.tile, 0, 0, enums.texture.GUI, 0, 0, 0, false);
                 $item.append($canvas);
 
-                var label = " " + letter + " - "+spell.title;
-                $item.append("<span>" + label + "</span>");
+                var label = " " + letter + " - " + spell.title;
+                $item.append("<span>" + util.formatted_string_to_html(label) + "</span>");
 
                 if (spell.effect !== undefined)
                     $item.append("<span>" + util.formatted_string_to_html(spell.effect) + " </span>");
@@ -274,7 +268,7 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
         if (parts == null || parts.length != 4)
             return fmt_body_txt(desc);
         parts[2] = parts[2].replace(/ /g, '&nbsp;');
-        return fmt_body_txt(parts[1]+parts[2]+parts[3])
+        return fmt_body_txt(parts[1]) + parts[2] + fmt_body_txt(parts[3]);
     }
 
     function describe_spell(desc)
@@ -328,59 +322,6 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
         return $popup;
     }
 
-    function mutations(desc)
-    {
-        var $popup = $(".templates > .mutations").clone();
-        var $body = $popup.find(".body");
-        var $footer = $popup.find(".footer");
-        var $muts = $body.children().first(), $vamp = $body.children().last();
-        $muts.html(fmt_body_txt(util.formatted_string_to_html(desc.mutations)));
-        var s = scroller($muts[0]);
-        $popup.on("keydown keypress", function (event) {
-            scroller_handle_key(s, event);
-        });
-        paneset_cycle($body);
-
-        if (desc.vampire_alive !== undefined)
-        {
-            var css = ".vamp-attrs th:nth-child(%d) { background: #111; }";
-            css += " .vamp-attrs td:nth-child(%d) { color: white; background: #111; }";
-            css = css.replace(/%d/g, desc.vampire_alive ? 2 : 3);
-            $vamp.children("style").html(css);
-            var vs = scroller($vamp[0]);
-            $popup.on("keydown keypress", function (event) {
-                scroller_handle_key(vs, event);
-            });
-            paneset_cycle($footer);
-        }
-        else
-        {
-            $vamp.remove();
-            $footer.remove();
-        }
-
-        $popup.on("keydown", function (event) {
-            if (event.key === "!" || event.key === "^")
-            {
-                paneset_cycle($body);
-                paneset_cycle($footer);
-            }
-        });
-        return $popup;
-    }
-
-    function mutations_update(msg)
-    {
-        var $popup = ui.top_popup();
-        if (!$popup.hasClass("mutations"))
-            return;
-        if (msg.pane !== undefined && client.is_watching())
-        {
-            paneset_cycle($popup.children(".body"), msg.pane);
-            paneset_cycle($popup.children(".footer"), msg.pane);
-        }
-    }
-
     function describe_god(desc)
     {
         var use_extra_pane = (desc.extra.length > 0);
@@ -418,7 +359,7 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
                     .addClass("fg"+desc.colour).html(desc.favour);
         var powers_list = desc.powers_list.split("\n").slice(3, -1);
         var $powers = $panes.eq(0).find(".god-powers");
-        var re = /^(<[a-z]*>)?(.*\.) *( \(.*\))?$/;
+        var re = /^(<[a-z]*>)?(.*\.) *(\(.*\))?$/;
         for (var i = 0; i < powers_list.length; i++)
         {
             var matches = powers_list[i].match(re);
@@ -429,7 +370,7 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
                 +power+"</div><div>"+cost+"</div></div>");
         }
 
-        desc.powers = fmt_body_txt(util.formatted_string_to_html(desc.powers));
+        desc.powers = fmt_body_txt(desc.powers);
         if (desc.info_table.length !== "")
         {
             desc.powers += "<div class=tbl>"
@@ -439,7 +380,7 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
         $panes.eq(1).html(desc.powers);
 
         $panes.eq(2).html(
-                    fmt_body_txt(util.formatted_string_to_html(desc.wrath)));
+                    fmt_body_txt(desc.wrath));
         if (use_extra_pane)
         {
             $panes.eq(3).html("<div class=tbl>"
@@ -487,6 +428,16 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
         }
         if (msg.prompt !== undefined)
             $popup.children(".footer").html(msg.prompt).addClass("fg3");
+    }
+
+    function describe_item_spell_success(desc)
+    {
+        var $popup = ui.top_popup();
+        if (desc.body !== undefined)
+        {
+            var $body = $popup.find(".simplebar-content");
+            $body.html(fmt_body_txt(desc.body));
+        }
     }
 
     function describe_monster(desc)
@@ -764,7 +715,6 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
     {
         var $popup = $(".templates > .formatted-scroller").clone();
         var $body = $popup.children(".body");
-        var $more = $popup.children(".more");
         var body_html = util.formatted_string_to_html(desc.text);
         if (desc.highlight !== "")
         {
@@ -776,7 +726,20 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
         }
         $popup.attr("data-tag", desc.tag);
         $body.html(body_html);
-        $more.html(util.formatted_string_to_html(desc.more));
+        if (desc.more)
+            $popup.children(".more").html(util.formatted_string_to_html(desc.more));
+        else
+            $popup.children(".more").remove();
+
+        // XX why do some layouts use a span inside of a div, some just use
+        // the div? (Answer remains unclear to me, but something about
+        // preformatting + nested spans did mess this up when I tried to use
+        // a template span here)
+        if (desc.title)
+            $popup.children(".header").html(util.formatted_string_to_html(desc.title));
+        else
+            $popup.children(".header").remove();
+
         var s = scroller($body[0]);
         var scroll_elem = s.scrollElement;
         scroll_elem.addEventListener("scroll", scroller_onscroll);
@@ -784,6 +747,13 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
             if (event.which !== 36 || desc.tag !== "help")
                 scroller_handle_key(s, event);
         });
+        if (desc.easy_exit && options.get("tile_web_mouse_control"))
+        {
+            $popup.on("click", function () {
+                // XX a bit ad hoc
+                comm.send_message("key", { keycode: 27 });
+            });
+        }
         return $popup;
     }
 
@@ -944,7 +914,7 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
     {
         var $popup = $(".templates > .game-over").clone();
         $popup.find(".header > span").html(desc.title);
-        $popup.children(".body").html(fmt_body_txt(util.formatted_string_to_html(desc.body)));
+        $popup.children(".body").html(fmt_body_txt(desc.body));
         var s = scroller($popup.children(".body")[0]);
         $popup.on("keydown keypress", function (event) {
             scroller_handle_key(s, event);
@@ -988,7 +958,6 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
         "describe-item" : describe_item,
         "describe-spell" : describe_spell,
         "describe-cards" : describe_cards,
-        "mutations" : mutations,
         "describe-god" : describe_god,
         "describe-monster" : describe_monster,
         "version" : version,
@@ -1018,6 +987,7 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
         }
         catch (err)
         {
+            console.log(err);
             popup = $("<div>Buggy UI of type " + msg.type + "</div>");
         }
         ui.show_popup(popup, msg["ui-centred"], msg.generation_id);
@@ -1028,23 +998,30 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
         ui.hide_popup();
     }
 
+    var ui_stack_handled = false;
+
     function recv_ui_stack(msg)
     {
         if (!client.is_watching())
             return;
+        // only process once on load
+        if (ui_stack_handled)
+            return;
+
         for (var i = 0; i < msg.items.length; i++)
             comm.handle_message(msg.items[i]);
+        ui_stack_handled = true;
     }
 
     function recv_ui_state(msg)
     {
         var ui_handlers = {
-            "mutations" : mutations_update,
             "describe-god" : describe_god_update,
             "describe-monster" : describe_monster_update,
             "formatted-scroller" : formatted_scroller_update,
             "progress-bar" : progress_bar_update,
             "newgame-choice" : newgame_choice_update,
+            "describe-spell-success" : describe_item_spell_success,
         };
         var handler = ui_handlers[msg.type];
         if (handler)
@@ -1070,6 +1047,7 @@ function ($, comm, client, ui, enums, cr, util, scroller, main, gui, player) {
 
     function ui_layouts_cleanup()
     {
+        ui_stack_handled = false;
         if (update_server_scroll_timeout)
         {
             clearTimeout(update_server_scroll_timeout);

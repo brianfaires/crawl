@@ -27,19 +27,24 @@
 #include "melee-attack.h"
 #include "message.h"
 #include "mon-behv.h"
+#include "mon-clone.h"
 #include "mon-death.h"
 #include "mon-place.h"
 #include "nearby-danger.h" // Compass (for random_walk, CloudGenerator)
 #include "player-stats.h"
 #include "religion.h"
 #include "shout.h"
+#include "spl-clouds.h" // explode_blastmotes_at
+#include "spl-damage.h" // dazzle_target
 #include "spl-util.h"
 #include "state.h"
 #include "stringutil.h"
 #include "tag-version.h"
 #include "terrain.h"
 #include "rltiles/tiledef-main.h"
+#include "traps.h"
 #include "unwind.h"
+#include "xom.h"
 
 cloud_struct* cloud_at(coord_def pos)
 {
@@ -177,7 +182,7 @@ static const cloud_data clouds[] = {
     // CLOUD_PETRIFY,
     { "calcifying dust",  nullptr,              // terse, verbose name
       WHITE,                                    // colour
-      { TILE_CLOUD_PETRIFY, CTVARY_RANDOM },    // tile
+      { TILE_CLOUD_PETRIFY, CTVARY_DUR },       // tile
       BEAM_PETRIFYING_CLOUD, {},                // beam_effect & damage
       true,                                     // opacity
     },
@@ -254,14 +259,12 @@ static const cloud_data clouds[] = {
       ETC_DARK,                                 // colour
       { TILE_CLOUD_STORM, CTVARY_RANDOM },      // tile
       BEAM_ELECTRICITY,                         // beam_effect
-      {12, 12},
+      { 23, 27 },
     },
-    // CLOUD_NEGATIVE_ENERGY,
-    { "negative energy", nullptr,               // terse, verbose name
+    // CLOUD_MISERY,
+    { "excruciating misery", nullptr,           // terse, verbose name
       ETC_INCARNADINE,                          // colour
-      { TILE_CLOUD_NEG, CTVARY_DUR },           // tile
-      BEAM_NEG,                                 // beam_effect
-      NORMAL_CLOUD_DAM,                         // base, random damage
+      { TILE_CLOUD_MISERY, CTVARY_DUR },           // tile
     },
     // CLOUD_FLUFFY,
     { "white fluffiness",  nullptr,             // terse, verbose name
@@ -302,18 +305,48 @@ static const cloud_data clouds[] = {
       ETC_FIRE,                                   // colour
       { TILE_CLOUD_FLAME, CTVARY_RANDOM },        // tile
     },
-    // CLOUD_DEGENERATION,
-    { "degeneration",  nullptr,                   // terse, verbose name
+    // CLOUD_ALCOHOL,
+    { "alcoholic mist",  nullptr,                 // terse, verbose name
       ETC_DARK,                                   // colour
       { TILE_CLOUD_DEGENERATION, CTVARY_NONE },   // tile
       BEAM_NONE, {},                              // beam & damage
       false,                                      // opacity
     },
-    // CLOUD_BLASTSPARKS,
-    { "blastsparks", "volatile sparks",           // terse, verbose name
+    // CLOUD_BLASTMOTES,
+    { "blastmotes", "volatile sparks",           // terse, verbose name
         ETC_SMOKE,                                // colour
-      { TILE_CLOUD_BLASTSPARKS, CTVARY_RANDOM },  // tile
+      { TILE_CLOUD_BLASTMOTES, CTVARY_RANDOM },  // tile
     },
+    // CLOUD_ELECTRICITY,
+    { "sparks", nullptr,         // terse, verbose name
+      ETC_ELECTRICITY,                                   // colour
+      { TILE_CLOUD_ELECTRICITY, CTVARY_RANDOM },        // tile
+    },
+    // CLOUD_FAINT_MIASMA,
+    { "faint pestilence", nullptr,                // terse, verbose name
+      DARKGREY,                                      // colour
+      { TILE_CLOUD_FAINT_MIASMA, CTVARY_RANDOM },    // tile
+    },
+    // CLOUD_MAGNETISED_DUST,
+    { "magnetised fragments", nullptr,                  // terse, verbose name
+      ETC_ELECTRICITY,                                 // colour
+      { TILE_CLOUD_MAGNETISED_DUST, CTVARY_RANDOM },   // tile
+    },
+    // CLOUD_BATS,
+    { "bats", nullptr,                                 // terse, verbose name
+      ETC_DARK,                                        // colour
+      { TILE_CLOUD_BATS, CTVARY_DUR },                 // tile
+      BEAM_BAT_CLOUD,
+      { 4, 11, true },
+    },
+    // CLOUD_RUST,
+    { "rust", nullptr,                            // terse, verbose name
+        BROWN,                                    // colour
+        { TILE_CLOUD_RUST, CTVARY_DUR },          // tile
+        BEAM_ACID,                                // beam_effect
+        { 2, 3, false },                          // base, random damage
+      },
+
 };
 COMPILE_CHECK(ARRAYSZ(clouds) == NUM_CLOUD_TYPES);
 
@@ -366,8 +399,8 @@ static bool _killer_whose_match(kill_category whose, killer_type killer)
                    || killer == KILL_MON;
 
         case KC_OTHER:
-            return killer == KILL_MON_MISSILE || killer == KILL_MISCAST
-                   || killer == KILL_MISC || killer == KILL_MON;
+            return killer == KILL_MON_MISSILE
+                   || killer == KILL_NON_ACTOR || killer == KILL_MON;
 
         case KC_NCATEGORIES:
             die("kill category not matching killer type");
@@ -420,7 +453,7 @@ static int _spread_cloud(const cloud_struct &cloud)
             continue;
         }
 
-        if (cloud.type == CLOUD_INK && !feat_is_watery(env.grid(*ai)))
+        if (cloud.type == CLOUD_INK && !feat_is_water(env.grid(*ai)))
             continue;
 
         int newdecay = cloud.decay / 2 + 1;
@@ -477,10 +510,6 @@ static void _spread_fire(const cloud_struct &cloud)
         env.cloud[*ai] = cloud;
         env.cloud[*ai].pos = *ai;
         env.cloud[*ai].decay = random2(30) + 25;
-        if (cloud.whose == KC_YOU)
-            did_god_conduct(DID_KILL_PLANT, 1);
-        else if (cloud.whose == KC_FRIENDLY && !crawl_state.game_is_arena())
-            did_god_conduct(DID_KILL_PLANT, 1);
 
     }
 }
@@ -494,7 +523,7 @@ static void _cloud_interacts_with_terrain(const cloud_struct &cloud)
     {
         const coord_def p(*ai);
         if (in_bounds(p)
-            && feat_is_watery(env.grid(p))
+            && feat_is_water(env.grid(p))
             && !cell_is_solid(p)
             && !cloud_at(p)
             && one_chance_in(14))
@@ -529,7 +558,7 @@ static int _cloud_dissipation_rate(const cloud_struct &cloud)
     }
 
     // Ink cloud shouldn't appear outside of water.
-    if (cloud.type == CLOUD_INK && !feat_is_watery(env.grid(cloud.pos)))
+    if (cloud.type == CLOUD_INK && !feat_is_water(env.grid(cloud.pos)))
         return cloud.decay;
 
     return dissipate;
@@ -548,8 +577,25 @@ static void _dissipate_cloud(cloud_struct& cloud)
         cloud.decay       -= _spread_cloud(cloud);
     }
 
+    // Faint miasma becomes proper miasma after the first tick (regardless of
+    // duration), but will not spawn beneath the player.
+    // XXX: This is currently very player-centric, but the player is also the
+    //      only possible source of this at present.
+    if (cloud.type == CLOUD_FAINT_MIASMA)
+    {
+        if (cloud.decay > 1)
+            cloud.decay = 1;
+        else if (cloud.pos != you.pos())
+        {
+            cloud.decay = random_range(50, 90);
+            cloud.type = CLOUD_MIASMA;
+        }
+        else
+            delete_cloud(cloud.pos);
+    }
+
     // Check for total dissipation and handle accordingly.
-    if (cloud.decay < 1)
+    if (cloud.decay < 1 && cloud.type != CLOUD_FAINT_MIASMA)
         delete_cloud(cloud.pos);
 }
 
@@ -586,8 +632,8 @@ static void _handle_spectral_cloud(const cloud_struct& cloud)
                              (agent ? agent->foe : short{MHITYOU}),
                              MG_FORCE_PLACE)
                     .set_base(basetype)
-                    .set_summoned(actor_by_mid(cloud.source), 1,
-                                  SPELL_SPECTRAL_CLOUD));
+                    .set_summoned(actor_by_mid(cloud.source),
+                                  SPELL_SPECTRAL_CLOUD, summ_dur(1)));
 }
 
 void manage_clouds()
@@ -625,28 +671,15 @@ static void _maybe_leave_water(const coord_def pos)
 {
     ASSERT_IN_BOUNDS(pos);
 
-    // Rain clouds can occasionally leave shallow water or deepen it.
-    if (!one_chance_in(5))
+    // Rain clouds can occasionally leave shallow water.
+    if (env.grid(pos) != DNGN_FLOOR || !one_chance_in(5))
         return;
 
-    dungeon_feature_type feat = env.grid(pos);
-
-    if (env.grid(pos) == DNGN_FLOOR)
-        feat = DNGN_SHALLOW_WATER;
-    else if (env.grid(pos) == DNGN_SHALLOW_WATER && you.pos() != pos
-             && one_chance_in(3) && !crawl_state.game_is_sprint())
-    {
-        // Don't drown the player!
-        feat = DNGN_DEEP_WATER;
-    }
-
-    if (env.grid(pos) != feat)
-    {
-        if (you.pos() == pos && you.ground_level())
-            mpr("The rain has left you waist-deep in water!");
-        temp_change_terrain(pos, feat, random_range(500, 1000),
-                            TERRAIN_CHANGE_FLOOD);
-    }
+    if (you.pos() == pos && you.ground_level())
+        mpr("The rain has left you waist-deep in water!");
+    temp_change_terrain(pos, DNGN_SHALLOW_WATER,
+                        random_range(500, 1000),
+                        TERRAIN_CHANGE_FLOOD);
 }
 
 void delete_cloud(coord_def p)
@@ -724,10 +757,9 @@ void check_place_cloud(cloud_type cl_type, const coord_def& p, int lifetime,
     place_cloud(cl_type, p, lifetime, agent, spread_rate, excl_rad);
 }
 
-static bool _cloud_is_stronger(cloud_type ct, const cloud_struct& cloud)
+bool cloud_is_stronger(cloud_type ct, const cloud_struct& cloud)
 {
-    return (is_harmless_cloud(cloud.type) &&
-                (!is_opaque_cloud(cloud.type) || is_opaque_cloud(ct)))
+    return (is_harmless_cloud(cloud.type) && !is_opaque_cloud(cloud.type))
            || cloud.type == CLOUD_STEAM
            || ct == CLOUD_VORTEX; // soon gone
 }
@@ -754,7 +786,7 @@ void place_cloud(cloud_type cl_type, const coord_def& ctarget, int cl_range,
     if (is_sanctuary(ctarget) && !is_harmless_cloud(cl_type))
         return;
 
-    if (cl_type == CLOUD_INK && !feat_is_watery(env.grid(ctarget)))
+    if (cl_type == CLOUD_INK && !feat_is_water(env.grid(ctarget)))
         return;
 
     if (env.level_state & LSTATE_STILL_WINDS
@@ -766,20 +798,11 @@ void place_cloud(cloud_type cl_type, const coord_def& ctarget, int cl_range,
 
     const monster * const mons = monster_at(ctarget);
 
-    // Fedhas protects plants from damaging clouds.
-    // XX demonic guardians? This logic mostly doesn't apply because protected
-    // monsters are also cloud immune, mostly
-    if (god_protects(agent, mons)
-        && !actor_cloud_immune(*mons, cl_type))
-    {
-        return;
-    }
-
     ASSERT(!cell_is_solid(ctarget));
 
     god_conduct_trigger conducts[3];
     kill_category whose = KC_OTHER;
-    killer_type killer  = KILL_MISC;
+    killer_type killer  = KILL_NON_ACTOR;
     mid_t source        = MID_NOBODY;
     if (agent && agent->is_player())
     {
@@ -805,9 +828,14 @@ void place_cloud(cloud_type cl_type, const coord_def& ctarget, int cl_range,
     }
 
     // There's already a cloud here. See if we can overwrite it.
+    // (Clouds can overwrite weaker cloud types OR clouds of the same type with
+    // less remaining duration)
     const cloud_struct *cloud = cloud_at(ctarget);
-    if (cloud && !_cloud_is_stronger(cl_type, *cloud))
+    if (cloud && (!cloud_is_stronger(cl_type, *cloud)
+                  && (cloud->type != cl_type || cloud->decay > cl_range * 10)))
+    {
         return;
+    }
 
     // If the old cloud was opaque, may need to recalculate los. It *is*
     // possible to overwrite an opaque cloud with a non-opaque one; OOD will do
@@ -850,12 +878,14 @@ static bool _cloud_has_negative_side_effects(cloud_type cloud)
     case CLOUD_MEPHITIC:
     case CLOUD_MIASMA:
     case CLOUD_MUTAGENIC:
-    case CLOUD_DEGENERATION:
+    case CLOUD_ALCOHOL:
     case CLOUD_CHAOS:
     case CLOUD_PETRIFY:
     case CLOUD_ACID:
-    case CLOUD_NEGATIVE_ENERGY:
-    case CLOUD_BLASTSPARKS:
+    case CLOUD_MISERY:
+    case CLOUD_BLASTMOTES:
+    case CLOUD_BATS:
+    case CLOUD_RUST:
         return true;
     default:
         return false;
@@ -908,6 +938,13 @@ static int _cloud_base_damage(const actor *act,
  */
 bool actor_cloud_immune(const actor &act, cloud_type type)
 {
+    // Cloud immunity doesn't prevent Blastmote explosions.
+    if (type == CLOUD_BLASTMOTES
+        && (act.is_player() || act.res_fire() < 3))
+    {
+        return false;
+    }
+
     // Qazlalites and scarfwearers get immunity to clouds.
     // and the Cloud Mage too!
     if (is_harmless_cloud(type) || act.cloud_immune())
@@ -919,24 +956,24 @@ bool actor_cloud_immune(const actor &act, cloud_type type)
         case CLOUD_FOREST_FIRE:
             if (!act.is_player())
                 return act.res_fire() >= 3;
-            return player_equip_unrand(UNRAND_SALAMANDER)
+            return you.unrand_equipped(UNRAND_SALAMANDER)
 #if TAG_MAJOR_VERSION == 34
                    || you.has_mutation(MUT_FLAME_CLOUD_IMMUNITY)
 #endif
-                   || player_equip_unrand(UNRAND_FIRESTARTER)
+                   || you.unrand_equipped(UNRAND_FIRESTARTER)
                    || you.has_mutation(MUT_IGNITE_BLOOD);
         case CLOUD_HOLY:
             return act.res_holy_energy() >= 3;
         case CLOUD_COLD:
             if (!act.is_player())
                 return act.res_cold() >= 3;
-            return player_equip_unrand(UNRAND_FROSTBITE)
+            return you.unrand_equipped(UNRAND_FROSTBITE)
 #if TAG_MAJOR_VERSION == 34
                    || you.has_mutation(MUT_FREEZING_CLOUD_IMMUNITY)
 #endif
                    ;
         case CLOUD_MEPHITIC:
-            return act.res_poison() > 0;
+            return act.res_poison() > 0 || act.clarity();
         case CLOUD_POISON:
             return act.res_poison() > 0;
         case CLOUD_STEAM:
@@ -950,15 +987,19 @@ bool actor_cloud_immune(const actor &act, cloud_type type)
                    || act.is_player()
                       && have_passive(passive_t::r_spectral_mist);
         case CLOUD_ACID:
-            return act.res_acid() > 0;
+            return act.res_corr() > 0;
         case CLOUD_STORM:
             return act.res_elec() >= 3;
-        case CLOUD_NEGATIVE_ENERGY:
+        case CLOUD_MISERY:
             return act.res_negative_energy() >= 3;
         case CLOUD_VORTEX:
             return act.res_polar_vortex();
         case CLOUD_RAIN:
             return !act.is_fiery();
+        case CLOUD_BATS:
+            return bool(act.holiness() & MH_UNDEAD);
+        case CLOUD_RUST:
+            return act.is_player() && you.form == transformation::fortress_crab;
         default:
             return false;
     }
@@ -977,9 +1018,7 @@ bool actor_cloud_immune(const actor &act, const cloud_struct &cloud)
 
     const bool player = act.is_player();
 
-    if (!player
-        && (god_protects(act.as_monster())
-            || testbits(act.as_monster()->flags, MF_DEMONIC_GUARDIAN))
+    if (!player && never_harm_monster(&you, act.as_monster())
         && (cloud.whose == KC_YOU || cloud.whose == KC_FRIENDLY)
         && (act.as_monster()->friendly() || act.as_monster()->neutral())
         && (cloud.whose == KC_YOU || cloud.whose == KC_FRIENDLY))
@@ -987,10 +1026,8 @@ bool actor_cloud_immune(const actor &act, const cloud_struct &cloud)
         return true;
     }
 
-    int summon_type = 0;
-    act.is_summoned(nullptr, &summon_type);
     if (!player && have_passive(passive_t::cloud_immunity)
-        && (act.as_monster()->friendly() && summon_type == MON_SUMM_AID))
+        && act.was_created_by(MON_SUMM_AID))
     {
         return true;
     }
@@ -1019,10 +1056,10 @@ static int _actor_cloud_resist(const actor *act, const cloud_struct &cloud)
     case CLOUD_PETRIFY:
         return act->res_petrify();
     case CLOUD_ACID:
-        return act->res_acid();
+        return act->res_corr();
     case CLOUD_STORM:
         return act->res_elec();
-    case CLOUD_NEGATIVE_ENERGY:
+    case CLOUD_MISERY:
         return act->res_negative_energy();
 
     default:
@@ -1052,20 +1089,7 @@ static bool _actor_apply_cloud_side_effects(actor *act,
     case CLOUD_STEAM:
         if (player)
             maybe_melt_player_enchantments(BEAM_FIRE, final_damage);
-    case CLOUD_RAIN:
-    case CLOUD_STORM:
-        if (act->is_fiery() && final_damage > 0)
-        {
-            if (you.can_see(*act))
-            {
-                mprf("%s %s in the rain.",
-                     act->name(DESC_THE).c_str(),
-                     act->conj_verb(silenced(act->pos())?
-                                    "steam" : "sizzle").c_str());
-            }
-        }
         break;
-
     case CLOUD_MEPHITIC:
     {
         if (player)
@@ -1150,7 +1174,7 @@ static bool _actor_apply_cloud_side_effects(actor *act,
             // min 2 turns to yellow, max 4
             return true;
         }
-        else if (coinflip() && mons->malmutate("mutagenic cloud"))
+        else if (coinflip() && mons->malmutate(cloud.agent(), "mutagenic cloud"))
         {
             if (you_worship(GOD_ZIN) && cloud.whose == KC_YOU)
                 did_god_conduct(DID_DELIBERATE_MUTATING, 5 + random2(3));
@@ -1158,11 +1182,11 @@ static bool _actor_apply_cloud_side_effects(actor *act,
         }
         return false;
 
-    case CLOUD_DEGENERATION:
-        if (player && one_chance_in(4))
+    case CLOUD_ALCOHOL:
+        if (player && (coinflip()))
         {
-            mpr("You feel yourself deteriorate.");
-            lose_stat(STAT_RANDOM, 1 + random2avg(4,2));
+            mpr("You feel dizzy.");
+            you.increase_duration(DUR_VERTIGO, random_range(7, 11), 50);
             return true;
         }
         return false;
@@ -1170,27 +1194,84 @@ static bool _actor_apply_cloud_side_effects(actor *act,
     case CLOUD_CHAOS:
         if (coinflip())
         {
-            // TODO: Not have this in melee_attack
-            melee_attack::chaos_affect_actor(act);
+            chaos_affects_actor(act, cloud.agent());
             return true;
         }
         break;
 
     case CLOUD_ACID:
-        act->acid_corrode(5);
+        if (!one_chance_in(3))
+            act->corrode(cloud.agent());
         return true;
 
-    case CLOUD_NEGATIVE_ENERGY:
+    case CLOUD_RUST:
+        act->corrode(cloud.agent(), "the rust", 1);
+        act->weaken(cloud.agent(), 1);
+        return true;
+
+    case CLOUD_MISERY:
     {
+        int dam = 0;
         actor* agent = cloud.agent();
-        if (act->drain(agent, final_damage))
+
+        // Take 10% of player max hp per tick and 15% for monsters.
+        if (act->is_player())
+            dam = max(1, div_rand_round(get_real_hp(true, false), 10));
+        else
         {
+            monster* mon = act->as_monster();
+            dam = max(1, div_rand_round(mon->max_hit_points * 3, 20));
+        }
+
+        dam = resist_adjust_damage(act, BEAM_NEG, dam);
+        dam = timescale_damage(act, dam);
+
+        if (dam > 0)
+        {
+            act->hurt(agent, dam, BEAM_NEG, KILLED_BY_CLOUD, "", cloud.cloud_name(true));
             if (cloud.whose == KC_YOU)
                 did_god_conduct(DID_EVIL, 5 + random2(3));
-            return true;
+        }
+
+        return true;
+    }
+    break;
+
+    case CLOUD_BLASTMOTES:
+        if (act->props.exists(BLASTMOTE_IMMUNE_KEY))
+            return false;
+        explode_blastmotes_at(cloud.pos);
+        return true;
+
+    case CLOUD_BATS:
+        // Don't build up more sleep while already asleep.
+        if (act->asleep())
+            break;
+
+        if (act->is_player())
+        {
+            if (!you.can_sleep())
+                break;
+
+            you.duration[DUR_DROWSY] += random_range(30, 45) * you.time_taken / 10;
+            if (you.duration[DUR_DROWSY] >= 100)
+            {
+                you.duration[DUR_DROWSY] = 0;
+                you.put_to_sleep(cloud.agent(), random_range(3, 5) * BASELINE_DELAY);
+            }
+        }
+        else
+        {
+            monster* mon = act->as_monster();
+            mon->add_ench(mon_enchant(ENCH_DROWSY, 0, cloud.agent(), random_range(25, 40)));
+            if (mon->get_ench(ENCH_DROWSY).duration >= 100)
+            {
+                mon->del_ench(ENCH_DROWSY);
+                simple_monster_message(*mon, " falls asleep!");
+                mon->put_to_sleep(cloud.agent(), random_range(3, 5) * BASELINE_DELAY);
+            }
         }
         break;
-    }
 
     default:
         break;
@@ -1252,70 +1333,13 @@ static int _actor_cloud_damage(const actor *act,
     case CLOUD_STEAM:
     case CLOUD_SPECTRAL:
     case CLOUD_ACID:
-    case CLOUD_NEGATIVE_ENERGY:
+    case CLOUD_STORM:
+    case CLOUD_RUST:
         final_damage =
             _cloud_damage_output(act, _cloud2beam(cloud.type),
                                  cloud_base_damage,
                                  maximum_damage);
         break;
-    case CLOUD_STORM:
-    {
-
-        // if we don't have thunder, there's always rain
-        cloud_struct raincloud = cloud;
-        raincloud.type = CLOUD_RAIN;
-        const int rain_damage = _actor_cloud_damage(act, raincloud,
-                                                    maximum_damage);
-
-        // if this isn't just a test run, and no time passed, don't trigger
-        // lightning. (just rain.)
-        if (!maximum_damage && !(you.turn_is_over && you.time_taken > 0))
-            return rain_damage;
-
-        // only announce ourselves if this isn't a test run.
-        if (!maximum_damage)
-            cloud.announce_actor_engulfed(act);
-
-        const int turns_per_lightning = 3;
-        const int aut_per_lightning = turns_per_lightning * BASELINE_DELAY;
-
-        // if we fail our lightning roll, again, just rain.
-        if (!maximum_damage && !x_chance_in_y(you.time_taken,
-                                              aut_per_lightning))
-        {
-            return rain_damage;
-        }
-
-        const int lightning_dam = _cloud_damage_output(act,
-                                                       _cloud2beam(cloud.type),
-                                                       cloud_base_damage,
-                                                       maximum_damage);
-
-        if (maximum_damage)
-        {
-            // Average maximum damage over time.
-            const int avg_dam = lightning_dam / turns_per_lightning;
-            if (avg_dam > 0)
-                return avg_dam;
-            return rain_damage; // vs relec+++ or w/e
-        }
-
-        if (act->is_player())
-            mpr("You are struck by lightning!");
-        else if (you.can_see(*act))
-        {
-            simple_monster_message(*act->as_monster(),
-                                   " is struck by lightning.");
-        }
-        else if (you.see_cell(act->pos()))
-        {
-            mpr("Lightning from the thunderstorm strikes something you cannot "
-                "see.");
-        }
-
-        return lightning_dam;
-
-    }
     default:
         break;
     }
@@ -1323,21 +1347,15 @@ static int _actor_cloud_damage(const actor *act,
     return timescale_damage(act, final_damage);
 }
 
-// Applies damage and side effects for an actor in a cloud and returns
-// the damage dealt.
-int actor_apply_cloud(actor *act)
+static void _actor_apply_cloud(actor *act, cloud_struct &cloud)
 {
-    const cloud_struct* cl = cloud_at(act->pos());
-    if (!cl)
-        return 0;
-
-    const cloud_struct &cloud(*cl);
     const bool player = act->is_player();
     monster *mons = act->as_monster();
-    const beam_type cloud_flavour = _cloud2beam(cloud.type);
+    if (mons && !mons->alive())
+        return;
 
     if (actor_cloud_immune(*act, cloud))
-        return 0;
+        return;
 
     const int resist = _actor_cloud_resist(act, cloud);
     const int cloud_max_base_damage =
@@ -1346,19 +1364,16 @@ int actor_apply_cloud(actor *act)
 
     if ((player || final_damage > 0
          || _cloud_has_negative_side_effects(cloud.type))
-        && cloud.type != CLOUD_BLASTSPARKS // no effect over time
-        && cloud.type != CLOUD_STORM) // handled elsewhere
+        && cloud.type != CLOUD_BLASTMOTES) // no effect over time
     {
         cloud.announce_actor_engulfed(act);
     }
-    if (player && cloud_max_base_damage > 0 && resist > 0
-        && (cloud.type != CLOUD_STORM || final_damage > 0))
-    {
+    if (player && cloud_max_base_damage > 0 && resist > 0)
         canned_msg(MSG_YOU_RESIST);
-    }
 
+    const beam_type cloud_flavour = _cloud2beam(cloud.type);
     if (cloud_flavour != BEAM_NONE)
-        act->expose_to_element(cloud_flavour, 7);
+        act->expose_to_element(cloud_flavour, 7, cloud.agent());
 
     const bool side_effects =
         _actor_apply_cloud_side_effects(act, cloud, final_damage);
@@ -1379,12 +1394,33 @@ int actor_apply_cloud(actor *act)
              oppr_name.c_str(),
              cloud.cloud_name().c_str());
 
-        act->hurt(oppressor, final_damage, BEAM_MISSILE,
+        act->hurt(oppressor, final_damage, cloud_flavour,
                   KILLED_BY_CLOUD, "", cloud.cloud_name(true));
     }
-
-    return final_damage;
 }
+
+// Applies damage and side effects for an actor in a cloud and returns
+// the damage dealt.
+void actor_apply_cloud(actor *act)
+{
+    cloud_struct* cl = cloud_at(act->pos());
+    if (!cl)
+        return;
+    cloud_struct &cloud = *cl;
+
+    if (cloud.type == CLOUD_STORM)
+    {
+        // Rain always falls in a storm...
+        cloud.type = CLOUD_RAIN;
+        _actor_apply_cloud(act, cloud);
+        cloud.type = CLOUD_STORM;
+        // But lightning, eh, it's a tossup.
+        if (coinflip())
+            return;
+    }
+    _actor_apply_cloud(act, cloud);
+}
+
 
 // Describe cloud damage in the form "3-18". If vs_player is set,
 // extra anti-player damage is included.
@@ -1421,9 +1457,14 @@ static bool _cloud_is_harmful(actor *act, cloud_struct &cloud,
  */
 bool is_damaging_cloud(cloud_type type, bool accept_temp_resistances, bool yours)
 {
-    // If you're immune to clouds, then no clouds are damaging. Bing bong so simple!
-    if (you.cloud_immune())
+    // If you're immune to clouds, then no clouds are damaging. Bing bong so
+    // simple!
+    // Except Blastmotes will still explode!
+    if (you.cloud_immune()
+        && (type != CLOUD_BLASTMOTES || you.props.exists(BLASTMOTE_IMMUNE_KEY)))
+    {
         return false;
+    }
 
     // A nasty hack; map_knowledge doesn't preserve whom the cloud belongs to.
     if (type == CLOUD_VORTEX)
@@ -1443,7 +1484,7 @@ bool is_damaging_cloud(cloud_type type, bool accept_temp_resistances, bool yours
         // [ds] Yes, this is an ugly kludge: temporarily hide
         // durations and transforms.
         unwind_var<durations_t> old_durations(you.duration);
-        unwind_var<transformation> old_form(you.form, transformation::none);
+        unwind_var<transformation> old_form(you.form, you.default_form);
         you.duration.init(0);
         return is_damaging_cloud(type, true, yours);
     }
@@ -1451,7 +1492,7 @@ bool is_damaging_cloud(cloud_type type, bool accept_temp_resistances, bool yours
 
 bool cloud_damages_over_time(cloud_type type, bool accept_temp_resistances, bool yours)
 {
-    return type != CLOUD_BLASTSPARKS
+    return type != CLOUD_BLASTMOTES
         && is_damaging_cloud(type, accept_temp_resistances, yours);
 }
 
@@ -1479,41 +1520,19 @@ static bool _mons_avoids_cloud(const monster* mons, const cloud_struct& cloud,
     // Berserk monsters are less careful and will blindly plow through any
     // dangerous cloud, just to kill you. {due}
     // Fleeing monsters are heedless and will make very poor life choices.
-    if (!extra_careful && (mons->berserk_or_insane() || mons_is_fleeing(*mons)))
+    if (!extra_careful && (mons->berserk_or_frenzied() || mons_is_fleeing(*mons)))
         return false;
 
     switch (cloud.type)
     {
-    case CLOUD_MIASMA:
-        // Even the dumbest monsters will avoid miasma if they can.
-        return true;
-
-    case CLOUD_BLASTSPARKS:
-        // As with traps, make friendly monsters not walk into blastsparks.
+    case CLOUD_BLASTMOTES:
+        // As with traps, make friendly monsters not walk into blastmotes.
         return mons->attitude == ATT_FRIENDLY
         // Hack: try to avoid penance.
             || mons->attitude == ATT_GOOD_NEUTRAL;
 
     case CLOUD_RAIN:
-        // Fiery monsters dislike the rain.
-        if (mons->is_fiery() && extra_careful)
-            return true;
-
-        // We don't care about what's underneath the rain cloud if we can fly.
-        if (mons->airborne())
-            return false;
-
-        // These don't care about deep water.
-        if (monster_habitable_grid(mons, DNGN_DEEP_WATER))
-            return false;
-
-        // This position could become deep water, and they might drown.
-        if (env.grid(cloud.pos) == DNGN_SHALLOW_WATER
-            && mons_intel(*mons) > I_BRAINLESS)
-        {
-            return true;
-        }
-        break;
+        return !mons->is_fiery() || !extra_careful;
 
     default:
     {
@@ -1527,8 +1546,9 @@ static bool _mons_avoids_cloud(const monster* mons, const cloud_struct& cloud,
         const int base_damage = _cloud_damage_calc(dam_info.random,
                                                    max(1, dam_info.random / 9),
                                                    dam_info.base, false);
-        // Add in an arbitrary proxy for poison damage from poison clouds.
-        const int bonus_dam = cloud.type == CLOUD_POISON ? roll_dice(3, 4) : 0;
+        // Add in an arbitrary proxy for poison damage from poison/miasma clouds.
+        const int bonus_dam = cloud.type == CLOUD_POISON ? roll_dice(3, 4)
+                              : cloud.type == CLOUD_MIASMA ? roll_dice(3, 5) : 0;
         const int damage = resist_adjust_damage(mons,
                                                 clouds[cloud.type].beam_effect,
                                                 base_damage + bonus_dam);
@@ -1661,7 +1681,7 @@ kill_category cloud_struct::killer_to_whose(killer_type _killer)
 
         case KILL_MON:
         case KILL_MON_MISSILE:
-        case KILL_MISC:
+        case KILL_NON_ACTOR:
             return KC_OTHER;
 
         default:
@@ -1676,7 +1696,7 @@ killer_type cloud_struct::whose_to_killer(kill_category _whose)
     {
         case KC_YOU:         return KILL_YOU_MISSILE;
         case KC_FRIENDLY:    return KILL_MON_MISSILE;
-        case KC_OTHER:       return KILL_MISC;
+        case KC_OTHER:       return KILL_NON_ACTOR;
         case KC_NCATEGORIES: die("invalid kill category");
     }
     return KILL_NONE;
@@ -1725,8 +1745,21 @@ void cloud_struct::announce_actor_engulfed(const actor *act,
     if (!you.can_see(*act))
         return;
 
-    // Normal clouds. (Unmodified rain clouds have a different message.)
-    if (type != CLOUD_RAIN && type != CLOUD_STORM)
+    if (type == CLOUD_RAIN)
+    {
+        mprf("%s %s in the rain.",
+            act->name(DESC_THE).c_str(),
+            act->conj_verb(silenced(act->pos())?
+                        "steam" : "sizzle").c_str());
+    }
+    else if (type == CLOUD_BATS)
+    {
+        mprf("%s %s %s.",
+             act->name(DESC_THE).c_str(),
+             (act->conj_verb("are") + " swarmed by").c_str(),
+             cloud_name().c_str());
+    }
+    else
     {
         mprf("%s %s in %s.",
              act->name(DESC_THE).c_str(),
@@ -1736,15 +1769,6 @@ void cloud_struct::announce_actor_engulfed(const actor *act,
         return;
     }
 
-    // Don't produce monster-in-rain messages in the interests
-    // of spam reduction.
-    if (act->is_player())
-    {
-        mprf("%s %s standing in %s.",
-             act->name(DESC_THE).c_str(),
-             act->conj_verb("are").c_str(),
-             type == CLOUD_STORM ? "a thunderstorm" : "the rain");
-    }
 }
 
 /**
@@ -1940,4 +1964,236 @@ void surround_actor_with_cloud(const actor* a, cloud_type cloud)
             continue;
         place_cloud(cloud, *ai, 2 + random2(6), a);
     }
+}
+
+bool cloud_is_removed(cloud_type cloud)
+{
+    switch (cloud)
+    {
+#if TAG_MAJOR_VERSION == 34
+    case CLOUD_GLOOM:
+    case CLOUD_EMBERS:
+        return true;
+#endif
+    default:
+        return false;
+    }
+}
+
+static bool _is_chaos_polyable(const actor &defender)
+{
+    if (!defender.can_safely_mutate())
+        return false;  // no polymorphing undead
+
+    const monster* mon = defender.as_monster();
+    if (!mon)
+        return true;
+
+    return !mon->is_firewood() && !mons_invuln_will(*mon);
+}
+
+static bool _is_chaos_slowable(const actor &defender)
+{
+    return !defender.is_firewood() && !defender.stasis();
+}
+
+struct chaos_effect
+{
+    string name;
+    int chance;
+    function<bool(const actor& def)> valid;
+    beam_type flavour;
+    function<bool(actor* victim, actor* source)> misc_effect;
+};
+
+// TODO: Unite this with _chaos_beam_flavour in beam.cc.
+// For now, update that when you update this.
+static const vector<chaos_effect> chaos_effects = {
+    {
+        "clone", 1, [](const actor &d) {
+            return d.is_monster() && mons_clonable(d.as_monster(), true);
+        },
+        BEAM_NONE, [](actor* victim, actor* /*source*/) {
+            ASSERT(victim->is_monster());
+            monster *clone = clone_mons(victim->as_monster());
+            if (!clone)
+                return false;
+
+            const bool obvious_effect = you.can_see(*victim) && you.can_see(*clone);
+
+            if (one_chance_in(3))
+                clone->attitude = coinflip() ? ATT_FRIENDLY : ATT_NEUTRAL;
+
+            // The player shouldn't get new permanent followers from cloning.
+            if (clone->attitude == ATT_FRIENDLY && !clone->is_summoned())
+                clone->mark_summoned(MON_SUMM_CLONE, summ_dur(6));
+            else
+                clone->flags |= (MF_NO_REWARD | MF_HARD_RESET);
+
+            // Monsters being cloned is interesting.
+            xom_is_stimulated(clone->friendly() ? 12 : 25);
+            return obvious_effect;
+        },
+    },
+    {
+        "polymorph", 2, _is_chaos_polyable, BEAM_POLYMORPH,
+    },
+    {
+        "rage", 5, [](const actor &victim) {
+            return victim.can_go_berserk() && !victim.clarity();
+        }, BEAM_NONE, [](actor* victim, actor* source) {
+            if (victim->is_monster())
+            {
+                monster* mon = victim->as_monster();
+                ASSERT(mon);
+                if (mon->can_go_frenzy()) {
+                    mon->go_frenzy(source);
+                }
+            }
+            else
+                victim->go_berserk(false);
+
+            return you.can_see(*victim);
+        },
+    },
+    { "hasting", 12, _is_chaos_slowable, BEAM_HASTE },
+    { "mighting", 12, [](const actor &victim) {
+        return !victim.is_monster()
+               || (mons_has_attacks(*(victim.as_monster()))
+                   && !victim.as_monster()->has_ench(ENCH_MIGHT));
+    }, BEAM_MIGHT },
+    { "resistance", 10, [](const actor &victim) {
+        return victim.res_fire() < 3 && victim.res_cold() < 3 &&
+               victim.res_elec() < 3 && victim.res_poison() < 3 &&
+               victim.res_corr() < 3; }, BEAM_RESISTANCE, },
+    { "slowing", 10, _is_chaos_slowable, BEAM_SLOW },
+    { "confusing", 12, [](const actor &victim) {
+        return !victim.clarity() && !victim.is_peripheral(); },
+               BEAM_CONFUSION },
+    { "weakening", 10, [](const actor & victim) {
+        return !victim.is_monster()
+               || mons_has_attacks(*(victim.as_monster()));
+    }, BEAM_WEAKNESS, },
+    { "will-halving", 10, [](const actor &victim) {
+       return !victim.is_monster()
+              || mons_invuln_will(*(victim.as_monster()));
+    }, BEAM_VULNERABILITY, },
+    { "blinking", 3, nullptr, BEAM_BLINK },
+    { "corroding", 5, [](const actor &victim) {
+        return victim.res_corr() < 3; },
+        BEAM_NONE, [](actor* victim, actor* source) {
+           victim->corrode(source);
+           return you.can_see(*victim);
+       },
+    },
+    { "vitrifying", 5, nullptr, BEAM_VITRIFY, },
+    { "ensnaring", 3, [](const actor &victim) {
+        return !victim.is_web_immune(); },
+        BEAM_NONE, [](actor* victim, actor* /*source*/) {
+           ensnare(victim);
+           return you.can_see(*victim);
+       },
+    },
+    {
+        "minipara", 3, _is_chaos_slowable, BEAM_NONE,
+        [](actor* victim, actor* source) {
+            victim->paralyse(source, 1);
+            return you.can_see(*victim);
+        },
+    },
+    {
+        "sleep", 3, [](const actor &victim) {
+            return victim.can_sleep();
+        }, BEAM_SLEEP,
+    },
+    {
+        "petrify", 3, [](const actor &victim) {
+            return _is_chaos_slowable(victim) && !victim.res_petrify();
+        }, BEAM_PETRIFY,
+    },
+    {
+        "blinding", 5, [](const actor &victim) {
+            return victim.can_be_dazzled();
+        }, BEAM_NONE, [](actor* victim, actor* source) {
+            if (victim->is_player())
+                blind_player(random_range(7, 12), ETC_RANDOM);
+            else
+                dazzle_target(victim, source, 149);
+            return you.can_see(*victim);
+        },
+    },
+};
+
+// Applies a debuff-style random chaos effect to an actor. This may have a source,
+// in the case of chaos weapons, or no source in the case of some clouds.
+//
+// Returns true if the effect was obvious to the player.
+bool chaos_affects_actor(actor* victim, actor* source)
+{
+    ASSERT(victim);
+
+    bool obvious_effect = false;
+
+    vector<pair<const chaos_effect&, int>> weights;
+    for (const chaos_effect &effect : chaos_effects)
+        if (!effect.valid || effect.valid(*victim))
+            weights.push_back({effect, effect.chance});
+
+    const chaos_effect &effect = *random_choose_weighted(weights);
+
+#ifdef NOTE_DEBUG_CHAOS_EFFECTS
+    take_note(Note(NOTE_MESSAGE, 0, 0, "CHAOS effect: " + effect.name), true);
+#endif
+
+    if (effect.misc_effect && effect.misc_effect(victim, source))
+        obvious_effect = true;
+
+    bolt beam;
+    beam.flavour = effect.flavour;
+    beam.no_saving_throw = true;
+
+    if (beam.flavour != BEAM_NONE)
+    {
+        if (victim->is_player() && have_passive(passive_t::no_haste)
+            && beam.flavour == BEAM_HASTE)
+        {
+            simple_god_message(" protects you from inadvertent hurry.");
+            return true;
+        }
+
+        beam.glyph        = 0;
+        beam.range        = 0;
+        beam.colour       = BLACK;
+        beam.effect_known = false;
+
+        beam.thrower =
+            source && source->is_player()                       ? KILL_YOU
+            : source && source->as_monster()->confused_by_you() ? KILL_YOU_CONF
+                                                                : KILL_MON;
+
+        if (beam.thrower == KILL_YOU || (source && source->as_monster()->friendly()))
+            beam.attitude = ATT_FRIENDLY;
+
+        beam.source_id = source ? source->mid : MID_NOBODY;
+
+        beam.source = victim->pos();
+        beam.target = victim->pos();
+        beam.ench_power = 100;
+
+        const bool you_could_see = you.can_see(*victim);
+        beam.fire();
+
+        if (you_could_see)
+        {
+            obvious_effect = beam.obvious_effect;
+            if (!victim->wont_attack() &&
+                (beam.flavour == BEAM_HASTE || beam.flavour == BEAM_MIGHT))
+            {
+                xom_is_stimulated(12);
+            }
+        }
+
+    }
+
+    return obvious_effect;
 }

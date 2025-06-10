@@ -61,20 +61,11 @@ bool player::alive() const
     return !crawl_state.game_is_arena();
 }
 
-bool player::is_summoned(int* _duration, int* summon_type) const
-{
-    if (_duration != nullptr)
-        *_duration = -1;
-    if (summon_type != nullptr)
-        *summon_type = 0;
-
-    return false;
-}
-
 // n.b. it might be better to use this as player::moveto's function signature
 // itself (or something more flexible), but that involves annoying refactoring
 // because of the actor/monster signature.
-static void _player_moveto(const coord_def &c, bool real_movement, bool clear_net)
+static void _player_moveto(const coord_def &c, bool real_movement, bool clear_net,
+                           bool clear_constrict = true)
 {
     if (c != you.pos())
     {
@@ -83,7 +74,7 @@ static void _player_moveto(const coord_def &c, bool real_movement, bool clear_ne
 
         // we need to do this even for fake movement -- otherwise nothing ends
         // the dur for temporal distortion. (I'm not actually sure why?)
-        end_wait_spells();
+        stop_channelling_spells();
         if (real_movement)
         {
             // Remove spells that break upon movement
@@ -95,7 +86,11 @@ static void _player_moveto(const coord_def &c, bool real_movement, bool clear_ne
     you.set_position(c);
 
     // clear invalid constrictions even with fake movement
-    you.clear_invalid_constrictions();
+    if (clear_constrict)
+    {
+        you.clear_invalid_constrictions();
+        you.clear_far_engulf();
+    }
 }
 
 player_vanishes::player_vanishes(bool _movement)
@@ -109,7 +104,7 @@ player_vanishes::~player_vanishes()
     if (monster *mon = monster_at(source))
     {
         mon->props[FAKE_BLINK_KEY].get_bool() = true;
-        mon->blink();
+        mon->blink(true);
         mon->props.erase(FAKE_BLINK_KEY);
         if (monster *stubborn = monster_at(source))
             monster_teleport(stubborn, true, true);
@@ -118,20 +113,18 @@ player_vanishes::~player_vanishes()
     _player_moveto(source, movement, true);
 }
 
-void player::moveto(const coord_def &c, bool clear_net)
+void player::moveto(const coord_def &c, bool clear_net, bool clear_constrict)
 {
-    _player_moveto(c, true, clear_net);
+    _player_moveto(c, true, clear_net, clear_constrict);
 }
 
-bool player::move_to_pos(const coord_def &c, bool clear_net, bool /*force*/)
+bool player::move_to_pos(const coord_def &c, bool clear_net, bool /*force*/,
+                         bool clear_constrict)
 {
-    actor *target = actor_at(c);
-    if (!target || target->submerged())
-    {
-        moveto(c, clear_net);
-        return true;
-    }
-    return false;
+    if (actor_at(c))
+        return false;
+    moveto(c, clear_net, clear_constrict);
+    return true;
 }
 
 void player::apply_location_effects(const coord_def &oldpos,
@@ -139,6 +132,11 @@ void player::apply_location_effects(const coord_def &oldpos,
                                     int /*killernum*/)
 {
     moveto_location_effects(env.grid(oldpos));
+}
+
+void player::did_deliberate_movement()
+{
+    player_did_deliberate_movement();
 }
 
 void player::set_position(const coord_def &c)
@@ -154,9 +152,10 @@ void player::set_position(const coord_def &c)
         if (duration[DUR_QUAD_DAMAGE])
             invalidate_agrid(true);
 
-        if (player_has_orb())
+        if (player_has_orb() || you.unrand_equipped(UNRAND_CHARLATANS_ORB))
         {
-            env.orb_pos = c;
+            if (player_has_orb())
+                env.orb_pos = c;
             invalidate_agrid(true);
         }
 
@@ -167,11 +166,6 @@ void player::set_position(const coord_def &c)
 bool player::swimming() const
 {
     return in_water() && can_swim();
-}
-
-bool player::submerged() const
-{
-    return false;
 }
 
 bool player::floundering() const
@@ -232,17 +226,16 @@ size_type player::body_size(size_part_type psize, bool base) const
     }
 }
 
-int player::damage_type(int)
+vorpal_damage_type player::damage_type(int)
 {
     if (const item_def* wp = weapon())
         return get_vorpal_type(*wp);
-    else if (form == transformation::blade_hands)
-        return DVORP_SLICING;
-    else if (has_usable_claws())
+    if (form == transformation::blade_hands)
+        return DAMV_PIERCING;
+    if (has_usable_claws())
         return DVORP_CLAWING;
-    else if (has_usable_tentacles())
+    if (has_usable_tentacles())
         return DVORP_TENTACLE;
-
     return DVORP_CRUSHING;
 }
 
@@ -255,16 +248,14 @@ brand_type player::damage_brand(int)
     if (duration[DUR_CONFUSING_TOUCH])
         return SPWPN_CONFUSE;
 
-    const int wpn = equip[EQ_WEAPON];
-    if (wpn != -1 && !melded[EQ_WEAPON])
+    if (item_def* wpn = you.weapon())
     {
-        if (is_range_weapon(inv[wpn]))
-            return SPWPN_NORMAL; // XXX: check !is_melee_weapon instead?
-        return get_weapon_brand(inv[wpn]);
+        if (is_range_weapon(*wpn))
+            return SPWPN_NORMAL;
+        return get_weapon_brand(*wpn);
     }
 
     // unarmed
-
     return get_form()->get_uc_brand();
 }
 
@@ -281,7 +272,22 @@ brand_type player::damage_brand(int)
  */
 random_var player::attack_delay(const item_def *projectile, bool rescale) const
 {
-    return attack_delay_with(projectile, rescale, weapon());
+    const item_def *primary = weapon();
+    const random_var primary_delay = attack_delay_with(projectile, rescale, primary);
+    if (projectile && !is_launcher_ammo(*projectile))
+        return primary_delay; // throwing doesn't use the offhand
+
+    const item_def *offhand = you.offhand_weapon();
+    if (!offhand
+        || is_melee_weapon(*offhand) && projectile
+        || is_range_weapon(*offhand) && !projectile)
+    {
+        return primary_delay;
+    }
+
+    // re-use of projectile is very dubious here
+    const random_var offhand_delay = attack_delay_with(projectile, rescale, offhand);
+    return div_rand_round(primary_delay + offhand_delay, 2);
 }
 
 random_var player::attack_delay_with(const item_def *projectile, bool rescale,
@@ -332,8 +338,13 @@ random_var player::attack_delay_with(const item_def *projectile, bool rescale,
             return attk_delay;
 
         attk_delay -= div_rand_round(random_var(wpn_sklev), DELAY_SCALE);
-        if (get_weapon_brand(*weap) == SPWPN_SPEED)
+        // we should really use weapon_adjust_delay here,
+        // but we'd need to support random_var
+        const brand_type brand = get_weapon_brand(*weap);
+        if (brand == SPWPN_SPEED)
             attk_delay = div_rand_round(attk_delay * 2, 3);
+        else if (brand == SPWPN_HEAVY)
+            attk_delay = div_rand_round(attk_delay * 3, 2);
     }
 
     // At the moment it never gets this low anyway.
@@ -362,149 +373,52 @@ random_var player::attack_delay_with(const item_def *projectile, bool rescale,
         attk_delay = div_rand_round(attk_delay, 2);
     }
 
-    // TODO: does this really have to depend on `you.time_taken`?  In basic
-    // cases at least, `you.time_taken` is just `player_speed()`. See
-    // `_prep_input`.
-    // We could simplify some code elsewhere if we fixed this,
-    // e.g. cast_manifold_assault().
-    return rv::max(div_rand_round(attk_delay * you.time_taken, BASELINE_DELAY),
-                   random_var(2));
+    return rv::max(div_rand_round(attk_delay * player_speed(), BASELINE_DELAY),
+                   random_var(1));
 }
 
-// Returns the item in the given equipment slot, nullptr if the slot is empty.
-// eq must be in [EQ_WEAPON, EQ_RING_AMULET], or bad things will happen.
-item_def *player::slot_item(equipment_type eq, bool include_melded) const
-{
-    ASSERT_RANGE(eq, EQ_FIRST_EQUIP, NUM_EQUIP);
-
-    const int item = equip[eq];
-    if (item == -1 || !include_melded && melded[eq])
-        return nullptr;
-    return const_cast<item_def *>(&inv[item]);
-}
-
-// Returns the item in the player's weapon slot.
+// Returns the first item in the player's weapon slot.
 item_def *player::weapon(int /* which_attack */) const
 {
-    if (melded[EQ_WEAPON])
-        return nullptr;
-
-    return slot_item(EQ_WEAPON, false);
+    return equipment.get_first_slot_item(SLOT_WEAPON);
 }
 
 // Give hands required to wield weapon.
 hands_reqd_type player::hands_reqd(const item_def &item, bool base) const
 {
     if (you.has_mutation(MUT_QUADRUMANOUS)
-        && (!is_weapon(item) || is_weapon_wieldable(item, SIZE_MEDIUM)))
+        && !is_weapon_too_large(item, SIZE_MEDIUM))
     {
         return HANDS_ONE;
     }
     return actor::hands_reqd(item, base);
 }
 
-bool player::can_wield(const item_def& item, bool ignore_curse,
-                       bool ignore_brand, bool ignore_shield,
-                       bool ignore_transform) const
-{
-    if (equip[EQ_WEAPON] != -1 && !ignore_curse)
-    {
-        if (inv[equip[EQ_WEAPON]].cursed())
-            return false;
-    }
-
-    // Unassigned means unarmed combat.
-    const bool two_handed = item.base_type == OBJ_UNASSIGNED
-                            || hands_reqd(item) == HANDS_TWO;
-
-    if (two_handed && (
-        (!ignore_shield && shield())
-        || get_mutation_level(MUT_MISSING_HAND)))
-    {
-        return false;
-    }
-
-    return could_wield(item, ignore_brand, ignore_transform);
-}
-
-/**
- * Checks whether the player could ever wield the given weapon, regardless of
- * what they're currently wielding, transformed into, or any other state.
- *
- * @param item              The item to wield.
- * @param ignore_brand      Whether to disregard the weapon's brand.
- * @return                  Whether the player could potentially wield the
- *                          item.
- */
-bool player::could_wield(const item_def &item, bool ignore_brand,
-                         bool ignore_transform, bool quiet) const
-{
-    // Some lingering flavor from the days where sandblast ammo was wielded.
-    // harmless.
-    if (!can_throw_large_rocks()
-        && item.is_type(OBJ_MISSILES, MI_LARGE_ROCK))
-    {
-        if (!quiet)
-            mpr("That's too large and heavy for you to wield.");
-        return false;
-    }
-
-    // Most non-weapon objects can be wielded, though there's rarely a point
-    if (!is_weapon(item))
-    {
-        if (item.base_type == OBJ_ARMOUR || item.base_type == OBJ_JEWELLERY)
-        {
-            if (!quiet)
-                mprf("You can't wield %s.", base_type_string(item));
-            return false;
-        }
-
-        return true;
-    }
-    else if (you.has_mutation(MUT_NO_GRASPING))
-    {
-        if (!quiet)
-            mpr("You can't use weapons.");
-        return false;
-    }
-    else if (!ignore_transform && !form_can_wield())
-    {
-        if (!quiet)
-            mpr("You can't use weapons in this form.");
-        return false;
-    }
-
-    const size_type bsize = body_size(PSIZE_TORSO, ignore_transform);
-    // Small species wielding large weapons...
-    if (!is_weapon_wieldable(item, bsize)
-        && !you.has_mutation(MUT_QUADRUMANOUS))
-    {
-        if (!quiet)
-            mpr("That's too large for you to wield.");
-        return false;
-    }
-
-    if (get_mutation_level(MUT_MISSING_HAND)
-        && you.hands_reqd(item) == HANDS_TWO)
-    {
-        return false;
-    }
-
-    // don't let undead/demonspawn wield holy weapons/scrolls (out of spite)
-    if (!ignore_brand && undead_or_demonic() && is_holy_item(item))
-    {
-        if (!quiet)
-            mpr("This weapon is holy and will not allow you to wield it.");
-        return false;
-    }
-
-    return true;
-}
-
 // Returns the shield the player is wearing, or nullptr if none.
 item_def *player::shield() const
 {
-    return slot_item(EQ_SHIELD, false);
+    item_def *offhand_item = you.equipment.get_first_slot_item(SLOT_OFFHAND, false);
+    if (!offhand_item || offhand_item->base_type != OBJ_ARMOUR)
+        return nullptr;
+    return offhand_item;
+}
+
+item_def* player::body_armour() const
+{
+    return you.equipment.get_first_slot_item(SLOT_BODY_ARMOUR);
+}
+
+// Returns the second weapon in the player's weapon slot (if one exists).
+item_def *player::offhand_weapon() const
+{
+    if (!you.has_mutation(MUT_WIELD_OFFHAND))
+        return nullptr;
+
+    vector<item_def*> wpn = you.equipment.get_slot_items(SLOT_WEAPON);
+    if (wpn.size() < 2)
+        return nullptr;
+    else
+        return wpn[1];
 }
 
 string player::name(description_level_type dt, bool, bool) const
@@ -682,7 +596,7 @@ string player::foot_name(bool plural, bool *can_plural) const
 
 string player::arm_name(bool plural, bool *can_plural) const
 {
-    if (form_changed_physiology())
+    if (form_changes_anatomy())
         return hand_name(plural, can_plural);
 
     if (can_plural != nullptr)
@@ -691,10 +605,8 @@ string player::arm_name(bool plural, bool *can_plural) const
     string str = species::arm_name(species);
 
     string adj;
-    if (form == transformation::lich)
-        adj = "bony";
-    else if (form == transformation::shadow)
-        adj = "shadowy";
+    if (form == transformation::death)
+        adj = "fossilised";
     else
         adj = species::skin_name(species, true);
 
@@ -809,24 +721,32 @@ bool player::go_berserk(bool intentional, bool potion)
         mpr("Your finesse ends abruptly.");
     }
 
+    if (you.duration[DUR_AFRAID] > 0)
+    {
+        you.clear_fearmongers();
+        you.duration[DUR_AFRAID] = 0; // Too angry to be scared.
+        mpr("Your anger overwhelms your terror!");
+    }
+
     if (!_god_prevents_berserk_haste(intentional))
         mpr("You feel yourself moving faster!");
 
     mpr("You feel mighty!");
 
-    int dur = 20 + random2avg(19,2);
-    if (!you.has_mutation(MUT_LONG_TONGUE))
-        dur /= 2;
+    int dur = (20 + random2avg(19,2)) / 2;
+    if (potion && you.has_mutation(MUT_EFFICIENT_METABOLISM))
+        dur *= 2;
+
     you.increase_duration(DUR_BERSERK, dur);
 
     // Apply Berserk's +50% Current/Max HP.
-    calc_hp(true, false);
+    calc_hp(true);
 
     you.berserk_penalty = 0;
 
     quiver::set_needs_redraw();
 
-    if (player_equip_unrand(UNRAND_ZEALOT_SWORD))
+    if (you.unrand_equipped(UNRAND_ZEALOT_SWORD))
         for (monster_near_iterator mi(you.pos(), LOS_NO_TRANS); mi; ++mi)
             if (mi->friendly())
                 mi->go_berserk(false);
@@ -852,10 +772,8 @@ bool player::can_go_berserk(bool intentional, bool potion, bool quiet,
         msg = "You're still recovering from your berserk rage.";
     else if (duration[DUR_DEATHS_DOOR] && temp)
         msg = "You can't enter a blood rage from death's door.";
-    else if (beheld() && !player_equip_unrand(UNRAND_DEMON_AXE) && temp)
+    else if (beheld() && !you.unrand_equipped(UNRAND_DEMON_AXE) && temp)
         msg = "You are too mesmerised to rage.";
-    else if (afraid() && temp)
-        msg = "You are too terrified to rage.";
     else if (!intentional && !potion && clarity() && temp)
         msg = "You're too calm and focused to rage.";
     else if (is_lifeless_undead(temp))
@@ -888,8 +806,14 @@ bool player::antimagic_susceptible() const
 
 bool player::is_web_immune() const
 {
-    // Spider form
-    return form == transformation::spider;
+    return is_insubstantial()
+        || is_amorphous()
+        || you.unrand_equipped(UNRAND_SLICK_SLIPPERS);
+}
+
+bool player::is_binding_sigil_immune() const
+{
+    return you.unrand_equipped(UNRAND_SLICK_SLIPPERS);
 }
 
 bool player::shove(const char* feat_name)
@@ -919,15 +843,15 @@ int player::constriction_damage(constrict_type typ) const
     switch (typ)
     {
     case CONSTRICT_BVC:
-        return roll_dice(2, div_rand_round(70 +
+        return roll_dice(2, div_rand_round(80 +
                    you.props[VILE_CLUTCH_POWER_KEY].get_int(), 20));
     case CONSTRICT_ROOTS:
         // Assume we're using the wand.
-        // Min power 2d4, max power ~2d14 (also ramps over time)
+        // Min power 2d5, max power ~2d19
         return roll_dice(2, div_rand_round(25 +
-                    you.props[FASTROOT_POWER_KEY].get_int(), 10));
+                    you.props[FASTROOT_POWER_KEY].get_int(), 7));
     default:
-        return roll_dice(2, div_rand_round(strength(), 5));
+        return roll_dice(2, div_rand_round(5 * (22 + 5 * you.experience_level), 81));
     }
 
 }

@@ -13,6 +13,8 @@ Dungeon Crawl Stone Soup is a game of dungeon exploration, combat and magic, inv
 
 ## How to Play
 
+For information on how to install the game, please visit [the installation documentation](crawl-ref/INSTALL.md).
+
 If you'd like to dive in immediately, we suggest one of:
 
 * Start a game and pick a tutorial (select tutorial in the game menu),
@@ -35,9 +37,9 @@ Both classical ASCII and tiles (GUI) versions of Crawl are available to [downloa
 * Our official homepage: [crawl.develz.org](https://crawl.develz.org/)
   * Online webtiles play
   * Offline downloads
-  * A community forum
-* The official [/r/dcss subreddit](https://www.reddit.com/r/dcss/)
+  * Our community forum: [tavern.dcss.io](https://tavern.dcss.io/)
 * [/r/roguelikes Discord](https://discord.gg/S5F2H32)
+* The [/r/dcss subreddit](https://www.reddit.com/r/dcss/)
 * IRC: #crawl on Libera (or #crawl-dev to chat development)
 
 ## How you can help

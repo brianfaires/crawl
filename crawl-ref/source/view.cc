@@ -15,6 +15,7 @@
 
 #include "act-iter.h"
 #include "artefact.h"
+#include "branch.h"
 #include "cio.h"
 #include "cloud.h"
 #include "clua.h"
@@ -37,7 +38,6 @@
 #include "god-wrath.h"
 #include "hints.h"
 #include "items.h"
-#include "item-name.h" // item_type_known
 #include "item-prop.h" // get_weapon_brand
 #include "libutil.h"
 #include "macro.h"
@@ -60,6 +60,7 @@
 #include "shout.h"
 #include "show.h"
 #include "showsymb.h"
+#include "spl-transloc.h" // attract_monster
 #include "state.h"
 #include "stringutil.h"
 #include "tag-version.h"
@@ -73,6 +74,7 @@
  #include "tileview.h"
 #endif
 #include "tiles-build-specific.h"
+#include "transform.h"
 #include "traps.h"
 #include "travel.h"
 #include "unicode.h"
@@ -82,7 +84,7 @@
 #include "xom.h"
 
 static layers_type _layers = LAYERS_ALL;
-static layers_type _layers_saved = LAYERS_NONE;
+static layers_type _layers_saved = Layer::None;
 
 crawl_view_geometry crawl_view;
 
@@ -150,7 +152,7 @@ void seen_monsters_react(int stealth)
         if (!mi->visible_to(&you))
             continue;
 
-        if (!mi->has_ench(ENCH_INSANE) && mi->can_see(you))
+        if (!mi->has_ench(ENCH_FRENZIED) && mi->can_see(you))
         {
             // Trigger Duvessa & Dowan upgrades
             if (mi->props.exists(ELVEN_ENERGIZE_KEY))
@@ -249,38 +251,17 @@ static void _genus_factoring(map<const string, details> &types,
     types[name] = {mon, name, num, true};
 }
 
-static bool _is_weapon_worth_listing(const unique_ptr<item_def> &wpn)
-{
-    return wpn && (wpn->base_type == OBJ_STAVES
-                   || is_unrandom_artefact(*wpn.get())
-                   || get_weapon_brand(*wpn.get()) != SPWPN_NORMAL);
-}
-
-static bool _is_item_worth_listing(const unique_ptr<item_def> &item)
-{
-    return item && (item_is_branded(*item.get())
-                    || is_artefact(*item.get()));
-}
-
 static bool _is_mon_equipment_worth_listing(const monster_info &mi)
 {
+    for (unsigned int i = 0; i <= MSLOT_LAST_VISIBLE_SLOT; ++i)
+    {
+        if (!mi.inv[i])
+            continue;
 
-    if (_is_weapon_worth_listing(mi.inv[MSLOT_WEAPON]))
-        return true;
-    const unique_ptr<item_def> &alt_weap = mi.inv[MSLOT_ALT_WEAPON];
-    if (mi.wields_two_weapons() && _is_weapon_worth_listing(alt_weap))
-        return true;
-    // can a wand be in the alt weapon slot? get_monster_equipment_desc seems to
-    // think so, so we'll check
-    if (alt_weap && alt_weap->base_type == OBJ_WANDS)
-        return true;
-    if (mi.inv[MSLOT_WAND])
-        return true;
-
-    return _is_item_worth_listing(mi.inv[MSLOT_SHIELD])
-        || _is_item_worth_listing(mi.inv[MSLOT_ARMOUR])
-        || _is_item_worth_listing(mi.inv[MSLOT_JEWELLERY])
-        || _is_item_worth_listing(mi.inv[MSLOT_MISSILE]);
+        if (item_is_worth_listing(*mi.inv[i].get()))
+            return true;
+    }
+    return false;
 }
 
 /// Return whether or not monster_info::_core_name() describes the inventory
@@ -288,7 +269,7 @@ static bool _is_mon_equipment_worth_listing(const monster_info &mi)
 static bool _does_core_name_include_inventory(const monster *mon)
 {
     return mon->type == MONS_DANCING_WEAPON || mon->type == MONS_SPECTRAL_WEAPON
-           || mon->type == MONS_ANIMATED_ARMOUR;
+           || mon->type == MONS_ARMOUR_ECHO;
 }
 
 /// Return a warning for the player about newly-seen monsters, as appropriate.
@@ -447,8 +428,12 @@ static string _describe_monsters_from_species(const vector<details> &species)
         [] (const details &det)
         {
             string name = det.name;
-            if (mons_is_unique(det.mon->type))
+            if (mons_is_unique(det.mon->type)
+                || mons_is_specially_named(det.mon->type)
+                || !you.can_see(*det.mon))
+            {
                 return name;
+            }
             else if (det.count > 1 && det.genus)
             {
                 auto genus = mons_genus(det.mon->type);
@@ -503,6 +488,11 @@ static void _handle_comes_into_view(const vector<string> &msgs,
 /// If the player has the shout mutation, maybe shout at newly-seen monsters.
 static void _maybe_trigger_shoutitis(const vector<monster*> monsters)
 {
+    if (you.form == transformation::maw)
+        for (const monster* mon : monsters)
+            if (maw_growl_check(mon))
+                return;
+
     if (!you.get_mutation_level(MUT_SCREAM))
         return;
 
@@ -513,6 +503,18 @@ static void _maybe_trigger_shoutitis(const vector<monster*> monsters)
             yell(mon);
             return;
         }
+    }
+}
+
+/// If the player has the attractive mutation, maybe attract newly-seen monsters.
+static void _maybe_trigger_attractivitis(const vector<monster*> monsters)
+{
+    for (monster* mon : monsters)
+    {
+        if (!should_attract_mons(*mon))
+            continue;
+        const int dist = grid_distance(you.pos(), mon->pos());
+        attract_monster(*mon, dist - 2); // never attract adjacent
     }
 }
 
@@ -529,8 +531,7 @@ static void _maybe_gozag_incite(vector<monster*> monsters)
         // XXX: some of this is probably redundant with interrupt_activity
         if (mon->wont_attack()
             || mon->is_stationary()
-            || mons_is_object(mon->type)
-            || mons_is_tentacle_or_tentacle_segment(mon->type))
+            || mon->is_peripheral())
         {
             continue;
         }
@@ -612,6 +613,7 @@ void update_monsters_in_view()
         // XXX: does interrupt_activity() add 'comes into view' messages to
         // 'msgs' in ALL cases we want shoutitis/gozag wrath to trigger?
         _maybe_trigger_shoutitis(monsters);
+        _maybe_trigger_attractivitis(monsters);
         _maybe_gozag_incite(monsters);
     }
 
@@ -683,8 +685,8 @@ static colour_t _feat_default_map_colour(dungeon_feature_type feat)
 
 // Returns true if it succeeded.
 bool magic_mapping(int map_radius, int proportion, bool suppress_msg,
-                   bool force, bool deterministic,
-                   coord_def origin)
+                   bool force, bool deterministic, bool full_info,
+                   bool range_falloff, coord_def origin, bool respect_no_automap)
 {
     if (!force && !is_map_persistent())
     {
@@ -693,8 +695,6 @@ bool magic_mapping(int map_radius, int proportion, bool suppress_msg,
 
         return false;
     }
-
-    const bool wizard_map = (you.wizard && map_radius == 1000);
 
     if (map_radius < 5)
         map_radius = 5;
@@ -715,7 +715,11 @@ bool magic_mapping(int map_radius, int proportion, bool suppress_msg,
          ri; ++ri)
     {
         coord_def pos = *ri;
-        if (!wizard_map)
+
+        if (respect_no_automap && env.pgrid(pos) & FPROP_NO_AUTOMAP)
+            continue;
+
+        if (range_falloff)
         {
             int threshold = proportion;
 
@@ -754,7 +758,7 @@ bool magic_mapping(int map_radius, int proportion, bool suppress_msg,
         const bool already_mapped = knowledge.mapped()
                             && knowledge.feat() != DNGN_UNSEEN;
 
-        if (!wizard_map && (knowledge.seen() || already_mapped))
+        if (!full_info && (knowledge.seen() || already_mapped))
             continue;
 
         const dungeon_feature_type feat = env.grid(pos);
@@ -777,7 +781,7 @@ bool magic_mapping(int map_radius, int proportion, bool suppress_msg,
 
         if (open)
         {
-            if (wizard_map)
+            if (full_info)
             {
                 knowledge.set_feature(feat, _feat_default_map_colour(feat),
                     feat_is_trap(env.grid(pos)) ? get_trap_type(pos)
@@ -794,12 +798,14 @@ bool magic_mapping(int map_radius, int proportion, bool suppress_msg,
             if (emphasise(pos))
                 knowledge.flags |= MAP_EMPHASIZE;
 
-            if (wizard_map)
+            if (full_info)
             {
                 if (is_notable_terrain(feat))
                     seen_notable_thing(feat, pos);
 
                 set_terrain_seen(pos);
+                StashTrack.add_stash(pos);
+                show_update_at(pos);
 #ifdef USE_TILE
                 tile_wizmap_terrain(pos);
 #endif
@@ -927,9 +933,23 @@ string screenshot()
     return ss.str();
 }
 
-int viewmap_flash_colour()
+colour_t viewmap_flash_colour()
 {
-    return _layers & LAYERS_ALL && you.berserk() ? RED : BLACK;
+    // This only shows the fullscreen colour when we're showing all layers,
+    // and hides it for parseability's sake when toggling individual layers.
+    if ((_layers & LAYERS_ALL) != LAYERS_ALL)
+        return BLACK;
+
+    if (you.berserk())
+        return RED;
+    else if (you.paralysed())
+        return LIGHTBLUE;
+    else if (you.petrified())
+        return LIGHTGRAY;
+    else if (you.duration[DUR_VEXED])
+        return MAGENTA;
+
+    return BLACK;
 }
 
 // Updates one square of the view area. Should only be called for square
@@ -1052,7 +1072,7 @@ static update_flags player_view_update_at(const coord_def &gc)
     maybe_remove_autoexclusion(gc);
     update_flags ret;
 
-    // Set excludes in a radius of 1 around harmful clouds genereated
+    // Set excludes in a radius of 1 around harmful clouds generated
     // by neither monsters nor the player.
     const cloud_struct* cloud = cloud_at(gc);
     if (cloud && !crawl_state.game_is_arena())
@@ -1088,13 +1108,14 @@ static update_flags player_view_update_at(const coord_def &gc)
     if (!(env.pgrid(gc) & FPROP_SEEN_OR_NOEXP))
     {
         if (!crawl_state.game_is_arena()
+            && !(branches[you.where_are_you].branch_flags & brflag::fully_map)
             && you.has_mutation(MUT_EXPLORE_REGEN))
         {
             _do_explore_healing();
         }
         if (!crawl_state.game_is_arena()
             && cell_triggers_conduct(gc)
-            && !player_in_branch(BRANCH_TEMPLE)
+            && !(branches[you.where_are_you].branch_flags & brflag::fully_map)
             && !(player_in_branch(BRANCH_SLIME) && you_worship(GOD_JIYVA)))
         {
             did_god_conduct(DID_EXPLORATION, 2500);
@@ -1200,7 +1221,7 @@ static void _draw_player(screen_cell_t *cell,
     cell->tile.fg = tile_env.fg(ep) = tileidx_player();
     cell->tile.bg = tile_env.bg(ep);
     cell->tile.cloud = tile_env.cloud(ep);
-    cell->tile.icons = tile_env.icons[ep];
+    cell->tile.icons = status_icons_for_player();
     if (anim_updates)
         tile_apply_animations(cell->tile.bg, &tile_env.flv(gc));
 #else
@@ -1344,11 +1365,6 @@ static animation *animations[NUM_ANIMATIONS] = {
 
 void run_animation(animation_type anim, use_animation_type type, bool cleanup)
 {
-#ifdef USE_TILE_WEB
-    // XXX this doesn't work in webtiles yet
-    if (is_tiles())
-        return;
-#endif
     if (Options.use_animations & type)
     {
         animation *a = animations[anim];
@@ -1485,7 +1501,7 @@ void viewwindow(bool show_updates, bool tiles_only, animation *a, view_renderer 
             UNUSED(tiles_only);
 #endif
 #ifdef USE_TILE
-            tiles.set_need_redraw(you.running ? Options.tile_runrest_rate : 0);
+            tiles.set_need_redraw();
             tiles.load_dungeon(vbuf, crawl_view.vgrdc);
             tiles.update_tabs();
 #endif
@@ -1530,12 +1546,64 @@ void view_add_glyph_overlay(const coord_def &gc, cglyph_t glyph)
     glyph_overlays.push_back({gc, glyph});
 }
 
+// Simple helper function to reduce duplication with repeatedly used animation code
+void flash_tile(coord_def p, colour_t colour, int delay, tileidx_t tile)
+{
+    if (!(Options.use_animations & UA_BEAM))
+        return;
+
+    if (!in_los_bounds_v(grid2view(p)))
+        return;
+
+#ifdef USE_TILE
+        // Use a bolt tile if one is specified. Otherwise, just use the default
+        // for the colour provied.
+        if (tile > 0)
+            view_add_tile_overlay(p, vary_bolt_tile(tile));
+        else
+            view_add_tile_overlay(p, tileidx_zap(colour));
+#else
+        UNUSED(tile);
+#endif
+        view_add_glyph_overlay(p, {dchar_glyph(DCHAR_FIRED_ZAP),
+                                   static_cast<unsigned short>(colour)});
+
+    if (delay > 0)
+        animation_delay(delay, true);
+}
+
 void view_clear_overlays()
 {
 #ifdef USE_TILE
     tile_overlays.clear();
 #endif
     glyph_overlays.clear();
+}
+
+void draw_ring_animation(const coord_def& center, int radius, colour_t colour,
+                         colour_t colour_alt, bool outward, int delay)
+{
+    const int start = outward ? 0 : radius;
+    const int end = outward ? radius : 0;
+    const int step = outward ? 1 : -1;
+
+    for (int i = start; i != end; i += step)
+    {
+        for (distance_iterator di(center, false, false, i); di; ++di)
+        {
+            if (grid_distance(center, *di) == i && !feat_is_solid(env.grid(*di))
+                && you.see_cell_no_trans(*di))
+            {
+                colour_t draw_colour = colour_alt != BLACK ? coinflip() ? colour
+                                                                        : colour_alt
+                                                           : colour;
+                flash_tile(*di, draw_colour, 0);
+            }
+        }
+
+        animation_delay(delay, true);
+        view_clear_overlays();
+    }
 }
 
 /**
@@ -1576,12 +1644,7 @@ static void add_overlays(const coord_def& gc, screen_cell_t* cell)
            && tile_overlays[tile_overlay_i].gc == gc)
     {
         const auto &overlay = tile_overlays[tile_overlay_i];
-        if (cell->tile.num_dngn_overlay == 0
-            || cell->tile.dngn_overlay[cell->tile.num_dngn_overlay - 1]
-                                            != static_cast<int>(overlay.tile))
-        {
-            cell->tile.dngn_overlay[cell->tile.num_dngn_overlay++] = overlay.tile;
-        }
+        cell->tile.add_overlay(overlay.tile);
         tile_overlay_i++;
     }
 #endif
@@ -1656,7 +1719,7 @@ void draw_cell(screen_cell_t *cell, const coord_def &gc,
     else if (!crawl_view.in_los_bounds_g(gc))
         _draw_outside_los(cell, gc, coord_def());
     else if (gc == you.pos() && you.on_current_level
-             && _layers & LAYER_PLAYER
+             && _layers & Layer::PLAYER
              && !crawl_state.game_is_arena()
              && !crawl_state.arena_suspended)
     {
@@ -1670,6 +1733,7 @@ void draw_cell(screen_cell_t *cell, const coord_def &gc,
 #ifdef USE_TILE
     cell->tile.map_knowledge = map_bounds(gc) ? env.map_knowledge(gc) : map_cell();
     cell->flash_colour = BLACK;
+    cell->flash_alpha = 0;
 #endif
 
     // Don't hide important information by recolouring monsters.
@@ -1685,6 +1749,19 @@ void draw_cell(screen_cell_t *cell, const coord_def &gc,
                                && (env.map_knowledge(gc).flags & MAP_WITHHELD)
                                && !feat_is_solid(env.grid(gc)));
 
+#ifdef USE_TILE
+    if (you.duration[DUR_BLIND] && you.see_cell(gc))
+    {
+        cell->flash_colour = real_colour(you.props[BLIND_COLOUR_KEY].get_int());
+        // Using a square curve for the alpha is nicer on the eyes than a straight multiple.
+        // The effect of alpha is already disproportionate depending on the flash colour
+        // and may need to be revised: for a white flash the effect is already extreme by
+        // around alpha 80, but for darker colours it is way dimmer and needs more like 150.
+        const int alpha_base = gc.distance_from(you.pos());
+        cell->flash_alpha = max(1, alpha_base * alpha_base);
+    }
+#endif
+
     // Alter colour if flashing the characters vision.
     if (flash_colour)
     {
@@ -1693,8 +1770,10 @@ void draw_cell(screen_cell_t *cell, const coord_def &gc,
         else if (gc != you.pos() && allow_mon_recolour)
             cell->colour = real_colour(flash_colour);
 #ifdef USE_TILE
-        if (you.see_cell(gc))
+        if (you.see_cell(gc)) {
             cell->flash_colour = real_colour(flash_colour);
+            cell->flash_alpha = 0;
+        }
 #endif
     }
     else if (crawl_state.darken_range)
@@ -1747,7 +1826,7 @@ void draw_cell(screen_cell_t *cell, const coord_def &gc,
     if ((_layers != LAYERS_ALL || Options.always_show_exclusions)
         && you.on_current_level
         && map_bounds(gc)
-        && (_layers == LAYERS_NONE
+        && (_layers == Layer::None
             || gc != you.pos()
                && (env.map_knowledge(gc).monster() == MONS_NO_MONSTER
                    || !you.see_cell(gc)))
@@ -1770,8 +1849,8 @@ static void _config_layers_menu()
     bool exit = false;
 
     _layers = _layers_saved;
-    crawl_state.viewport_weapons    = !!(_layers & LAYER_MONSTER_WEAPONS);
-    crawl_state.viewport_monster_hp = !!(_layers & LAYER_MONSTER_HEALTH);
+    crawl_state.viewport_weapons    = !!(_layers & Layer::MONSTER_WEAPONS);
+    crawl_state.viewport_monster_hp = !!(_layers & Layer::MONSTER_HEALTH);
 
     msgwin_set_temporary(true);
     while (!exit)
@@ -1789,20 +1868,20 @@ static void _config_layers_menu()
                            "<%s>monster (h)ealth</%s>"
 #endif
                            ,
-           _layers & LAYER_MONSTERS        ? "lightgrey" : "darkgrey",
-           _layers & LAYER_MONSTERS        ? "lightgrey" : "darkgrey",
-           _layers & LAYER_PLAYER          ? "lightgrey" : "darkgrey",
-           _layers & LAYER_PLAYER          ? "lightgrey" : "darkgrey",
-           _layers & LAYER_ITEMS           ? "lightgrey" : "darkgrey",
-           _layers & LAYER_ITEMS           ? "lightgrey" : "darkgrey",
-           _layers & LAYER_CLOUDS          ? "lightgrey" : "darkgrey",
-           _layers & LAYER_CLOUDS          ? "lightgrey" : "darkgrey"
+           _layers & Layer::MONSTERS        ? "lightgrey" : "darkgrey",
+           _layers & Layer::MONSTERS        ? "lightgrey" : "darkgrey",
+           _layers & Layer::PLAYER          ? "lightgrey" : "darkgrey",
+           _layers & Layer::PLAYER          ? "lightgrey" : "darkgrey",
+           _layers & Layer::ITEMS           ? "lightgrey" : "darkgrey",
+           _layers & Layer::ITEMS           ? "lightgrey" : "darkgrey",
+           _layers & Layer::CLOUDS          ? "lightgrey" : "darkgrey",
+           _layers & Layer::CLOUDS          ? "lightgrey" : "darkgrey"
 #ifndef USE_TILE_LOCAL
            ,
-           _layers & LAYER_MONSTER_WEAPONS ? "lightgrey" : "darkgrey",
-           _layers & LAYER_MONSTER_WEAPONS ? "lightgrey" : "darkgrey",
-           _layers & LAYER_MONSTER_HEALTH  ? "lightgrey" : "darkgrey",
-           _layers & LAYER_MONSTER_HEALTH  ? "lightgrey" : "darkgrey"
+           _layers & Layer::MONSTER_WEAPONS ? "lightgrey" : "darkgrey",
+           _layers & Layer::MONSTER_WEAPONS ? "lightgrey" : "darkgrey",
+           _layers & Layer::MONSTER_HEALTH  ? "lightgrey" : "darkgrey",
+           _layers & Layer::MONSTER_HEALTH  ? "lightgrey" : "darkgrey"
 #endif
         );
         mprf(MSGCH_PROMPT, "Press 'a' to toggle all layers. "
@@ -1810,28 +1889,28 @@ static void _config_layers_menu()
 
         switch (get_ch())
         {
-        case 'm': _layers_saved = _layers ^= LAYER_MONSTERS;        break;
-        case 'p': _layers_saved = _layers ^= LAYER_PLAYER;          break;
-        case 'i': _layers_saved = _layers ^= LAYER_ITEMS;           break;
-        case 'c': _layers_saved = _layers ^= LAYER_CLOUDS;          break;
+        case 'm': _layers_saved = _layers ^= Layer::MONSTERS;        break;
+        case 'p': _layers_saved = _layers ^= Layer::PLAYER;          break;
+        case 'i': _layers_saved = _layers ^= Layer::ITEMS;           break;
+        case 'c': _layers_saved = _layers ^= Layer::CLOUDS;          break;
 #ifndef USE_TILE_LOCAL
-        case 'w': _layers_saved = _layers ^= LAYER_MONSTER_WEAPONS;
-                  if (_layers & LAYER_MONSTER_WEAPONS)
-                      _layers_saved = _layers |= LAYER_MONSTERS;
+        case 'w': _layers_saved = _layers ^= Layer::MONSTER_WEAPONS;
+                  if (_layers & Layer::MONSTER_WEAPONS)
+                      _layers_saved = _layers |= Layer::MONSTERS;
                   break;
-        case 'h': _layers_saved = _layers ^= LAYER_MONSTER_HEALTH;
-                  if (_layers & LAYER_MONSTER_HEALTH)
-                      _layers_saved = _layers |= LAYER_MONSTERS;
+        case 'h': _layers_saved = _layers ^= Layer::MONSTER_HEALTH;
+                  if (_layers & Layer::MONSTER_HEALTH)
+                      _layers_saved = _layers |= Layer::MONSTERS;
                   break;
 #endif
         case 'a': if (_layers)
-                      _layers_saved = _layers = LAYERS_NONE;
+                      _layers_saved = _layers = Layer::None;
                   else
                   {
 #ifndef USE_TILE_LOCAL
                       _layers_saved = _layers = LAYERS_ALL
-                                      | LAYER_MONSTER_WEAPONS
-                                      | LAYER_MONSTER_HEALTH;
+                                      | Layer::MONSTER_WEAPONS
+                                      | Layer::MONSTER_HEALTH;
 #else
                       _layers_saved = _layers = LAYERS_ALL;
 #endif
@@ -1839,14 +1918,14 @@ static void _config_layers_menu()
                   break;
         default:
             _layers = LAYERS_ALL;
-            crawl_state.viewport_weapons    = !!(_layers & LAYER_MONSTER_WEAPONS);
-            crawl_state.viewport_monster_hp = !!(_layers & LAYER_MONSTER_HEALTH);
+            crawl_state.viewport_weapons    = !!(_layers & Layer::MONSTER_WEAPONS);
+            crawl_state.viewport_monster_hp = !!(_layers & Layer::MONSTER_HEALTH);
             exit = true;
             break;
         }
 
-        crawl_state.viewport_weapons    = !!(_layers & LAYER_MONSTER_WEAPONS);
-        crawl_state.viewport_monster_hp = !!(_layers & LAYER_MONSTER_HEALTH);
+        crawl_state.viewport_weapons    = !!(_layers & Layer::MONSTER_WEAPONS);
+        crawl_state.viewport_monster_hp = !!(_layers & Layer::MONSTER_HEALTH);
 
         msgwin_clear_temporary();
     }
@@ -1869,8 +1948,8 @@ void reset_show_terrain()
         mprf(MSGCH_PROMPT, "Restoring view layers.");
 
     _layers = LAYERS_ALL;
-    crawl_state.viewport_weapons    = !!(_layers & LAYER_MONSTER_WEAPONS);
-    crawl_state.viewport_monster_hp = !!(_layers & LAYER_MONSTER_HEALTH);
+    crawl_state.viewport_weapons    = !!(_layers & Layer::MONSTER_WEAPONS);
+    crawl_state.viewport_monster_hp = !!(_layers & Layer::MONSTER_HEALTH);
 }
 
 ////////////////////////////////////////////////////////////////////////////

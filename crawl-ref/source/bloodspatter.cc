@@ -135,53 +135,50 @@ static void _maybe_bloodify_square(const coord_def& where, int amount,
     if (ignite_blood && you.see_cell(where))
         amount *= 2;
 
-    if (x_chance_in_y(amount, 20))
+    if (!x_chance_in_y(amount, 20))
+        return;
+
+    dprf("might bleed now; square: (%d, %d); amount = %d",
+         where.x, where.y, amount);
+
+    if (may_bleed)
     {
-        dprf("might bleed now; square: (%d, %d); amount = %d",
-             where.x, where.y, amount);
-        if (may_bleed)
-        {
-            env.pgrid(where) |= FPROP_BLOODY;
-            _orient_wall_blood(where, from, old_blood);
+        env.pgrid(where) |= FPROP_BLOODY;
+        _orient_wall_blood(where, from, old_blood);
 
-            // Don't apply penance for involuntary cloud placement.
-            if (x_chance_in_y(ignite_blood, 3)
-                && you.see_cell(where)
-                && !cell_is_solid(where)
-                && !cloud_at(where))
-            {
-                int dur = 2 + ignite_blood + random2(2 * ignite_blood);
-                place_cloud(CLOUD_FIRE, where, dur, &you, -1, -1,
-                            false);
-            }
-        }
-
-        if (spatter)
+        if (x_chance_in_y(ignite_blood, 3)
+            && you.see_cell(where)
+            && !cell_is_solid(where)
+            && !cloud_at(where))
         {
-            // Smaller chance of spattering surrounding squares.
-            for (adjacent_iterator ai(where); ai; ++ai)
-                _maybe_bloodify_square(*ai, amount/15, false, from, old_blood);
+            int dur = 2 + ignite_blood + random2(2 * ignite_blood);
+            place_cloud(CLOUD_FIRE, where, dur, &you, -1, -1,
+                        false); // Don't give penance.
         }
     }
+
+    // Smaller chance of spattering surrounding squares.
+    if (spatter)
+        for (adjacent_iterator ai(where); ai; ++ai)
+            _maybe_bloodify_square(*ai, amount/15, false, from, old_blood);
 }
 
 // Colour ground (and possibly adjacent squares) red. "damage" depends on damage
-// taken (or hitpoints, if damage higher), or, for butchering, on the number of
-// chunks possible to get out of a corpse.
+// taken (or hitpoints, if damage higher).
 void bleed_onto_floor(const coord_def& where, monster_type montype,
                       int damage, bool spatter, const coord_def& from,
                       const bool old_blood)
 {
     ASSERT_IN_BOUNDS(where);
 
-    if (montype == MONS_PLAYER && !you.can_bleed())
+    if (montype == MONS_PLAYER && !you.has_blood())
         return;
 
     if (montype != NUM_MONSTERS && montype != MONS_PLAYER)
     {
         monster m;
         m.type = montype;
-        if (!m.can_bleed())
+        if (!m.has_blood())
             return;
     }
 
@@ -269,5 +266,20 @@ void generate_random_blood_spatter_on_level(const map_bitmask *susceptible_area)
         maybe_bloodify_square(c);
 
         _spatter_neighbours(c, startprob);
+    }
+}
+
+// Always produce one puddle of blood, at an increasingly large radius as nearby
+// tiles become filled.
+void bleed_for_makhleb(const actor& actor)
+{
+    for (distance_iterator di(actor.pos(), true, false, 2); di; ++di)
+    {
+        if (!is_bloodcovered(*di) && _allow_bleeding_on_square(*di)
+            && cell_see_cell(actor.pos(), *di, LOS_NO_TRANS))
+        {
+            bleed_onto_floor(*di, actor.type, 20);
+            return;
+        }
     }
 }

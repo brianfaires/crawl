@@ -5,6 +5,7 @@
 
 #include "enchant-type.h"
 #include "mon-util.h"
+#include "options.h"
 #include "tag-version.h"
 
 using std::vector;
@@ -13,11 +14,12 @@ using std::vector;
 #define CLOUD_IMMUNE_MB_KEY "cloud_immune"
 #define PRIEST_KEY "priest"
 #define ACTUAL_SPELLCASTER_KEY "actual_spellcaster"
+#define NECROMANCER_KEY "necromancer"
 
 enum monster_info_flags
 {
     MB_STABBABLE,
-    MB_DISTRACTED,
+    MB_MAYBE_STABBABLE,
     MB_BERSERK,
     MB_DORMANT,
     MB_SLEEPING,
@@ -55,7 +57,7 @@ enum monster_info_flags
     MB_OLD_ENSLAVED,
 #endif
     MB_SWIFT,
-    MB_INSANE,
+    MB_FRENZIED,
     MB_SILENCING,
     MB_MESMERIZING,
 #if TAG_MAJOR_VERSION == 34
@@ -63,8 +65,8 @@ enum monster_info_flags
 #endif
     MB_SHAPESHIFTER,
     MB_CHAOTIC,
-    MB_SUBMERGED,
 #if TAG_MAJOR_VERSION == 34
+    MB_SUBMERGED,
     MB_BLEEDING,
 #endif
 #if TAG_MAJOR_VERSION == 34
@@ -98,7 +100,9 @@ enum monster_info_flags
     MB_CLINGING,
 #endif
     MB_NAME_ZOMBIE,
+#if TAG_MAJOR_VERSION == 34
     MB_PERM_SUMMON,
+#endif
     MB_INNER_FLAME,
     MB_UMBRAED,
 #if TAG_MAJOR_VERSION == 34
@@ -136,8 +140,8 @@ enum monster_info_flags
     MB_CONTROL_WINDS,
     MB_WIND_AIDED,
     MB_SUMMONED_NO_STAIRS, // Temp. summoned and capped monsters
-#endif
     MB_SUMMONED_CAPPED,    // Expiring due to summons cap
+#endif
     MB_TOXIC_RADIANCE,
     MB_GRASPING_ROOTS,
     MB_FIRE_VULN,
@@ -147,7 +151,7 @@ enum monster_info_flags
     MB_POISON_VULN,
     MB_AGILE,
     MB_FROZEN,
-    MB_BLACK_MARK,
+    MB_SIGN_OF_RUIN,
     MB_SAP_MAGIC,
     MB_SHROUD,
     MB_CORROSION,
@@ -168,7 +172,9 @@ enum monster_info_flags
     MB_CHANT_WORD_OF_ENTROPY,
 #endif
     MB_AIRBORNE,
+#if TAG_MAJOR_VERSION == 34
     MB_BRILLIANCE_AURA,
+#endif
     MB_EMPOWERED_SPELLS,
     MB_READY_TO_HOWL,
     MB_PARTIALLY_CHARGED,
@@ -192,7 +198,7 @@ enum monster_info_flags
     MB_CLOUD_RING_MUTATION,
     MB_CLOUD_RING_FOG,
     MB_CLOUD_RING_ICE,
-    MB_CLOUD_RING_DRAINING,
+    MB_CLOUD_RING_MISERY,
     MB_CLOUD_RING_ACID,
     MB_CLOUD_RING_MIASMA,
     MB_WITHERING,
@@ -207,12 +213,47 @@ enum monster_info_flags
     MB_RES_DROWN,
     MB_ANGUISH,
     MB_CLARITY,
-    MB_DISTRACTED_ONLY,
+    MB_DISTRACTED,
     MB_CANT_SEE_YOU,
     MB_UNBLINDABLE,
     MB_SIMULACRUM,
     MB_REFLECTING,
     MB_TELEPORTING,
+    MB_CONTAM_LIGHT,
+    MB_CONTAM_HEAVY,
+#if TAG_MAJOR_VERSION == 34
+    MB_PURSUING,
+#endif
+    MB_BOUND,
+    MB_BULLSEYE_TARGET,
+    MB_VITRIFIED,
+    MB_CURSE_OF_AGONY,
+    MB_RETREATING,
+    MB_TOUCH_OF_BEOGH,
+    MB_AWAITING_RECRUITMENT,
+    MB_VENGEANCE_TARGET,
+    MB_MAGNETISED,
+    MB_RIMEBLIGHT,
+    MB_ARMED,
+    MB_SHADOWLESS,
+    MB_PLAYER_SERVITOR,
+    MB_FROZEN_IN_TERROR,
+    MB_SOUL_SPLINTERED,
+    MB_ENGULFING_PLAYER,
+    MB_DOUBLED_HEALTH,
+    MB_ABJURABLE,
+    MB_UNREWARDING,
+    MB_MINION,
+    MB_KINETIC_GRAPNEL,
+    MB_TEMPERED,
+    MB_HATCHING,
+    MB_BLINKITIS,
+    MB_NO_TELE,
+    MB_CHAOS_LACE,
+    MB_VEXED,
+    MB_VAMPIRE_THRALL,
+    MB_PYRRHIC_RECOLLECTION,
+    MB_CLOCKWORK_BEE_CAST,
     NUM_MB_FLAGS
 };
 
@@ -246,6 +287,7 @@ struct monster_info_base
     int ac;
     int ev;
     int base_ev;
+    int sh;
     int mr;
     resists_t mresists;
     bool can_see_invis;
@@ -259,8 +301,13 @@ struct monster_info_base
     mon_attack_def attack[MAX_NUM_ATTACKS];
     bool can_go_frenzy;
     bool can_feel_fear;
+    bool sleepwalking;
+    bool backlit;
+    bool umbraed;
+    int last_seen_at_turn;
 
-    uint32_t client_id;
+    mid_t client_id;
+    mid_t summoner_id;
 };
 
 // Monster info used by the pane; precomputes some data
@@ -331,6 +378,8 @@ struct monster_info : public monster_info_base
         return get_damage_level_string(holi, dam);
     }
     string get_max_hp_desc() const;
+    int get_known_max_hp() const;
+    int regen_rate(int scale) const;
 
     inline bool neutral() const
     {
@@ -386,14 +435,18 @@ struct monster_info : public monster_info_base
 
     bool wields_two_weapons() const;
     bool can_regenerate() const;
-    reach_type reach_range(bool items = true) const;
+    int range() const;
+    int reach_range(bool items = true) const;
 
     size_type body_size() const;
+    bool net_immune() const;
 
     // These should be kept in sync with the actor equivalents
     // (Maybe unify somehow?)
     // Note: actor version is now actor::cannot_act.
     bool cannot_move() const;
+    bool asleep() const;
+    bool incapacitated() const;
     bool airborne() const;
     bool ground_level() const;
 
@@ -412,7 +465,15 @@ struct monster_info : public monster_info_base
         return props.exists(PRIEST_KEY);
     }
 
+    bool has_necromancy_spell() const
+    {
+        return props.exists(NECROMANCER_KEY);
+    }
+
     bool fellow_slime() const;
+
+    vector<string> get_unusual_items() const;
+    bool has_unusual_items() const;
 
     bool has_spells() const;
     bool antimagic_susceptible() const;
@@ -423,6 +484,8 @@ struct monster_info : public monster_info_base
     bool has_trivial_ench(enchant_type ench) const;
     bool unravellable() const;
 
+    monster* get_known_summoner() const;
+
 protected:
     string _core_name() const;
     string _base_name() const;
@@ -430,7 +493,7 @@ protected:
 };
 
 // Colour should be between -1 and 15 inclusive!
-bool set_monster_list_colour(string key, int colour);
+bool set_monster_list_colour(monster_list_colour_type, int colour);
 void clear_monster_list_colours();
 
 void get_monster_info(vector<monster_info>& mons);
@@ -440,3 +503,5 @@ void mons_to_string_pane(string& desc, int& desc_colour, bool fullname,
                            int count);
 void mons_conditions_string(string& desc, const vector<monster_info>& mi,
                             int start, int count, bool equipment);
+
+string description_for_ench(enchant_type type);

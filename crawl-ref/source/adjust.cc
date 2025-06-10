@@ -86,7 +86,7 @@ static void _adjust_spell()
 
     // Select starting slot
     mprf(MSGCH_PROMPT, "Adjust which spell? ");
-    int keyin = list_spells(false, false, false, "adjust");
+    int keyin = list_spells(false, false, false, false, "adjust");
 
     if (!isaalpha(keyin))
     {
@@ -123,7 +123,7 @@ static void _adjust_spell()
         // XX this does not really work well with new menu code
         if (keyin == '?' || keyin == '*')
         {
-            keyin = list_spells(true, false, false, "adjust it to");
+            keyin = list_spells(true, false, false, false, "adjust it to");
             if (keyin < 'a' || keyin > 'Z')
                 continue;
         }
@@ -175,7 +175,7 @@ static void _adjust_ability()
 
     char old_key = static_cast<char>(talents[selected].hotkey);
 
-    mprf_nocap("%c - %s", old_key, ability_name(talents[selected].which));
+    mprf_nocap("%c - %s", old_key, ability_name(talents[selected].which).c_str());
 
     const int index1 = letter_to_index(old_key);
 
@@ -213,12 +213,21 @@ void swap_inv_slots(int from_slot, int to_slot, bool verbose)
     you.inv[from_slot].link = from_slot;
     you.inv[to_slot].link  = to_slot;
 
-    for (int i = 0; i < NUM_EQUIP; i++)
+    bool wield_change = false;
+    for (player_equip_entry& entry : you.equipment.items)
     {
-        if (you.equip[i] == from_slot)
-            you.equip[i] = to_slot;
-        else if (you.equip[i] == to_slot)
-            you.equip[i] = from_slot;
+        if (entry.item == from_slot)
+        {
+            entry.item = to_slot;
+            if (you.inv[from_slot].base_type == OBJ_WEAPONS)
+                wield_change = true;
+        }
+        else if (entry.item == to_slot)
+        {
+            entry.item = from_slot;
+            if (you.inv[to_slot].base_type == OBJ_WEAPONS)
+                wield_change = true;
+        }
     }
 
     if (new_quiver >= 0)
@@ -233,7 +242,7 @@ void swap_inv_slots(int from_slot, int to_slot, bool verbose)
             mprf_nocap("%s", you.inv[from_slot].name(DESC_INVENTORY_EQUIP).c_str());
     }
 
-    if (to_slot == you.equip[EQ_WEAPON] || from_slot == you.equip[EQ_WEAPON])
+    if (wield_change)
     {
         you.wield_change = true;
         quiver::on_weapon_changed();

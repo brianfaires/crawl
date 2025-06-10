@@ -24,6 +24,7 @@ conjurations CONJURATIONS_ON
 hexes HEXES_ON
 summonings SUMMONINGS_ON
 necromancy NECROMANCY_ON
+forgecraft FORGECRAFT_ON
 translocations TRANSLOCATIONS_ON
 transmutations TRANSMUTATIONS_ON
 fire_magic FIRE_MAGIC_ON
@@ -33,6 +34,7 @@ earth_magic EARTH_MAGIC_ON
 poison_magic POISON_MAGIC_ON
 invocations INVOCATIONS_ON
 evocations EVOCATIONS_ON
+shapeshifting SHAPESHIFTING_ON
 %sdir gui/skills/gods
 kikubaaqudgha NECROMANCY_K_ON
 tso INVOCATIONS_1_ON
@@ -77,6 +79,7 @@ conjurations CONJURATIONS_FOCUS
 hexes HEXES_FOCUS
 summonings SUMMONINGS_FOCUS
 necromancy NECROMANCY_FOCUS
+forgecraft FORGECRAFT_FOCUS
 translocations TRANSLOCATIONS_FOCUS
 transmutations TRANSMUTATIONS_FOCUS
 fire_magic FIRE_MAGIC_FOCUS
@@ -86,6 +89,7 @@ earth_magic EARTH_MAGIC_FOCUS
 poison_magic POISON_MAGIC_FOCUS
 invocations INVOCATIONS_FOCUS
 evocations EVOCATIONS_FOCUS
+shapeshifting SHAPESHIFTING_FOCUS
 %sdir gui/skills/gods
 kikubaaqudgha NECROMANCY_K_FOCUS
 tso INVOCATIONS_1_FOCUS
@@ -130,6 +134,7 @@ conjurations CONJURATIONS_OFF
 hexes HEXES_OFF
 summonings SUMMONINGS_OFF
 necromancy NECROMANCY_OFF
+forgecraft FORGECRAFT_OFF
 translocations TRANSLOCATIONS_OFF
 transmutations TRANSMUTATIONS_OFF
 fire_magic FIRE_MAGIC_OFF
@@ -139,6 +144,7 @@ earth_magic EARTH_MAGIC_OFF
 poison_magic POISON_MAGIC_OFF
 invocations INVOCATIONS_OFF
 evocations EVOCATIONS_OFF
+shapeshifting SHAPESHIFTING_OFF
 %sdir gui/skills/gods
 kikubaaqudgha NECROMANCY_K_OFF
 tso INVOCATIONS_1_OFF
@@ -183,6 +189,7 @@ conjurations CONJURATIONS_INACTIVE
 hexes HEXES_INACTIVE
 summonings SUMMONINGS_INACTIVE
 necromancy NECROMANCY_INACTIVE
+forgecraft FORGECRAFT_INACTIVE
 translocations TRANSLOCATIONS_INACTIVE
 transmutations TRANSMUTATIONS_INACTIVE
 fire_magic FIRE_MAGIC_INACTIVE
@@ -192,6 +199,7 @@ earth_magic EARTH_MAGIC_INACTIVE
 poison_magic POISON_MAGIC_INACTIVE
 invocations INVOCATIONS_INACTIVE
 evocations EVOCATIONS_INACTIVE
+shapeshifting SHAPESHIFTING_INACTIVE
 %sdir gui/skills/gods
 kikubaaqudgha NECROMANCY_K_INACTIVE
 tso INVOCATIONS_1_INACTIVE
@@ -236,6 +244,7 @@ conjurations CONJURATIONS_MAX
 hexes HEXES_MAX
 summonings SUMMONINGS_MAX
 necromancy NECROMANCY_MAX
+forgecraft FORGECRAFT_MAX
 translocations TRANSLOCATIONS_MAX
 transmutations TRANSMUTATIONS_MAX
 fire_magic FIRE_MAGIC_MAX
@@ -245,6 +254,7 @@ earth_magic EARTH_MAGIC_MAX
 poison_magic POISON_MAGIC_MAX
 invocations INVOCATIONS_MAX
 evocations EVOCATIONS_MAX
+shapeshifting SHAPESHIFTING_MAX
 %sdir gui/skills/gods
 kikubaaqudgha NECROMANCY_K_MAX
 tso INVOCATIONS_1_MAX

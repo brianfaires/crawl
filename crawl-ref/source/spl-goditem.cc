@@ -35,6 +35,9 @@
 #include "mon-death.h"
 #include "mon-place.h"
 #include "mon-tentacle.h"
+#include "notes.h" // NOTE_DREAMSHARD
+#include "player.h"
+#include "random.h"
 #include "religion.h"
 #include "spl-clouds.h"
 #include "spl-util.h"
@@ -376,37 +379,39 @@ spret cast_healing(int pow, bool fail)
     return spret::success;
 }
 
-/// Effects that occur when the player is debuffed.
-struct player_debuff_effects
-{
-    /// Attributes removed by a debuff.
-    // TODO: I'm nearly sure these are unused; REMOVEME!
-    vector<attribute_type> attributes;
-    /// Durations removed by a debuff.
-    vector<duration_type> durations;
-};
-
 /**
  * What dispellable effects currently exist on the player?
  *
- * @param[out] buffs   The dispellable effects that exist on the player.
- *                     Assumed to be empty when passed in.
+ * @return The dispellable effects that currently exist on the player.
  */
-static void _dispellable_player_buffs(player_debuff_effects &buffs)
+static vector<duration_type> _dispellable_player_buffs()
 {
-    // durations
+    vector<duration_type> dispellables;
     for (unsigned int i = 0; i < NUM_DURATIONS; ++i)
     {
         const int dur = you.duration[i];
         if (dur <= 0 || !duration_dispellable((duration_type) i))
             continue;
-        if (i == DUR_TRANSFORMATION && you.form == transformation::shadow)
+        if (i == DUR_TRANSFORMATION && (you.form == you.default_form
+                                        || you.form == transformation::slaughter))
+        {
             continue;
-        buffs.durations.push_back((duration_type) i);
+        }
+        // XXX: Handle special-cases with regard to monster auras.
+        //      (It would be nice if this could be handled automatically, but
+        //      there aren't yet enough of these effects to bother doing such)
+        if (i == DUR_SLOW && aura_is_active_on_player(TORPOR_SLOWED_KEY))
+            continue;
+        else if (i == DUR_SENTINEL_MARK && aura_is_active_on_player(OPHAN_MARK_KEY))
+            continue;
+
+        dispellables.push_back((duration_type) i);
         // this includes some buffs that won't be reduced in duration -
         // anything already at 1 aut, or flight/transform while <= 11 aut
         // that's probably not an actual problem
     }
+
+    return dispellables;
 }
 
 /**
@@ -416,10 +421,7 @@ static void _dispellable_player_buffs(player_debuff_effects &buffs)
  */
 bool player_is_debuffable()
 {
-    player_debuff_effects buffs;
-    _dispellable_player_buffs(buffs);
-    return !buffs.durations.empty()
-           || !buffs.attributes.empty();
+    return !_dispellable_player_buffs().empty();
 }
 
 /**
@@ -446,9 +448,8 @@ string describe_player_cancellation(bool debuffs_only)
     if (!debuffs_only && get_contamination_level())
         effects.push_back("as magically contaminated");
 
-    player_debuff_effects buffs;
-    _dispellable_player_buffs(buffs);
-    for (auto duration : buffs.durations)
+    vector<duration_type> buffs = _dispellable_player_buffs();
+    for (auto duration : buffs)
     {
         if (duration == DUR_TRANSFORMATION)
         {
@@ -497,32 +498,27 @@ string describe_player_cancellation(bool debuffs_only)
  * Forms, buffs, debuffs, contamination, probably a few other things.
  * Flight gets an extra 11 aut before going away to minimize instadeaths.
  */
-void debuff_player()
+void debuff_player(bool ignore_resistance)
 {
     bool need_msg = false;
 
     // find the list of debuffable effects currently active
-    player_debuff_effects buffs;
-    _dispellable_player_buffs(buffs);
+    vector<duration_type> buffs = _dispellable_player_buffs();
 
-    for (auto attr : buffs.attributes)
+    if (!buffs.empty() & !ignore_resistance && you.has_mutation(MUT_INVIOLATE_MAGIC))
     {
-        you.attribute[attr] = 0;
-#if TAG_MAJOR_VERSION == 34
-        if (attr == ATTR_DELAYED_FIREBALL)
-            mprf(MSGCH_DURATION, "Your charged fireball dissipates.");
-        else
-#endif
-            need_msg = true;
+        mpr("Your magical effects refuse to unravel!");
+        return;
     }
 
-    for (auto duration : buffs.durations)
+    for (auto duration : buffs)
     {
         int &len = you.duration[duration];
         if (duration == DUR_TELEPORT)
         {
             len = 0;
             mprf(MSGCH_DURATION, "You feel strangely stable.");
+            you.props.erase(SJ_TELEPORTITIS_SOURCE);
         }
         else if (duration == DUR_PETRIFYING)
         {
@@ -535,12 +531,15 @@ void debuff_player()
             len = 0;
             heal_flayed_effect(&you);
         }
-        else if (duration == DUR_LIQUID_FLAMES)
+        else if (duration == DUR_STICKY_FLAME)
+        {
+            mprf(MSGCH_DURATION, "You are no longer on fire.");
+            end_sticky_flame_player();
+        }
+        else if (duration == DUR_FORTRESS_BLAST_TIMER)
         {
             len = 0;
-            mprf(MSGCH_DURATION, "You are no longer on fire.");
-            you.props.erase(STICKY_FLAME_AUX_KEY);
-            you.props.erase(STICKY_FLAMER_KEY);
+            mprf(MSGCH_DURATION, "Your fortress blast dissipates harmlessly.");
         }
         else if (len > 1)
         {
@@ -597,7 +596,7 @@ bool monster_is_debuffable(const monster &mon)
 
 bool monster_can_be_unravelled(const monster& mon)
 {
-    return monster_is_debuffable(mon) || mon.is_summoned();
+    return monster_is_debuffable(mon) || mon.is_abjurable();
 }
 
 /**
@@ -619,7 +618,7 @@ void debuff_monster(monster &mon)
     // effect = true does for PETRIFYING is cause it to turn into
     // ENCH_PETRIFIED. So... let's not do that. (Hacky, sorry!)
 
-    simple_monster_message(mon, "'s magical effects unravel!");
+    simple_monster_message(mon, " magical effects unravel!", true);
 }
 
 // pow -1 for passive
@@ -630,7 +629,7 @@ int detect_items(int pow)
     if (pow >= 0)
         map_radius = 7 + random2(7) + pow;
 
-    else if (you.has_mutation(MUT_STRONG_NOSE))
+    else if (you.has_mutation(MUT_TREASURE_SENSE))
         map_radius = get_los_radius();
     else
     {
@@ -741,14 +740,10 @@ int detect_creatures(int pow, bool telepathic)
 
 spret cast_tomb(int pow, actor* victim, int source, bool fail)
 {
-    // power guidelines:
-    // powc is roughly 50 at Evoc 10 with no godly assistance, ranging
-    // up to 300 or so with godly assistance or end-level, and 1200
-    // as more or less the theoretical maximum.
     const coord_def& where = victim->pos();
     int number_built = 0;
 
-    // This is so dubious. Also duplicates khufu logic in mon-cast.cc.
+    // This is a very dubious set. Maybe we should just use !(feat_is_solid)?
     static const set<dungeon_feature_type> safe_tiles =
     {
         DNGN_SHALLOW_WATER, DNGN_DEEP_WATER, DNGN_FLOOR, DNGN_OPEN_DOOR,
@@ -893,6 +888,20 @@ spret cast_tomb(int pow, actor* victim, int source, bool fail)
             {
                 temp_change_terrain(*ai, DNGN_ROCK_WALL, INFINITE_DURATION,
                                     TERRAIN_CHANGE_TOMB);
+
+                env.grid_colours(*ai) = RED;
+                tile_env.flv(*ai).feat_idx =
+                        store_tilename_get_index("wall_sandstone");
+                tile_env.flv(*ai).feat = TILE_WALL_SANDSTONE;
+                if (env.map_knowledge(*ai).seen())
+                {
+                    env.map_knowledge(*ai).set_feature(DNGN_ROCK_WALL);
+                    env.map_knowledge(*ai).clear_item();
+#ifdef USE_TILE
+                    tile_env.bk_bg(*ai) = TILE_WALL_SANDSTONE;
+                    tile_env.bk_fg(*ai) = 0;
+#endif
+                }
             }
 
             number_built++;
@@ -924,18 +933,43 @@ spret cast_tomb(int pow, actor* victim, int source, bool fail)
     return spret::success;
 }
 
+// Add 6 to this. Damage ranges from 9-12 (avg 10) at 0 invo,
+// to 9-78 at 27 invo.
+dice_def beogh_smiting_dice(int pow, bool allow_random)
+{
+    if (allow_random)
+        return dice_def(3, div_rand_round(pow, 8));
+    else
+        return dice_def(3, pow / 8);
+}
+
 spret cast_smiting(int pow, monster* mons, bool fail)
 {
-    if (mons == nullptr || mons->submerged())
+    if (mons == nullptr)
     {
         fail_check();
         canned_msg(MSG_NOTHING_THERE);
-        // Counts as a real cast, due to invisible/submerged monsters.
+        // Counts as a real cast, due to invisible monsters.
         return spret::success;
     }
 
+    if (mons->friendly())
+    {
+        mpr("Beogh will not strike down an ally of the cause.");
+        return spret::abort;
+    }
+
+    // The above should prevent most cases of attack prompts, but just in case...
     if (stop_attack_prompt(mons, false, you.pos()))
         return spret::abort;
+
+    // No direct divine intervention during apostle challenges
+    if (mons->has_ench(ENCH_TOUCH_OF_BEOGH))
+    {
+        simple_god_message(" booms: This is a trial of mortal prowess."
+                           " Fight with your own strength!");
+        return spret::abort;
+    }
 
     fail_check();
 
@@ -943,14 +977,14 @@ spret cast_smiting(int pow, monster* mons, bool fail)
     set_attack_conducts(conducts, *mons, you.can_see(*mons));
 
     // damage at 0 Invo ranges from 9-12 (avg 10), to 9-72 (avg 40) at 27.
-    int damage = 6 + roll_dice(3, div_rand_round(pow, 8));
+    int damage = 6 + beogh_smiting_dice(pow).roll();
 
     mprf("You smite %s%s",
          mons->name(DESC_THE).c_str(),
          attack_strength_punctuation(damage).c_str());
 
     behaviour_event(mons, ME_ANNOY, &you);
-    mons->hurt(&you, damage);
+    mons->hurt(&you, damage, BEAM_MISSILE, KILLED_BY_BEOGH_SMITING);
 
     if (mons->alive())
     {
@@ -1056,7 +1090,7 @@ void holy_word(int pow, holy_word_source_type source, const coord_def& where,
     holy_word_monsters(where, pow, source, attacker);
 }
 
-void torment_player(const actor *attacker, torment_source_type taux)
+int torment_player(const actor *attacker, torment_source_type taux)
 {
     ASSERT(!crawl_state.game_is_arena());
 
@@ -1067,8 +1101,13 @@ void torment_player(const actor *attacker, torment_source_type taux)
         // Negative energy resistance can alleviate torment.
         hploss = max(0, you.hp * (50 - player_prot_life() * 5) / 100 - 1);
         // Statue form is only partial petrification.
-        if (you.form == transformation::statue)
+        // Vampire form is only partially undead.
+        if (you.form == transformation::statue
+            || you.form == transformation::vampire
+            || you.form == transformation::bat_swarm)
+        {
             hploss /= 2;
+        }
         if (you.has_mutation(MUT_TORMENT_RESISTANCE))
             hploss /= 2;
 #if TAG_MAJOR_VERSION == 34
@@ -1083,16 +1122,17 @@ void torment_player(const actor *attacker, torment_source_type taux)
 
     if (kiku_shielding_player)
     {
+        int kiku_piety = min(piety_breakpoint(5), (int)you.piety);
         if (hploss > 0)
         {
-            if (random2(600) < you.piety) // 13.33% to 33.33% chance
+            if (random2(480) < kiku_piety) // 20.83% to 33.33% chance
             {
                 hploss = 0;
                 simple_god_message(" shields you from torment!");
             }
             // Always give at least partial protection for invoked torment.
-            // 24% to 80% chance for other sources.
-            else if (random2(250) < you.piety || taux == TORMENT_KIKUBAAQUDGHA)
+            // 50% to 80% chance for other sources.
+            else if (random2(200) < kiku_piety || taux == TORMENT_KIKUBAAQUDGHA)
             {
                 hploss -= (1 + random2(hploss - 1));
                 simple_god_message(" partially shields you from torment!");
@@ -1103,7 +1143,7 @@ void torment_player(const actor *attacker, torment_source_type taux)
     if (!hploss)
     {
         mpr("You feel a surge of unholy energy.");
-        return;
+        return 0;
     }
 
     mpr("Your body is wracked with pain!");
@@ -1157,17 +1197,19 @@ void torment_player(const actor *attacker, torment_source_type taux)
 
     ouch(hploss, type, attacker ? attacker->mid : MID_NOBODY, aux);
 
-    return;
+    return hploss;
 }
 
-void torment_cell(coord_def where, actor *attacker, torment_source_type taux)
+int torment_cell(coord_def where, actor *attacker, torment_source_type taux)
 {
+    int damage = 0;
+
     if (where == you.pos()
         // The Sceptre of Torment and pain card do not affect the user.
         && !(attacker && attacker->is_player()
             && (taux == TORMENT_SCEPTRE || taux == TORMENT_CARD_PAIN)))
     {
-        torment_player(attacker, taux);
+        damage = torment_player(attacker, taux);
     }
     // Don't return, since you could be standing on a monster.
 
@@ -1175,12 +1217,13 @@ void torment_cell(coord_def where, actor *attacker, torment_source_type taux)
     if (!mons
         || !mons->alive()
         || mons->res_torment()
+        || attacker && never_harm_monster(attacker, *mons, true)
         // Monsters can't currently use the sceptre, but just in case.
         || attacker
            && mons == attacker->as_monster()
            && taux == TORMENT_SCEPTRE)
     {
-        return;
+        return damage;
     }
 
     god_conduct_trigger conducts[3];
@@ -1230,6 +1273,9 @@ void torment_cell(coord_def where, actor *attacker, torment_source_type taux)
     }
 
     mons->hurt(attacker, hploss, BEAM_TORMENT_DAMAGE);
+    damage += hploss;
+
+    return damage;
 }
 
 void torment(actor *attacker, torment_source_type taux, const coord_def& where)
@@ -1257,7 +1303,7 @@ void setup_cleansing_flame_beam(bolt &beam, int pow,
     if (caster == cleansing_flame_source::generic
         || caster == cleansing_flame_source::tso)
     {
-        beam.thrower   = KILL_MISC;
+        beam.thrower   = KILL_NON_ACTOR;
         beam.source_id = MID_NOBODY;
     }
     else if (attacker->is_player())
@@ -1281,12 +1327,12 @@ void cleansing_flame(int pow, cleansing_flame_source caster, coord_def where,
 {
     bolt beam;
     setup_cleansing_flame_beam(beam, pow, caster, where, attacker);
-    beam.explode();
+    beam.explode(true, caster != cleansing_flame_source::tso);
 }
 
 void majin_bo_vampirism(monster &mon, int damage)
 {
-    if (!player_equip_unrand(UNRAND_MAJIN) || crawl_state.is_god_acting())
+    if (!you.unrand_equipped(UNRAND_MAJIN) || crawl_state.is_god_acting())
         return;
 
     dprf("Majin bo might trigger, dam: %d.", damage);
@@ -1312,9 +1358,23 @@ void majin_bo_vampirism(monster &mon, int damage)
  **/
 void dreamshard_shatter()
 {
-    ASSERT(player_equip_unrand(UNRAND_DREAMSHARD_NECKLACE));
-
+    ASSERT(you.unrand_equipped(UNRAND_DREAMSHARD_NECKLACE));
+    for (player_equip_entry& entry: you.equipment.items)
+    {
+        if (entry.slot != SLOT_AMULET)
+            continue;
+        item_def& item = entry.get_item();
+        if (is_unrandom_artefact(item, UNRAND_DREAMSHARD_NECKLACE))
+        {
+            you.equipment.remove(item);
+            item.unrand_idx = UNRAND_DREAMDUST_NECKLACE;
+            you.equipment.add(item, SLOT_AMULET);
+            break;
+        }
+    }
     mpr("Your necklace shatters, unleashing a wave of protective dreams!");
+    mark_milestone("dreamshard", "was saved by the dreamshard necklace!");
+    take_note(NOTE_DREAMSHARD);
 
     for (int i = 0; i < 5; i++)
     {
@@ -1322,9 +1382,11 @@ void dreamshard_shatter()
         scaled_delay(200);
     }
 
-    vector<string> dreams;
-    if (you.heal(random_range(you.hp_max*0.5, you.hp_max)))
-        dreams.push_back("health");
+    // Don't die until your next turn.
+    you.duration[DUR_POISONING] = 0;
+    set_hp(1);
+    you.props[DREAMSHARD_KEY] = true;
+    vector<string> dreams = {"life"};
 
     if (!you.allies_forbidden())
     {
@@ -1334,7 +1396,7 @@ void dreamshard_shatter()
         {
             mgen_data mg(RANDOM_COMPATIBLE_MONSTER, BEH_FRIENDLY, you.pos(),
                          MHITYOU, MG_FORCE_BEH | MG_AUTOFOE | MG_NO_OOD);
-            mg.set_summoned(&you, 4, MON_SUMM_AID, GOD_NO_GOD);
+            mg.set_summoned(&you, MON_SUMM_AID, summ_dur(4));
             if (create_monster(mg))
                 ++created;
         }
@@ -1354,8 +1416,5 @@ void dreamshard_shatter()
     // when dreams spill out into reality it wakes you up
     // put it here after the dream message so that a sleeping player who
     // gets dreamsharded gets a nice message order
-    you.check_awaken(500);
-
-    dec_inv_item_quantity(you.slot_item(EQ_AMULET,1)->link, 1);
-    ash_check_bondage();
+    you.wake_up();
 }

@@ -33,12 +33,12 @@
     Jan Anders Bremer (underhound.eu)
     Rax E. Dillon (crawl.akrasiac.org)
     dplusplus (lazy-life.ddo.jp)
-    floraline (crawl.kelbi.org)
-    Wongi Hong (webzook.net / kr.dobrazupa.org)
-    Alex Jurkiewicz (crawl.project357.org)
+    mcursa (crawl.project357.org)
     Marc H. Thoben (crawl.develz.org)
-    Namanix (crawl.xtahua.com)
+    melvinkitnick (crawl.xtahua.com)
     ZureaL (cbro.berotato.org)
+    ASCIIPhilia (crawl.nemelex.cards)
+    gammafunk (crawl.dcss.io)
   and past:
     Jan Anders Bremer (crawl.lantea.net)
     John Boyle (crawl.berotato.org)
@@ -49,6 +49,10 @@
     phunktion (crawl.somatika.net)
     sd1989 (kr.dobrazupa.org)
     ZiBuDo (crawl.jorgrun.rocks)
+    floraline (crawl.kelbi.org)
+    Wongi Hong (webzook.net / kr.dobrazupa.org)
+    Alex Jurkiewicz (crawl.project357.org)
+    Namanix (crawl.xtahua.com)
 
 * The members of various usability testing teams from the department of
   Information Processing Science in Oulu University:
@@ -83,6 +87,8 @@
     Mike Adams
     Aj Adamson
     Nikhil Addleman
+    adelrune
+    Ahyangyi
     Alcon
     Brandon Allbery
     Warwick Allison
@@ -105,8 +111,9 @@
     Beargit
     Bill Beher
     Alexander Beisig
+    benadryl
     biasface
-    bjobae
+    Björn Bähre
     Stu Black
     blackcustard
     Peter 'xFleury' Blain
@@ -125,7 +132,9 @@
     Andre Bubel
     Trent W. Buck
     Joe Buzzelli
+    Micah C
     Policarpo Caballero
+    cadi
     Ian Caltabiano
     David Candido
     Edgar Carballo
@@ -143,13 +152,16 @@
     Tom Conrad
     Vitor 'Baconkid' Costa
     RJ Cunningham
+    Cureja
     Aaron Curtis
     Simon Curtis
     cut1less
     Matthew Daley
     David Damerell
+    Darby
     Paul Dejean
     Denzi
+    Sean Dewar
     Ed Dewey
     dicedlemming
     Lothar Dierkes
@@ -174,6 +186,7 @@
     Robert Faulk
     Floodkiller
     floraline
+    Flugkiller
     Brett Foster
     Kyle Fox
     Perry Fraser
@@ -183,6 +196,7 @@
     Ge0ff
     Joshua Gelbard
     Peter Gerlagh
+    Charlie Gettys
     Benoît Giannangeli
     Gittourarmy
     Ben Goetter
@@ -200,20 +214,21 @@
     Sophie Hamilton
     Chris Hamons
     Tomas Krag Hansen
+    Lexi Hattaway
     Taylor Hedberg
     Anders Heggestøyl
     Alex Henry
     R. Dan Henry
-    Max 'Ploomutoo' Hon-Anderson
     Chris Honey
     Sylvia 'Onia' Hörnke
     Benoit Hudson
+    Michael Hunter
     Hurricos
     Iainuki
     ICC
     Icy Lich
+    Wizard Ike
     Ilyak
-    Implojin
     Matthew Ince
     Mitsuhiro Itakura
     Jeekaroose
@@ -225,6 +240,7 @@
     Dominic 'dk' Kexel
     Jarmo Kielosto
     Brandon Kime
+    King7artist
     Kornel Kisielewicz
     Vesa Kivimäki
     Daniel Klein
@@ -241,9 +257,9 @@
     Christopher Landry
     Lantier
     Maciej Lapinski
-    Nikolai Lavsky
     Lamil Lerran
     Jordan Lewis
+    Lici
     Sami Liedes
     Dom 'Bodrick' Light
     Lightli
@@ -267,6 +283,7 @@
     István Markó
     Gabriel Marks
     Jean Martel
+    meckryl
     James 'Eronarn' Meickle
     Jacob Meigs
     mgdelmonte
@@ -284,6 +301,7 @@
     Mushboom
     Rosstin Murphy
     Eva Myers
+    Mystic Sailboat
     nagdon
     Naruni
     neofelis
@@ -298,23 +316,30 @@
     Heinrich Ody
     Chris Oelmueller
     John Olender
+    Nephila Hirsch Oliveira
     Aaron Olowin
     Andrew O'Neill
     Oneirical
     Justin Clark Ong
     Yuuma Oohara
+    orjb1
     Julian Ospald
     Malwyn P
     palyth
     panicbit
+    Paperbell
     Anders Papitto
     William Parker
+    Christopher Partin
     Pedro
     Pekkekke
+    Alejandro Ramirez
     Rytis Petronis
     Arlen Phillips
+    pianoman523
     pikaro
     Lemuel Pitkin
+    valerie "ploomutoo"
     Paul Pollack
     Poroing
     Iago Porto
@@ -322,11 +347,13 @@
     Brian Power
     psywombats
     pubby
+    pyy156941
     Ashley Elizabeth Raine
     randomMesh
     Edward Randtke
     Derek Ray
     RealzHS
+    Robert J. Redelmeier
     Terence Reeves
     Tobias Rehbein
     Remsleep
@@ -343,6 +370,7 @@
     Nate Rook
     David Rose
     runrin
+    rypofalem
     Risto Saarelma
     Sebastian Salman
     Petri Salminen
@@ -350,6 +378,7 @@
     Brett Scarborough
     Roderick Schertler
     sdynet
+    SentientSupper
     Roman Sêk
     Brennan Shacklett
     ShadyAmish
@@ -376,6 +405,7 @@
     John Stilley
     Johan Strandell
     Ben Striegel
+    Bernardo Sulzbach
     Cebolla Sunbeam
     Derrick Sund
     Pavel 'Curio' Svinarchuk
@@ -383,6 +413,7 @@
     Matthew Tadd
     William Tanksley, Jr.
     Tedronai
+    tekkud
     Chris Terenzi
     Jared 'Twinge' Tinney
     Matt Titus
@@ -397,6 +428,7 @@
     Steven Wheeler
     WhiteShark
     Thomas Willem
+    Sam Willett
     Evan Williams
     Mara Williamson
     Jeremey Wilson
@@ -433,16 +465,19 @@ The Dungeon Crawl Stone Soup development team is:
     Brendan Hickey
     Aidan Holm
     Pete Hurst
+    Implojin
     Eino Keskitalo
     Vsevolod Kozlov
     Janne Lahdenperä
     Pekka Lampila
     Raphaël Langella
     Nat Lanza
+    Nikolai Lavsky
     Jesse Luehrs
     Alan Malloy
     Shmuale Mark
     John McCartney
+    Félix Medrano
     Steve Melenchuk
     Neil Middleton
     Seve Monahan

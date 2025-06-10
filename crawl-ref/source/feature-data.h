@@ -52,7 +52,7 @@ static feature_def feat_defs[] =
     DNGN_RUNED_DOOR, "runed door", "runed_door",
     DCHAR_DOOR_CLOSED, NUM_DCHAR_TYPES,
     COLOUR_AND_MAP(LIGHTBLUE),
-    FFT_OPAQUE | FFT_SOLID | FFT_NOTABLE, MF_DOOR,
+    FFT_OPAQUE | FFT_SOLID, MF_DOOR,
 },
 
 {
@@ -80,7 +80,7 @@ static feature_def feat_defs[] =
     DNGN_RUNED_CLEAR_DOOR, "runed translucent door", "runed_clear_door",
     DCHAR_DOOR_CLOSED, NUM_DCHAR_TYPES,
     COLOUR_AND_MAP(LIGHTCYAN),
-    FFT_SOLID | FFT_NOTABLE, MF_DOOR,
+    FFT_SOLID, MF_DOOR,
 },
 
 {
@@ -185,27 +185,34 @@ static feature_def feat_defs[] =
     DNGN_OPEN_SEA, "the open sea", "open_sea",
     DCHAR_WALL, NUM_DCHAR_TYPES,
     COLOUR_IS(BLUE),
-    FFT_SOLID, MF_DEEP_WATER,
+    FFT_WALL | FFT_SOLID, MF_DEEP_WATER,
 },
 
 {
     DNGN_LAVA_SEA, "the endless lava", "endless_lava",
     DCHAR_WALL, NUM_DCHAR_TYPES,
     COLOUR_IS(RED),
-    FFT_SOLID, MF_LAVA,
+    FFT_WALL | FFT_SOLID, MF_LAVA,
 },
 
 {
     DNGN_ENDLESS_SALT, "endless expanse of salt", "endless_salt",
     DCHAR_WALL, NUM_DCHAR_TYPES,
     COLOUR_IS(WHITE),
-    FFT_SOLID, MF_FLOOR,
+    FFT_WALL | FFT_SOLID, MF_FLOOR,
 },
 
 {
     DNGN_ORCISH_IDOL, "orcish idol", "orcish_idol",
     DCHAR_STATUE, NUM_DCHAR_TYPES,
     COLOUR_IS(BROWN),
+    FFT_SOLID, MF_WALL,
+},
+
+{
+    DNGN_METAL_STATUE, "metal statue", "metal_statue",
+    DCHAR_STATUE, NUM_DCHAR_TYPES,
+    COLOUR_IS(DARKGREY),
     FFT_SOLID, MF_WALL,
 },
 
@@ -220,7 +227,7 @@ static feature_def feat_defs[] =
     DNGN_MALIGN_GATEWAY, "portal to somewhere", "malign_gateway",
     DCHAR_ARCH, NUM_DCHAR_TYPES,
     COLOURS(ETC_SHIMMER_BLUE, LIGHTGREY),
-    FFT_SOLID, MF_STAIR_UP,
+    FFT_SOLID, MF_WALL,
 },
 
 {
@@ -252,7 +259,21 @@ static feature_def feat_defs[] =
 },
 
 {
+    DNGN_MUD, "some mud", "mud",
+    DCHAR_SHALLOW_WAVY, NUM_DCHAR_TYPES,
+    COLOUR_IS(BROWN),
+    FFT_NONE, MF_FLOOR,
+},
+
+{
     DNGN_FLOOR, "floor", "floor",
+    DCHAR_FLOOR, DCHAR_FLOOR_MAGIC,
+    COLOUR_IS(ETC_FLOOR),
+    FFT_NONE, MF_FLOOR,
+},
+
+{
+    DNGN_ORB_DAIS, "the orb dais", "orb dais",
     DCHAR_FLOOR, DCHAR_FLOOR_MAGIC,
     COLOUR_IS(ETC_FLOOR),
     FFT_NONE, MF_FLOOR,
@@ -312,10 +333,7 @@ static feature_def feat_defs[] =
 
 #if TAG_MAJOR_VERSION == 34
 TRAP(DNGN_TRAP_MECHANICAL, "mechanical trap", "trap_mechanical", LIGHTCYAN),
-TRAP(DNGN_TRAP_ARROW, "arrow trap", "trap_mechanical", LIGHTCYAN),
 TRAP(DNGN_TRAP_SPEAR, "spear trap", "trap_mechanical", LIGHTCYAN),
-TRAP(DNGN_TRAP_BLADE, "blade trap", "trap_mechanical", LIGHTCYAN),
-TRAP(DNGN_TRAP_DART, "dart trap", "trap_mechanical", LIGHTCYAN),
 TRAP(DNGN_TRAP_BOLT, "bolt trap", "trap_mechanical", LIGHTCYAN),
 #endif
 TRAP(DNGN_TRAP_NET, "net trap", "trap_mechanical", LIGHTCYAN),
@@ -327,6 +345,10 @@ TRAP(DNGN_TRAP_TELEPORT_PERMANENT, "permanent teleport trap", "trap_teleport_per
 TRAP(DNGN_TRAP_SHADOW, "shadow trap", "trap_shadow", BLUE),
 TRAP(DNGN_TRAP_SHADOW_DORMANT, "dormant shadow trap", "trap_shadow_dormant", BLUE),
 #endif
+TRAP(DNGN_TRAP_TYRANT, "tyrant's trap", "trap_tyrant", WHITE),
+TRAP(DNGN_TRAP_ARCHMAGE, "archmage's trap", "trap_archmage", BLUE),
+TRAP(DNGN_TRAP_HARLEQUIN, "harlequin's trap", "trap_harlequin", YELLOW),
+TRAP(DNGN_TRAP_DEVOURER, "devourer's trap", "trap_devourer", LIGHTGREEN),
 TRAP(DNGN_TRAP_ALARM, "alarm trap", "trap_alarm", LIGHTRED),
 TRAP(DNGN_TRAP_ZOT, "Zot trap", "trap_zot", LIGHTMAGENTA),
 TRAP(DNGN_PASSAGE_OF_GOLUBRIA, "passage of Golubria", "passage of golubria", GREEN),
@@ -473,6 +495,7 @@ PORTAL_ENTRANCE(DNGN_ENTER_PORTAL_VAULT, "gate leading to a distant place", "ent
 PORTAL_ENTRANCE(DNGN_ENTER_ZIGGURAT, "one-way gateway to a ziggurat", "enter_ziggurat", ETC_SHIMMER_BLUE),
 PORTAL_ENTRANCE(DNGN_ENTER_BAZAAR, "gateway to a bazaar", "enter_bazaar", ETC_SHIMMER_BLUE),
 PORTAL_ENTRANCE(DNGN_ENTER_TROVE, "portal to a secret trove of treasure", "enter_trove", BLUE),
+PORTAL_ENTRANCE(DNGN_ENTER_NECROPOLIS, "phantasmal passage", "enter_necropolis", LIGHTGREEN),
 PORTAL_ENTRANCE(DNGN_ENTER_SEWER, "glowing drain", "enter_sewer", LIGHTGREEN),
 PORTAL_ENTRANCE(DNGN_ENTER_OSSUARY, "sand-covered staircase", "enter_ossuary", BROWN),
 PORTAL_ENTRANCE(DNGN_ENTER_BAILEY, "flagged portal", "enter_bailey", LIGHTRED),
@@ -482,12 +505,14 @@ PORTAL_ENTRANCE(DNGN_ENTER_VOLCANO, "dark tunnel", "enter_volcano", RED),
 PORTAL_ENTRANCE(DNGN_ENTER_WIZLAB, "magical portal", "enter_wizlab", ETC_SHIMMER_BLUE),
 PORTAL_ENTRANCE(DNGN_ENTER_DESOLATION, "crumbling gateway", "enter_desolation", WHITE),
 PORTAL_ENTRANCE(DNGN_ENTER_ARENA, "gate leading to Okawaru's Arena", "enter_arena", WHITE),
+PORTAL_ENTRANCE(DNGN_ENTER_CRUCIBLE, "gate leading to the Crucible of Flesh", "enter_crucible", WHITE),
 #if TAG_MAJOR_VERSION == 34
 PORTAL_EXIT(DNGN_EXIT_PORTAL_VAULT, "gate leading back out of this place", "exit_portal_vault", ETC_SHIMMER_BLUE),
 #endif
 PORTAL_EXIT(DNGN_EXIT_ZIGGURAT, "gate leading back out of this place", "exit_ziggurat", ETC_SHIMMER_BLUE),
 PORTAL_EXIT(DNGN_EXIT_BAZAAR, "gate leading back out of this place", "exit_bazaar", ETC_SHIMMER_BLUE),
 PORTAL_EXIT(DNGN_EXIT_TROVE, "gate leading back out of this place", "exit_trove", BLUE),
+PORTAL_EXIT(DNGN_EXIT_NECROPOLIS, "gate leading back out of this place", "exit_necropolis", LIGHTGREEN),
 PORTAL_EXIT(DNGN_EXIT_SEWER, "gate leading back out of this place", "exit_sewer", BROWN),
 PORTAL_EXIT(DNGN_EXIT_OSSUARY, "gate leading back out of this place", "exit_ossuary", BROWN),
 PORTAL_EXIT(DNGN_EXIT_BAILEY, "gate leading back out of this place", "exit_bailey", ETC_SHIMMER_BLUE),
@@ -497,6 +522,7 @@ PORTAL_EXIT(DNGN_EXIT_VOLCANO, "rocky tunnel leading out of this place", "exit_v
 PORTAL_EXIT(DNGN_EXIT_WIZLAB, "portal leading out of this place", "exit_wizlab", ETC_SHIMMER_BLUE),
 PORTAL_EXIT(DNGN_EXIT_DESOLATION, "gate leading back out of this place", "exit_desolation", WHITE),
 PORTAL_EXIT(DNGN_EXIT_ARENA, "gate leading back out of this place", "exit_arena", WHITE),
+PORTAL_EXIT(DNGN_EXIT_CRUCIBLE, "gate leading back out of this place", "exit_crucible", WHITE),
 
 #define BRANCH_ENTRANCE(enum, name, vaultname)\
 {\
@@ -626,6 +652,7 @@ ALTAR(DNGN_ALTAR_IGNIS, "candlelit altar of Ignis", "altar_ignis", ETC_CANDLES),
 FOUNTAIN(DNGN_FOUNTAIN_BLUE, "fountain of clear blue water", "fountain_blue", BLUE),
 FOUNTAIN(DNGN_FOUNTAIN_SPARKLING, "fountain of sparkling water", "fountain_sparkling", LIGHTBLUE),
 FOUNTAIN(DNGN_FOUNTAIN_BLOOD, "fountain of blood", "fountain_blood", RED),
+FOUNTAIN(DNGN_FOUNTAIN_EYES, "fountain of eyes", "fountain_eyes", MAGENTA),
 FOUNTAIN(DNGN_DRY_FOUNTAIN, "dry fountain", "dry_fountain", LIGHTGREY),
 #if TAG_MAJOR_VERSION == 34
 FOUNTAIN(DNGN_DRY_FOUNTAIN_BLUE, "dry fountain", "non-fountain_blue", LIGHTGREY),
@@ -633,7 +660,30 @@ FOUNTAIN(DNGN_DRY_FOUNTAIN_SPARKLING, "dry fountain", "non-fountain_sparkling", 
 FOUNTAIN(DNGN_DRY_FOUNTAIN_BLOOD, "dry fountain", "non-fountain_blood", LIGHTGREY),
 #endif
 
+FOUNTAIN(DNGN_DECORATIVE_FLOOR, "decorative floor", "decorative_floor", DARKGREY),
+
 FOUNTAIN(DNGN_RUNELIGHT, "runelight", "runelight", ETC_DISJUNCTION),
+
+{
+    DNGN_CACHE_OF_BAKED_GOODS, "cache of baked goods", "cache of baked goods",
+    DCHAR_ITEM_SKELETON, NUM_DCHAR_TYPES,
+    COLOUR_AND_MAP(YELLOW),
+    FFT_NONE, MF_FLOOR,
+},
+
+{
+    DNGN_CACHE_OF_FRUIT, "cache of fruit", "cache of fruit",
+    DCHAR_ITEM_SKELETON, NUM_DCHAR_TYPES,
+    COLOUR_AND_MAP(GREEN),
+    FFT_NONE, MF_FLOOR,
+},
+
+{
+    DNGN_CACHE_OF_MEAT, "cache of meat", "cache of meat",
+    DCHAR_ITEM_SKELETON, NUM_DCHAR_TYPES,
+    COLOUR_AND_MAP(BROWN),
+    FFT_NONE, MF_FLOOR,
+},
 
 #if TAG_MAJOR_VERSION == 34
 {
@@ -676,6 +726,27 @@ FOUNTAIN(DNGN_RUNELIGHT, "runelight", "runelight", ETC_DISJUNCTION),
     DCHAR_STAIRS_DOWN, NUM_DCHAR_TYPES,
     COLOUR_AND_MAP(LIGHTCYAN),
     FFT_NONE, MF_STAIR_BRANCH,
+},
+
+{
+    DNGN_BINDING_SIGIL, "a binding sigil", "binding_sigil",
+    DCHAR_TRAP, NUM_DCHAR_TYPES,
+    COLOUR_AND_MAP(RED),
+    FFT_NONE, MF_FLOOR,
+},
+
+{
+    DNGN_SPIKE_LAUNCHER, "spike launcher", "spike_launcher",
+    DCHAR_WALL, DCHAR_WALL_MAGIC,
+    COLOUR_IS(LIGHTRED),
+    FFT_OPAQUE | FFT_WALL | FFT_SOLID, MF_WALL,
+},
+
+{
+    DNGN_FRIGID_WALL, "frigid wall", "frigid wall",
+    DCHAR_WALL, DCHAR_FLOOR,
+    COLOUR_IS(ETC_ICE),
+    FFT_OPAQUE | FFT_WALL | FFT_SOLID, MF_WALL,
 },
 
 };

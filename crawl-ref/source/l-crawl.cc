@@ -141,6 +141,39 @@ LUAFN(crawl_dpr)
     return 0;
 }
 
+/*** Returns a string representation of the stack of either the current clua
+ * state or that of a coroutine. This is useful for debugging clua code.
+ * @tparam[opt] coroutine A coroutine to analyze instead of the current clua state.
+ * @treturn string The stack trace
+ * @function stack
+ */
+LUAFN(crawl_stack)
+{
+    lua_State *ls1 = ls;
+    if (lua_isthread(ls, 1))
+        ls1 = lua_tothread(ls, 1);
+
+    string r;
+    struct lua_Debug dbg;
+    int i = 0;
+    while (lua_getstack(ls1, i++, &dbg) == 1)
+    {
+        lua_getinfo(ls1, "lnS", &dbg);
+        char* file = strrchr(dbg.short_src, '/');
+        if (file == nullptr)
+            file = dbg.short_src;
+        else
+            file++;
+        char buf[1000];
+        snprintf(buf, 1000, "%s, function %s, line %d\n", file, dbg.name,
+                dbg.currentline);
+        r += buf;
+    }
+
+    lua_pushstring(ls, r.c_str());
+    return 1;
+}
+
 /*** Delay the display.
  * @tparam int ms delay in milliseconds
  * @function delay
@@ -294,7 +327,9 @@ static int crawl_yesno(lua_State *ls)
 
 static void crawl_sendkeys_proc(lua_State *ls, int argi)
 {
-    if (lua_isstring(ls, argi))
+    if (lua_type(ls, argi) == LUA_TNUMBER)
+        macro_sendkeys_end_add_expanded(luaL_safe_checkint(ls, argi));
+    else if (lua_isstring(ls, argi))
     {
         const char *keys = luaL_checkstring(ls, argi);
         if (!keys)
@@ -322,8 +357,6 @@ static void crawl_sendkeys_proc(lua_State *ls, int argi)
             lua_pop(ls, 1);
         }
     }
-    else if (lua_isnumber(ls, argi))
-        macro_sendkeys_end_add_expanded(luaL_safe_checkint(ls, argi));
 }
 
 /*** Send keypresses to crawl.
@@ -929,11 +962,11 @@ static int crawl_split(lua_State *ls)
 
 /*** Compare two strings in a locale-independent way.
  * Lua's built in comparison operations for strings are dependent on locale,
- * which isn't always desireable. This is just a wrapper on
+ * which isn't always desirable. This is just a wrapper on
  * std::basic_string::compare.
  *
  * @tparam string s1 the first string.
- * @tparam string s2 the second sring.
+ * @tparam string s2 the second string.
  * @treturn number -1 if s1 < s2, 1 if s2 < s1, 0 if s1 == s2.
  * @function string_compare
  */
@@ -1248,21 +1281,6 @@ static int crawl_is_webtiles(lua_State *ls)
     return 1;
 }
 
-/*** Are we using the touch ui?
- * @treturn boolean
- * @function is_touch_ui
- */
-static int crawl_is_touch_ui(lua_State *ls)
-{
-#ifdef TOUCH_UI
-    lua_pushboolean(ls, true);
-#else
-    lua_pushboolean(ls, false);
-#endif
-
-    return 1;
-}
-
 /*** Look up the current key bound to a command.
  * @tparam string name Name as in cmd-name.h
  * @treturn string|nil
@@ -1286,7 +1304,6 @@ static int crawl_get_command(lua_State *ls)
     return 1;
 }
 
-LUAWRAP(crawl_endgame, screen_end_game(luaL_checkstring(ls, 1)))
 LUAWRAP(crawl_tutorial_skill, set_tutorial_skill(luaL_checkstring(ls, 1), luaL_safe_checkint(ls, 2)))
 LUAWRAP(crawl_tutorial_hint, tutorial_init_hint(luaL_checkstring(ls, 1)))
 LUAWRAP(crawl_print_hint, print_hint(luaL_checkstring(ls, 1), luaL_optstring(ls, 2, ""), luaL_optstring(ls, 3, "")))
@@ -1464,6 +1481,7 @@ static const struct luaL_reg crawl_clib[] =
     { "mpr",                crawl_mpr },
     { "formatted_mpr",      crawl_formatted_mpr },
     { "dpr",                crawl_dpr },
+    { "stack",              crawl_stack },
     { "stderr",             crawl_stderr },
     { "more",               crawl_more },
     { "more_autoclear",     crawl_set_more_autoclear },
@@ -1520,10 +1538,8 @@ static const struct luaL_reg crawl_clib[] =
     { "stat_gain_prompt",   crawl_stat_gain_prompt },
     { "is_tiles",           crawl_is_tiles },
     { "is_webtiles",        crawl_is_webtiles },
-    { "is_touch_ui",        crawl_is_touch_ui },
     { "err_trace",          crawl_err_trace },
     { "get_command",        crawl_get_command },
-    { "endgame",            crawl_endgame },
     { "tutorial_msg",       crawl_tutorial_msg },
     { "dump_char",          crawl_dump_char },
 #ifdef WIZARD
@@ -1705,7 +1721,7 @@ LUAFN(_crawl_unavailable_god)
 /*** Divine voices.
  * @within dlua
  * @tparam string Name of a current crawl god.
- * @tparam string Speach
+ * @tparam string Speech
  * @function god_speaks
  */
 LUAFN(_crawl_god_speaks)
@@ -1788,6 +1804,11 @@ LUAFN(crawl_rng_wrap)
 
 LUAWRAP(crawl_clear_message_store, clear_message_store())
 
+/*** Whether the crawl process has seen a HUP or INT signal.
+ * @treturn int the number of hups seen
+ * @function seen_hups
+ */
+LUARET1(crawl_seen_hups, number, crawl_state.seen_hups)
 
 static const struct luaL_reg crawl_dlib[] =
 {
@@ -1806,6 +1827,7 @@ static const struct luaL_reg crawl_dlib[] =
 { "unavailable_god", _crawl_unavailable_god },
 { "rng_wrap", crawl_rng_wrap },
 { "clear_message_store", crawl_clear_message_store },
+{ "seen_hups", crawl_seen_hups },
 
 { nullptr, nullptr }
 };

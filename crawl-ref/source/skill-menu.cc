@@ -3,10 +3,12 @@
  * @brief Skill menu.
 **/
 
+// this precompiled header must be the first include otherwise
+// includes before it will be ignored without any warning in MSVC
+#include "AppHdr.h"
+
 #include <cmath>
 #include <clocale>
-
-#include "AppHdr.h"
 
 #include "skill-menu.h"
 
@@ -51,6 +53,15 @@ bool SkillTextTileItem::handle_mouse(const wm_mouse_event& me)
             return false;
 
         skm.select(sk, 'A');
+        return true;
+    }
+    else if (me.event == wm_mouse_event::PRESS
+        && me.button == wm_mouse_event::RIGHT)
+    {
+        skill_type sk = skill_type(get_id());
+        if (is_invalid_skill(sk))
+            return false;
+        describe_skill(sk);
         return true;
     }
     else
@@ -310,7 +321,9 @@ void SkillMenuEntry::set_aptitude()
     else
         text += make_stringf(" %d", apt);
 
-    text += "</white> ";
+    text += "</white>";
+    if (apt < 10 && apt > -10)
+        text += " ";
 
     if (manual)
     {
@@ -494,9 +507,19 @@ static bool _any_crosstrained()
     return false;
 }
 
+static bool _charlatan_bonus()
+{
+    if (you.unrand_equipped(UNRAND_CHARLATANS_ORB)
+        && you.skill(SK_EVOCATIONS, 10, true) > 0)
+    {
+        return true;
+    }
+    return false;
+}
+
 static bool _hermit_bonus()
 {
-    if (player_equip_unrand(UNRAND_HERMITS_PENDANT)
+    if (you.unrand_equipped(UNRAND_HERMITS_PENDANT)
         && you.skill(SK_INVOCATIONS, 10,  true) < 140)
     {
         return true;
@@ -506,7 +529,7 @@ static bool _hermit_bonus()
 
 static bool _hermit_penalty()
 {
-    if (player_equip_unrand(UNRAND_HERMITS_PENDANT))
+    if (you.unrand_equipped(UNRAND_HERMITS_PENDANT))
     {
         if (you.skill(SK_EVOCATIONS, 10, true) > 0
             || you.skill(SK_INVOCATIONS, 10, true) > 140)
@@ -555,6 +578,10 @@ string SkillMenuSwitch::get_help()
                 causes.push_back("cross-training");
             if (_hermit_bonus())
                 causes.push_back("the Hermit's pendant");
+            if (_charlatan_bonus())
+                causes.push_back("the Charlatan's Orb");
+            if (you.form == transformation::walking_scroll)
+                causes.push_back("scribal knowledge");
             result = "Skills enhanced by "
                      + comma_separated_line(causes.begin(), causes.end())
                      + " are in <green>green</green>.";
@@ -911,8 +938,17 @@ int SkillMenu::read_skill_target(skill_type sk)
         return -1;
     }
     else
+    {
         input = round(atof(result_buf) * 10.0);    // TODO: parse fixed point?
-
+        if (input > 270)
+        {
+            // 27.0 is the maximum target
+            set_help("<lightred>Your training target must be 27 or below!</lightred>");
+            return -1;
+        }
+        else
+            set_help("");
+    }
     you.set_training_target(sk, input);
     cancel_set_target();
     refresh_display();
@@ -991,6 +1027,20 @@ bool SkillMenu::do_skill_enabled_check()
         // menu. Training will be fixed up on load.
         ASSERT(!you.has_mutation(MUT_DISTRIBUTED_TRAINING));
         set_help("<lightred>You need to enable at least one skill.</lightred>");
+        // It can be confusing if the only trainable skills are hidden. Turn on
+        // SKM_SHOW_ALL if so.
+        if (get_state(SKM_SHOW) == SKM_SHOW_DEFAULT)
+        {
+            bool showing_trainable = false;
+            for (skill_type sk = SK_FIRST_SKILL; sk < NUM_SKILLS; ++sk)
+                if (_show_skill(sk, SKM_SHOW_DEFAULT) && can_enable_skill(sk))
+                {
+                    showing_trainable = true;
+                    break;
+                }
+            if (!showing_trainable)
+                toggle(SKM_SHOW);
+        }
         return false;
     }
     return true;
@@ -1527,15 +1577,20 @@ void SkillMenu::toggle_practise(skill_type sk, int keyn)
     if (keyn >= 'A' && keyn <= 'Z')
         you.train.init(TRAINING_DISABLED);
     if (get_state(SKM_DO) == SKM_DO_PRACTISE)
-        you.train[sk] = (you.train[sk] ? TRAINING_DISABLED : TRAINING_ENABLED);
+        set_training_status(sk, you.train[sk] ? TRAINING_DISABLED : TRAINING_ENABLED);
     else if (get_state(SKM_DO) == SKM_DO_FOCUS)
-    {
-        you.train[sk]
-            = (training_status)((you.train[sk] + 1) % NUM_TRAINING_STATUSES);
-    }
+        set_training_status(sk, (training_status)((you.train[sk] + 1) % NUM_TRAINING_STATUSES));
     else
         die("Invalid state.");
     reset_training();
+    if (is_magic_skill(sk) && you.has_mutation(MUT_INNATE_CASTER))
+    {
+        // This toggles every single magic skill, so let's just regenerate the display.
+        refresh_display();
+        return;
+    }
+
+    // Otherwise, only toggle the affected skill button.
     SkillMenuEntry* skme = find_entry(sk);
     skme->set_name(true);
     const vector<int> hotkeys = skme->get_name_item()->get_hotkeys();
@@ -1796,11 +1851,9 @@ void skill_menu(int flag, int exp)
                     return true;
                 }
             // Fallthrough
-            case ' ':
-                // Space and escape exit in any mode.
-                if (skm.exit(false))
-                    return done = true;
             default:
+                if (ui::key_exits_popup(keyn, true) && skm.exit(false))
+                    return done = true;
                 // Don't exit from !experience on random keys.
                 if (!skm.is_set(SKMF_EXPERIENCE) && skm.exit(false))
                     return done = true;
@@ -1858,7 +1911,7 @@ void skill_menu(int flag, int exp)
         return;
     }
 
-    ui::run_layout(move(popup), done);
+    ui::run_layout(std::move(popup), done);
 
     skm.clear();
 }

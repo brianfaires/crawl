@@ -23,11 +23,15 @@ int mkstemp(char *dummy);
 # endif
 #endif
 
+#ifdef __ANDROID__
+bool jni_keyboard_control(bool toggle);
+#endif
+
 #ifndef CRAWL_HAVE_FDATASYNC
 int fdatasync(int fd);
 #endif
 
-#ifdef NEED_USLEEP
+#ifndef CRAWL_HAVE_USLEEP
 void usleep(unsigned long time);
 #endif
 

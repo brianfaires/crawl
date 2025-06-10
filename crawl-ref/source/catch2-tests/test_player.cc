@@ -1,4 +1,4 @@
-#include "catch.hpp"
+#include "catch_amalgamated.hpp"
 
 #include "AppHdr.h"
 #include "mutation.h"
@@ -58,14 +58,6 @@ TEST_CASE_METHOD(MockPlayerYouTestsFixture,
           "Check tough_skin", "[single-file]" ) {
 
     mutate(MUT_TOUGH_SKIN, "testing");
-
-    REQUIRE(you.base_ac(100) == 100);
-}
-
-TEST_CASE_METHOD(MockPlayerYouTestsFixture,
-          "Check shaggy fur", "[single-file]" ) {
-
-    mutate(MUT_SHAGGY_FUR, "testing");
 
     REQUIRE(you.base_ac(100) == 100);
 }

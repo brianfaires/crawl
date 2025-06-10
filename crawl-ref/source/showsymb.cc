@@ -72,6 +72,13 @@ static unsigned short _cell_feat_show_colour(const map_cell& cell,
                 colour = LIGHTGREY; // 1/12
         }
     }
+    else if (cell.flags & MAP_BFB_CORPSE)
+        colour = LIGHTRED;
+    else if (!feat_is_solid(feat)
+             && (cell.flags & MAP_BLASPHEMY))
+    {
+        colour = LIGHTMAGENTA;
+    }
     else if (cell.flags & MAP_BLOODY && !norecolour && Options.show_blood)
         colour = RED;
     else if (cell.flags & MAP_CORRODING && feat == DNGN_FLOOR)
@@ -103,6 +110,9 @@ static unsigned short _cell_feat_show_colour(const map_cell& cell,
     if (feat_is_tree(feat) && env.forest_awoken_until)
         colour = ETC_AWOKEN_FOREST;
 
+    if (feat == DNGN_MUD)
+        colour = BROWN;
+
     if (feat == DNGN_FLOOR)
     {
         if (cell.flags & MAP_LIQUEFIED)
@@ -129,14 +139,12 @@ static unsigned short _cell_feat_show_colour(const map_cell& cell,
         }
         else if (cell.flags & MAP_SILENCED)
             colour = CYAN; // Silence but no holy/unholy
+        else if (env.pgrid(loc) & FPROP_SEISMOROCK)
+            colour = BROWN;
         else if (cell.flags & MAP_ORB_HALOED)
             colour = ETC_ORB_GLOW;
         else if (cell.flags & MAP_QUAD_HALOED)
             colour = BLUE;
-#if TAG_MAJOR_VERSION == 34
-        else if (cell.flags & MAP_HOT)
-            colour = ETC_FIRE;
-#endif
     }
 
     return colour;
@@ -144,27 +152,10 @@ static unsigned short _cell_feat_show_colour(const map_cell& cell,
 
 static monster_type _show_mons_type(const monster_info& mi)
 {
-    if (mi.type == MONS_SLIME_CREATURE && mi.slime_size > 1)
-        return MONS_MERGED_SLIME_CREATURE;
-    else if (mi.type == MONS_ZOMBIE)
-    {
-        return mons_zombie_size(mi.base_type) == Z_BIG ?
-            MONS_ZOMBIE_LARGE : MONS_ZOMBIE_SMALL;
-    }
-    else if (mi.type == MONS_SKELETON)
-    {
-        return mons_zombie_size(mi.base_type) == Z_BIG ?
-            MONS_SKELETON_LARGE : MONS_SKELETON_SMALL;
-    }
-    else if (mi.type == MONS_SIMULACRUM)
-    {
-        return mons_zombie_size(mi.base_type) == Z_BIG ?
-            MONS_SIMULACRUM_LARGE : MONS_SIMULACRUM_SMALL;
-    }
-    else if (mi.type == MONS_SENSED)
+    if (mi.type == MONS_SENSED)
         return mi.base_type;
-
-    return mi.type;
+    else
+        return mi.type;
 }
 
 static int _get_mons_colour(const monster_info& mi)
@@ -179,12 +170,21 @@ static int _get_mons_colour(const monster_info& mi)
 
     int col = mi.colour();
 
-    // We really shouldn't store unmodified colour. This hack compares
-    // effective type, but really, all redefinitions should work instantly,
-    // rather than for newly spawned monsters only.
-    monster_type stype = _show_mons_type(mi);
-    if (stype != mi.type && mi.type != MONS_SENSED)
-        col = mons_class_colour(stype);
+    // Automatically adjust the color of a few monsters based on their state,
+    // assuming the user has not remapped their colour.
+    if (col == mons_class_colour(mi.type))
+    {
+        if (mi.type == MONS_SLIME_CREATURE && mi.slime_size > 1)
+            col = LIGHTGREEN;
+        else if (mi.type == MONS_ZOMBIE && mons_zombie_size(mi.base_type) == Z_BIG)
+            col = YELLOW;
+        else if (mi.type == MONS_SIMULACRUM && mons_zombie_size(mi.base_type) == Z_BIG)
+            col = LIGHTCYAN;
+        else if (mi.type == MONS_SKELETON && mons_zombie_size(mi.base_type) == Z_BIG)
+            col = WHITE;
+        else if (mi.type == MONS_SPECTRAL_THING && mons_zombie_size(mi.base_type) == Z_BIG)
+            col = LIGHTGREEN;
+    }
 
     if (mi.is(MB_ROLLING))
         col = ETC_BONE;
@@ -208,9 +208,15 @@ static int _get_mons_colour(const monster_info& mi)
         col |= COLFLAG_WILLSTAB;
     }
     else if (Options.may_stab_highlight != CHATTR_NORMAL
-             && mi.is(MB_DISTRACTED))
+             && mi.is(MB_MAYBE_STABBABLE))
     {
         col |= COLFLAG_MAYSTAB;
+    }
+    else if (Options.unusual_highlight != CHATTR_NORMAL
+             && mi.attitude == ATT_HOSTILE
+             && mi.has_unusual_items())
+    {
+        col |= COLFLAG_UNUSUAL_MASK;
     }
     else if (mons_class_is_stationary(mi.type))
     {
@@ -309,11 +315,13 @@ show_class get_cell_show_class(const map_cell& cell,
     if (feat && feat_is_solid(feat)
         || feat_has_dry_floor(feat)
            && feat != DNGN_FLOOR
+           && feat != DNGN_ORB_DAIS
            && !feat_is_open_door(feat)
            && feat != DNGN_ABANDONED_SHOP
            && feat != DNGN_STONE_ARCH
            && feat != DNGN_EXPIRED_PORTAL
-           && !feat_is_fountain(feat))
+           && !feat_is_fountain(feat)
+           && feat != DNGN_DECORATIVE_FLOOR)
     {
         return SH_FEATURE;
     }
@@ -521,7 +529,7 @@ static cglyph_t _get_cell_glyph_with_class(const map_cell& cell,
 
         g = _get_item_override(*eitem);
 
-        if (feat_is_water(cell.feat()))
+        if (!feat_has_dry_floor(cell.feat()))
             g.col = _cell_feat_show_colour(cell, loc, coloured);
         else if (!g.col)
             g.col = eitem->get_colour();
@@ -550,6 +558,9 @@ static cglyph_t _get_cell_glyph_with_class(const map_cell& cell,
 
         g.col |= COLFLAG_REVERSE;
     }
+
+    if (cell.flags & MAP_BFB_CORPSE)
+        g.col |= COLFLAG_UNUSUAL_MASK;
 
     if (!g.ch)
     {

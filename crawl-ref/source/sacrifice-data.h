@@ -38,7 +38,7 @@ static const sacrifice_def sac_data[] =
 },
 
 { ABIL_RU_SACRIFICE_WORDS, MUT_READ_SAFETY,
-  "sacrifice your ability to read when badly injured",
+  "sacrifice your ability to read when injured",
   "sacrificed words",
 
   30,
@@ -48,7 +48,7 @@ static const sacrifice_def sac_data[] =
 },
 
 { ABIL_RU_SACRIFICE_DRINK, MUT_DRINK_SAFETY,
-  "sacrifice your ability to drink when badly injured",
+  "sacrifice your ability to drink when injured",
   "sacrificed drink",
 
   30,
@@ -154,7 +154,7 @@ static const sacrifice_def sac_data[] =
   65,
   SK_SHIELDS,
   nullptr,
-  nullptr,
+  []() { return !you.has_mutation(MUT_WIELD_OFFHAND); },
 },
 
 { ABIL_RU_SACRIFICE_EXPERIENCE, MUT_INEXPERIENCED,
@@ -164,7 +164,7 @@ static const sacrifice_def sac_data[] =
   35,
   SK_NONE,
   nullptr,
-  []() { return you.experience_level > RU_SAC_XP_LEVELS; }
+  []() { return you.experience_level > RU_SAC_XP_LEVELS; },
 },
 
 { ABIL_RU_SACRIFICE_SKILL, MUT_UNSKILLED,
@@ -193,6 +193,16 @@ static const sacrifice_def sac_data[] =
 
   50,
   SK_NONE,
+  nullptr,
+  nullptr,
+},
+
+{ ABIL_RU_SACRIFICE_FORMS, MUT_NO_FORMS,
+  "sacrifice your ability to change forms",
+  "sacrificed forms",
+
+  7,
+  SK_SHAPESHIFTING,
   nullptr,
   nullptr,
 },

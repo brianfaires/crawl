@@ -53,7 +53,7 @@ DiamondLayout::operator()(const coord_def &p, const uint32_t offset) const
     uint8_t cellSize = halfCell * 2;
     uint8_t x = abs(abs(p.x) % cellSize - halfCell);
     uint8_t y = abs(abs(p.y) % cellSize - halfCell);
-    if (x+y < w)
+    if (static_cast<uint32_t>(x+y) < w)
     {
         dungeon_feature_type feat = _pick_pseudorandom_wall(hash3(p.x/w, p.y/w, 2));
         return ProceduralSample(p, feat, offset + 4096);
@@ -202,6 +202,7 @@ dungeon_feature_type sanitize_feature(dungeon_feature_type feature, bool strict)
     {
         case DNGN_SEALED_DOOR:
             return DNGN_CLOSED_DOOR;
+        case DNGN_RUNED_CLEAR_DOOR:
         case DNGN_SEALED_CLEAR_DOOR:
             return DNGN_CLOSED_CLEAR_DOOR;
         case DNGN_PERMAROCK_WALL:
@@ -210,7 +211,11 @@ dungeon_feature_type sanitize_feature(dungeon_feature_type feature, bool strict)
             return DNGN_CLEAR_ROCK_WALL;
         case DNGN_SLIMY_WALL:
             return DNGN_CRYSTAL_WALL; // !?
+        case DNGN_METAL_STATUE:
+        case DNGN_ORB_DAIS:
+            return DNGN_GRANITE_STATUE;
         case DNGN_UNSEEN:
+        case DNGN_DECORATIVE_FLOOR:
         case DNGN_ENDLESS_SALT:
             return DNGN_FLOOR;
         case DNGN_OPEN_SEA:
@@ -219,6 +224,15 @@ dungeon_feature_type sanitize_feature(dungeon_feature_type feature, bool strict)
             return DNGN_LAVA;
         case DNGN_ENTER_SHOP:
             return DNGN_ABANDONED_SHOP;
+        case DNGN_FOUNTAIN_BLUE:
+        case DNGN_FOUNTAIN_SPARKLING:
+        case DNGN_DRY_FOUNTAIN:
+        {
+            if (player_in_branch(BRANCH_ABYSS))
+                return DNGN_FOUNTAIN_EYES; // de-sanitizing, really
+            else
+                return feature;
+        }
         default:
             return feature;
     }
@@ -391,7 +405,7 @@ UnderworldLayout::operator()(const coord_def &p, const uint32_t offset) const
     //  * Wet cities have
     //  * City + water areas have lateral bridges
     //  * Borrow some easing functions from somewhere to better
-    //    control how features vary across bounaries
+    //    control how features vary across boundaries
     //  * Look at surrounding squares to determine gradients - will help
     //    with lateral features and also e.g. growing plants on sunlit mountainsides...
     //  * Use some lateral wetness to try and join mountain streams up to rivers...

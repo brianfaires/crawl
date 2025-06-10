@@ -32,12 +32,6 @@ puissants magiciens peuvent lever une véritable armée de stupides
 morts-vivants. Notez que les zombies sont incapables de quitter le niveau où
 ils ont été créés.
 %%%%
-Animate Skeleton spell
-
-Ce sort insuffle la non-vie dans un squelette inerte, même si ce squelette est
-encore enfermé dans la chair ! Notez que les squelettes sont incapables de
-quitter le niveau où ils ont été créés.
-%%%%
 Apportation spell
 
 Ce sort permet au sorcier déplacer instantanément un objet, ou un groupe
@@ -119,12 +113,6 @@ degré qui dépend de (et inversement lié à) sa compétence magique.
 Ce sortilège est assez puissant pour littéralement extirper quelqu'un des
 griffes de la mort, mais il choquera le sorcier au point de le rendre incapable
 d'agir pendant un moment.
-%%%%
-Brain Feed spell
-
-Ce sort permet de diminuer une partie de l'intelligence de l'ennemi. Une telle
-perte n'est que temporaire, et les anneaux de soutien de facultés peuvent
-prévenir ou réduire considérablement cet effet.
 %%%%
 Call Canine Familiar spell
 
@@ -298,10 +286,6 @@ Fireball spell
 
 Ce sort expédie un missile de feu explosif. Ce sortilège n'a aucune coût
 additionnel de niveaux de sorts si le sorcier connait Boule de Feu Retardée.
-%%%%
-Flame Tongue spell
-
-Ce sort crée une courte rafale de flammes.
 %%%%
 Flight spell
 
@@ -763,7 +747,7 @@ Summon Fire Elementals spell
 
 Ce sort invoque un ou plusieurs élémentaires de feu.
 %%%%
-Summon Hell Beast spell
+Summon Sin Beast spell
 
 En utilisant sa corne, Geryon peut convoquer contre vous une meurtrière bête de
 l'enfer.

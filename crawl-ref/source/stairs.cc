@@ -8,6 +8,7 @@
 #include "abyss.h"
 #include "act-iter.h"
 #include "areas.h"
+#include "art-enum.h"
 #include "artefact.h"
 #include "bloodspatter.h"
 #include "branch.h"
@@ -22,6 +23,7 @@
 #include "env.h"
 #include "files.h"
 #include "god-abil.h"
+#include "god-companions.h"
 #include "god-passive.h" // passive_t::slow_abyss
 #include "hints.h"
 #include "hiscores.h"
@@ -31,6 +33,7 @@
 #include "losglobal.h"
 #include "mapmark.h"
 #include "message.h"
+#include "mon-behv.h"
 #include "mon-death.h"
 #include "mon-transit.h" // untag_followers
 #include "movement.h"
@@ -143,7 +146,7 @@ bool check_next_floor_warning()
 
 static void _player_change_level_reset()
 {
-    you.prev_targ  = MHITNOT;
+    you.prev_targ  = MID_NOBODY;
     if (you.pet_target != MHITYOU)
         you.pet_target = MHITNOT;
 
@@ -214,7 +217,10 @@ static void _climb_message(dungeon_feature_type stair, bool going_up,
         return;
 
     if (feat_is_portal(stair))
-        mpr("The world spins around you as you enter the gateway.");
+    {
+        if (stair != DNGN_ENTER_CRUCIBLE)
+            mpr("The world spins around you as you enter the gateway.");
+    }
     else if (feat_is_escape_hatch(stair))
     {
         if (going_up)
@@ -250,11 +256,13 @@ static void _clear_golubria_traps()
     }
 }
 
-static void _clear_prisms()
+static void _remove_unstable_monsters()
 {
     for (auto &mons : menv_real)
-        if (mons.type == MONS_FULMINANT_PRISM)
+    {
+        if (mons_class_flag(mons.type, M_UNSTABLE) && mons.is_summoned())
             mons.reset();
+    }
 }
 
 static void _complete_zig()
@@ -287,9 +295,7 @@ void leaving_level_now(dungeon_feature_type stair_used)
     dungeon_events.fire_event(DET_LEAVING_LEVEL);
 
     _clear_golubria_traps();
-    _clear_prisms();
-
-    end_recall();
+    _remove_unstable_monsters();
 }
 
 static void _update_travel_cache(const level_id& old_level,
@@ -381,6 +387,7 @@ static bool _check_fall_down_stairs(const dungeon_feature_type ftype, bool going
     if (!you.airborne()
         && you.confused()
         && !feat_is_escape_hatch(ftype)
+        && !crawl_state.game_is_descent()
         && coinflip())
     {
         const char* fall_where = "down the stairs";
@@ -408,48 +415,64 @@ static bool _check_fall_down_stairs(const dungeon_feature_type ftype, bool going
 
 static void _rune_effect(dungeon_feature_type ftype)
 {
-    // Nothing even remotely flashy for Zig.
-    if (ftype != DNGN_ENTER_ZIGGURAT)
+    vector<int> runes;
+    for (int i = 0; i < NUM_RUNE_TYPES; i++)
+        if (you.runes[i])
+            runes.push_back(i);
+
+    ASSERT(runes.size() >= 1);
+    shuffle_array(runes);
+
+    // Zot is extra flashy.
+    if (ftype == DNGN_ENTER_ZOT)
     {
-        vector<int> runes;
-        for (int i = 0; i < NUM_RUNE_TYPES; i++)
-            if (you.runes[i])
-                runes.push_back(i);
+        ASSERT(runes.size() >= 3);
 
-        ASSERT(runes.size() >= 1);
-        shuffle_array(runes);
-
-        // Zot is extra flashy.
-        if (ftype == DNGN_ENTER_ZOT)
-        {
-            ASSERT(runes.size() >= 3);
-
-            mprf("You insert the %s rune into the lock.", rune_type_name(runes[2]));
+        mprf("You insert the %s rune into the lock.", rune_type_name(runes[2]));
 #ifdef USE_TILE_LOCAL
-            view_add_tile_overlay(you.pos(), tileidx_zap(rune_colour(runes[2])));
-            viewwindow(false);
-            update_screen();
+        view_add_tile_overlay(you.pos(), tileidx_zap(rune_colour(runes[2])));
+        viewwindow(false);
+        update_screen();
 #else
-            flash_view(UA_BRANCH_ENTRY, rune_colour(runes[2]));
+        flash_view(UA_BRANCH_ENTRY, rune_colour(runes[2]));
 #endif
-            mpr("The lock glows eerily!");
-            // included in default force_more_message
+        mpr("The lock glows eerily!");
+        // included in default force_more_message
 
-            mprf("You insert the %s rune into the lock.", rune_type_name(runes[1]));
-            big_cloud(CLOUD_BLUE_SMOKE, &you, you.pos(), 20, 7 + random2(7));
-            viewwindow();
-            update_screen();
-            mpr("Heavy smoke blows from the lock!");
-            // included in default force_more_message
+        mprf("You insert the %s rune into the lock.", rune_type_name(runes[1]));
+        big_cloud(CLOUD_BLUE_SMOKE, &you, you.pos(), 20, 7 + random2(7));
+        viewwindow();
+        update_screen();
+        mpr("Heavy smoke blows from the lock!");
+        // included in default force_more_message
+    }
+
+    mprf("You insert the %s rune into the lock.", rune_type_name(runes[0]));
+
+    if (silenced(you.pos()))
+        mpr("The gate opens wide!");
+    else
+        mpr("With a soft hiss the gate opens wide!");
+    // these are included in default force_more_message
+}
+
+static void _maybe_use_runes(dungeon_feature_type ftype)
+{
+    switch (ftype)
+    {
+    case DNGN_ENTER_ZOT:
+        if (!you.level_visited(level_id(BRANCH_ZOT, 1)) && !crawl_state.game_is_descent())
+            _rune_effect(ftype);
+        break;
+    case DNGN_EXIT_VAULTS:
+        if (vaults_is_locked())
+        {
+            unlock_vaults();
+            _rune_effect(ftype);
         }
-
-        mprf("You insert the %s rune into the lock.", rune_type_name(runes[0]));
-
-        if (silenced(you.pos()))
-            mpr("The gate opens wide!");
-        else
-            mpr("With a soft hiss the gate opens wide!");
-        // these are included in default force_more_message
+        break;
+    default:
+        break;
     }
 }
 
@@ -472,7 +495,7 @@ static void _hell_effects()
     if (have_passive(passive_t::resist_hell_effects)
         && x_chance_in_y(you.piety, MAX_PIETY * 2) || is_sanctuary(you.pos()))
     {
-        simple_god_message("'s power protects you from the chaos of Hell!");
+        simple_god_message(" power protects you from the chaos of Hell!", true);
         return;
     }
 
@@ -486,19 +509,35 @@ static void _hell_effects()
     if (loud)
         noisy(15, you.pos());
 
-    switch (random2(4))
+    switch (random2(3))
     {
         case 0:
             temp_mutate(RANDOM_BAD_MUTATION, "hell effect");
             break;
         case 1:
-            drain_player(100, true, true);
-            break;
-        case 2:
-            lose_stat(STAT_RANDOM, roll_dice(1, 5));
+            drain_player(85, true, true);
             break;
         default:
             break;
+    }
+}
+
+static void _vainglory_arrival()
+{
+    vector<monster*> mons;
+    for (monster_near_iterator mi(you.pos()); mi; ++mi)
+    {
+        if (!mi->is_firewood() && !mi->wont_attack())
+            mons.push_back(*mi);
+    }
+
+    if (!mons.empty())
+    {
+        mprf(MSGCH_WARN, "You announce your regal presence to all who would look upon you.");
+        for (monster* mon : mons)
+            behaviour_event(mon, ME_ANNOY, &you);
+
+        you.duration[DUR_VAINGLORY] = random_range(120, 220);
     }
 }
 
@@ -638,19 +677,7 @@ static level_id _travel_destination(const dungeon_feature_type how,
 
     // Maybe perform the entry sequence (we check that they have enough runes
     // in main.cc: _can_take_stairs())
-    for (branch_iterator it; it; ++it)
-    {
-        if (how != it->entry_stairs)
-            continue;
-
-        if (!you.level_visited(level_id(it->id, 1))
-            && runes_for_branch(it->id) > 0)
-        {
-            _rune_effect(how);
-        }
-
-        break;
-    }
+    _maybe_use_runes(how);
 
     // Markers might be deleted when removing portals.
     const string dst = env.markers.property_at(you.pos(), MAT_ANY, "dst");
@@ -701,6 +728,14 @@ level_id level_above()
 void rise_through_ceiling()
 {
     const level_id whither = level_above();
+    if (you.where_are_you == BRANCH_DUNGEON
+        && you.depth == 1
+        && player_has_orb())
+    {
+        mpr("With a burst of heat and light, you rocket upward!");
+        floor_transition(DNGN_EXIT_DUNGEON, DNGN_EXIT_DUNGEON,
+                         level_id(BRANCH_DUNGEON, 0), true, true, false, false);
+    }
     if (!whither.is_valid())
     {
         mpr("In a burst of heat and light, you rocket briefly upward... "
@@ -710,6 +745,7 @@ void rise_through_ceiling()
 
     mpr("With a burst of heat and light, you rocket upward!");
     untag_followers(); // XXX: is this needed?
+    stop_delay(true);
     floor_transition(DNGN_ALTAR_IGNIS /*hack*/, DNGN_ALTAR_IGNIS,
                      whither, true, true, false, false);
     you.clear_far_engulf();
@@ -744,11 +780,11 @@ void floor_transition(dungeon_feature_type how,
 
     // We "stepped".
     if (!forced)
-        apply_barbs_damage();
+        player_did_deliberate_movement();
 
     // Magical level changes (which currently only exist "downwards") need this.
     clear_trapping_net();
-    end_wait_spells();
+    stop_channelling_spells();
     you.stop_constricting_all();
     you.stop_being_constricted();
     you.clear_beholders();
@@ -758,6 +794,40 @@ void floor_transition(dungeon_feature_type how,
         jiyva_end_oozemancy();
     if (you.duration[DUR_NOXIOUS_BOG])
         you.duration[DUR_NOXIOUS_BOG] = 0;
+    if (you.duration[DUR_DIMENSIONAL_BULLSEYE])
+    {
+        monster* targ = monster_by_mid(you.props[BULLSEYE_TARGET_KEY].get_int());
+        if (targ)
+            targ->del_ench(ENCH_BULLSEYE_TARGET);
+    }
+    if (yred_torch_is_raised())
+        yred_end_conquest();
+    if (you.duration[DUR_FATHOMLESS_SHACKLES])
+    {
+        you.duration[DUR_FATHOMLESS_SHACKLES] = 0;
+        yred_end_blasphemy();
+    }
+
+    if (you.duration[DUR_BEOGH_DIVINE_CHALLENGE])
+        flee_apostle_challenge();
+
+    if (you.duration[DUR_BLOOD_FOR_BLOOD])
+        beogh_end_blood_for_blood();
+
+    if (you.duration[DUR_BEOGH_CAN_RECRUIT])
+    {
+        you.duration[DUR_BEOGH_CAN_RECRUIT] = 0;
+        end_beogh_recruit_window();
+    }
+
+    if (you.duration[DUR_CACOPHONY])
+    {
+        you.duration[DUR_CACOPHONY] = 0;
+        mprf(MSGCH_DURATION, "Your cacophony subsides as you depart the area.");
+        for (monster_iterator mi; mi; ++mi)
+            if (mi->was_created_by(MON_SUMM_CACOPHONY))
+                monster_die(**mi, KILL_RESET, NON_MONSTER, true);
+    }
 
     // Fire level-leaving trigger.
     leaving_level_now(how);
@@ -933,8 +1003,10 @@ void floor_transition(dungeon_feature_type how,
                 mpr("Zot already knows this place too well. Descend or flee this branch!");
             else
                 mpr("Zot's attention fixes on you again. Descend or flee this branch!");
+#if TAG_MAJOR_VERSION == 34
             if (you.species == SP_METEORAN)
                 update_vision_range();
+#endif
         }
         else if (was_bezotted)
         {
@@ -942,12 +1014,24 @@ void floor_transition(dungeon_feature_type how,
                 mpr("Zot has no power in the Abyss.");
             else
                 mpr("You feel Zot lose track of you.");
+#if TAG_MAJOR_VERSION == 34
             if (you.species == SP_METEORAN)
                 update_vision_range();
+#endif
+        }
+        print_gem_warnings(gem_for_branch(branch), 0);
+
+        if (how == DNGN_ENTER_VAULTS && !runes_in_pack())
+        {
+            lock_vaults();
+            mpr("The door slams shut behind you.");
         }
 
         if (branch == BRANCH_GAUNTLET)
             _gauntlet_effect();
+
+        if (branch == BRANCH_ARENA)
+            okawaru_duel_healing();
 
         const set<branch_type> boring_branch_exits = {
             BRANCH_TEMPLE,
@@ -984,7 +1068,7 @@ void floor_transition(dungeon_feature_type how,
 
     // Warn Formicids if they cannot shaft here
     if (player_has_ability(ABIL_SHAFT_SELF, true)
-                                && !is_valid_shaft_level())
+                                && !is_valid_shaft_level(false))
     {
         mpr("Beware, you cannot shaft yourself on this level.");
     }
@@ -997,6 +1081,10 @@ void floor_transition(dungeon_feature_type how,
         _new_level_amuses_xom(how, whence, shaft,
                               (shaft ? whither.depth - old_level.depth : 1),
                               !forced);
+
+        // scary hack!
+        if (crawl_state.game_is_descent() && !env.properties.exists(DESCENT_STAIRS_KEY))
+            load_level(how, LOAD_RESTART_GAME, old_level);
     }
 
     // This should maybe go in load_level?
@@ -1017,6 +1105,9 @@ void floor_transition(dungeon_feature_type how,
     moveto_location_effects(whence);
     if (is_hell_subbranch(you.where_are_you))
         _hell_effects();
+
+    if (you.unrand_equipped(UNRAND_VAINGLORY))
+        _vainglory_arrival();
 
     trackers_init_new_level();
 
@@ -1207,6 +1298,8 @@ level_id stair_destination(dungeon_feature_type feat, const string &dst,
 
     case DNGN_EXIT_ABYSS:
 #if TAG_MAJOR_VERSION == 34
+        if (you.char_class == JOB_ABYSSAL_KNIGHT && you.level_stack.empty())
+            return level_id(BRANCH_DUNGEON, 1);
     case DNGN_EXIT_PORTAL_VAULT:
 #endif
     case DNGN_EXIT_PANDEMONIUM:
@@ -1242,7 +1335,6 @@ level_id stair_destination(dungeon_feature_type feat, const string &dst,
     return level_id();
 }
 
-// TODO(Zannick): Fully merge with up_stairs into take_stairs.
 void down_stairs(dungeon_feature_type force_stair, bool force_known_shaft, bool update_travel_cache)
 {
     take_stairs(force_stair, false, force_known_shaft, update_travel_cache);
@@ -1258,7 +1350,7 @@ static void _update_level_state()
 
     for (monster_iterator mon_it; mon_it; ++mon_it)
     {
-        if (mons_allows_beogh(**mon_it))
+        if (mons_offers_beogh_conversion(**mon_it))
             env.level_state |= LSTATE_BEOGH;
         if (mon_it->has_ench(ENCH_STILL_WINDS))
             env.level_state |= LSTATE_STILL_WINDS;
@@ -1302,9 +1394,10 @@ static void _update_level_state()
     env.orb_pos = coord_def();
     if (item_def* orb = find_floor_item(OBJ_ORBS, ORB_ZOT))
         env.orb_pos = orb->pos;
-    else if (player_has_orb())
+    else if (player_has_orb() || you.unrand_equipped(UNRAND_CHARLATANS_ORB))
     {
-        env.orb_pos = you.pos();
+        if (player_has_orb())
+            env.orb_pos = you.pos();
         invalidate_agrid(true);
     }
 }

@@ -22,7 +22,6 @@
 
 #define ART_FUNC_H
 
-#include "act-iter.h"      // For autumn katana
 #include "areas.h"         // For silenced() and invalidate_agrid()
 #include "attack.h"        // For attack_strength_punctuation()
 #include "beam.h"          // For Lajatang of Order's silver damage
@@ -33,26 +32,30 @@
 #include "english.h"       // For apostrophise
 #include "exercise.h"      // For practise_evoking
 #include "fight.h"
+#include "fineff.h"        // For the Storm Queen's Shield
 #include "god-conduct.h"   // did_god_conduct
-#include "mgen-data.h"     // For Sceptre of Asmodeus evoke
-#include "melee-attack.h"  // For autumn katana
+#include "mgen-data.h"     // For Sceptre of Asmodeus
+#include "melee-attack.h"  // For Fungal Fisticloak
 #include "message.h"
 #include "monster.h"
 #include "mon-death.h"     // For demon axe's SAME_ATTITUDE
-#include "mon-place.h"     // For Sceptre of Asmodeus evoke
+#include "mon-place.h"     // For Sceptre of Asmodeus
 #include "nearby-danger.h" // For Zhor
 #include "output.h"
 #include "player.h"
+#include "player-reacts.h" // For the consecrated labrys
 #include "player-stats.h"
 #include "showsymb.h"      // For Cigotuvi's Embrace
 #include "spl-cast.h"      // For evokes
-#include "spl-damage.h"    // For the Singing Sword.
+#include "spl-damage.h"    // For the Singing Sword and the Sword of Power.
 #include "spl-goditem.h"   // For Sceptre of Torment tormenting
 #include "spl-miscast.h"   // For Spellbinder and plutonium sword miscasts
 #include "spl-monench.h"   // For Zhor's aura
 #include "spl-summoning.h" // For Zonguldrok animating dead
+#include "spl-transloc.h"  // For Autumn Katana's Manifold Assault
 #include "tag-version.h"
 #include "terrain.h"       // For storm bow
+#include "rltiles/tiledef-main.h"
 #include "unwind.h"        // For autumn katana
 #include "view.h"          // For arc blade's discharge effect
 
@@ -60,6 +63,8 @@
 #define SS_WELCOME_KEY "ss_welcome"
 // similarly, for the majin-bo
 #define MB_WELCOME_KEY "mb_welcome"
+// similarly, for the Skull of Zonguldrok
+#define ZONGULDROK_WELCOME_KEY "zonguldrok_welcome"
 
 /*******************
  * Helper functions.
@@ -226,9 +231,6 @@ static void _THROATCUTTER_melee_effects(item_def* /*weapon*/, actor* attacker,
 
 ////////////////////////////////////////////////////
 
-// XXX: Staff giving a boost to poison spells is hardcoded in
-// player_spec_poison()
-
 static void _OLGREB_equip(item_def */*item*/, bool *show_msgs, bool /*unmeld*/)
 {
     if (you.can_smell())
@@ -248,10 +250,10 @@ static void _OLGREB_unequip(item_def */*item*/, bool *show_msgs)
 // Based on melee_attack::staff_damage(), but using only evocations skill.
 static int _calc_olgreb_damage(actor* attacker, actor* defender)
 {
-    int base_dam = 0;
-    if (x_chance_in_y(attacker->skill(SK_EVOCATIONS, 100), 1000))
-        base_dam = random2(attacker->skill(SK_EVOCATIONS, 150) / 80);
+    if (!x_chance_in_y(attacker->skill(SK_EVOCATIONS, 100), 1000))
+        return 0;
 
+    const int base_dam = random2(attacker->skill(SK_EVOCATIONS, 150) / 80);
     return resist_adjust_damage(defender, BEAM_POISON_ARROW, base_dam);
 }
 
@@ -287,18 +289,28 @@ static void _POWER_equip(item_def * /* item */, bool *show_msgs,
 static void _POWER_melee_effects(item_def* /*weapon*/, actor* attacker,
                                  actor* defender, bool mondied, int /*dam*/)
 {
-    if (!mondied && x_chance_in_y(min(attacker->stat_hp() / 10, 27), 27))
-    {
-        bolt beam;
-        beam.thrower   = attacker->is_player() ? KILL_YOU : KILL_MON;
-        beam.source    = attacker->pos();
-        beam.source_id = attacker->mid;
-        beam.attitude  = attacker->temp_attitude();
-        beam.range = 4;
-        beam.target = defender->pos();
-        zappy(ZAP_SWORD_BEAM, 100, false, beam);
-        beam.fire();
-    }
+    if (mondied)
+        return;
+
+    const int num_beams = div_rand_round(attacker->stat_hp(), 270);
+    coord_def targ = defender->pos();
+
+    for (int i = 0; i < num_beams; i++)
+        fire_life_bolt(*attacker, targ);
+}
+
+////////////////////////////////////////////////////
+
+static void _HOLY_AXE_world_reacts(item_def *item)
+{
+    const int horror_level = current_horror_level();
+    // Caps at the obsidian axe's base enchant.
+    const int plus = min(horror_level * 3 + 4, 16);
+    if (item->plus == plus)
+        return;
+
+    item->plus = plus;
+    you.wield_change = true;
 }
 
 ////////////////////////////////////////////////////
@@ -448,23 +460,6 @@ static void _TROG_unequip(item_def */*item*/, bool *show_msgs)
 
 ///////////////////////////////////////////////////
 
-// XXX: Always getting maximal vampiric drain is hardcoded in
-// attack::apply_damage_brand()
-
-static void _VAMPIRES_TOOTH_equip(item_def */*item*/, bool *show_msgs, bool /*unmeld*/)
-{
-    if (!you.has_mutation(MUT_VAMPIRISM))
-        _equip_mpr(show_msgs, "You feel strangely empty.");
-    else if (you.vampire_alive)
-    {
-        _equip_mpr(show_msgs,
-                   "You feel a strange hunger, and smell blood in the air...");
-    }
-    // else let player-equip.cc handle message
-}
-
-///////////////////////////////////////////////////
-
 static void _VARIABILITY_melee_effects(item_def* /*weapon*/, actor* attacker,
                                        actor* /*defender*/, bool mondied,
                                        int /*dam*/)
@@ -513,10 +508,31 @@ static void _GONG_melee_effects(item_def* /*item*/, actor* wearer,
 
 ///////////////////////////////////////////////////
 
+static void _STORM_QUEEN_melee_effects(item_def* /*item*/, actor* wearer,
+                                       actor* attacker, bool /*dummy*/,
+                                       int /*dam*/)
+{
+    // Discharge does 3d(4 + pow*3/2) damage, so each point of power does
+    // an average of another 9/4 points of retaliation damage (~2).
+    // Let's try 3d7 damage at 1/3 chance. This is broadly comparable to
+    // elec brand - same average damage per trigger, higher trigger chance,
+    // but checks (half) AC - and triggers on block instead of attack :)
+    if (!attacker || !one_chance_in(3)) return;
+    shock_discharge_fineff::schedule(wearer, *attacker,
+                                     wearer->pos(), 3,
+                                     "shield");
+
+}
+
+///////////////////////////////////////////////////
+
 static void _DEMON_AXE_melee_effects(item_def* /*item*/, actor* attacker,
-                                     actor* /*defender*/, bool /*mondied*/,
+                                     actor* defender, bool /*mondied*/,
                                      int /*dam*/)
 {
+    if (defender->is_peripheral())
+        return;
+
     if (one_chance_in(10))
     {
         if (monster* mons = attacker->as_monster())
@@ -524,10 +540,20 @@ static void _DEMON_AXE_melee_effects(item_def* /*item*/, actor* attacker,
             create_monster(
                 mgen_data(summon_any_demon(RANDOM_DEMON_COMMON),
                           SAME_ATTITUDE(mons), mons->pos(), mons->foe)
-                .set_summoned(mons, 6, SPELL_SUMMON_DEMON));
+                .set_summoned(mons, SPELL_SUMMON_DEMON, summ_dur(6)));
         }
         else if (!you.allies_forbidden())
-            cast_summon_demon(50 + random2(100));
+        {
+            monster_type type = (one_chance_in(3) ? random_demon_by_tier(3)
+                                                  : random_demon_by_tier(4));
+            if (create_monster(
+                    mgen_data(type, BEH_COPY, you.pos(), MHITYOU, MG_FORCE_BEH | MG_AUTOFOE)
+                    .set_summoned(&you, SPELL_SUMMON_DEMON, summ_dur(6))))
+            {
+                mpr("A gate to Pandemonium opens briefly!");
+            }
+        }
+
     }
 }
 
@@ -632,7 +658,7 @@ static void _WYRMBANE_melee_effects(item_def* weapon, actor* attacker,
         return;
 
     // The cap can be reached by:
-    // * iron dragon, golden dragon, pearl dragon (18)
+    // * iron dragon, golden dragon, pearl dragon, wyrmhole (18)
     // * Xtahua (19)
     // * bone dragon, Serpent of Hell (20)
     // * Tiamat (22)
@@ -684,6 +710,17 @@ static void _EOS_equip(item_def */*item*/, bool */*show_msgs*/, bool /*unmeld*/)
 }
 
 static void _EOS_unequip(item_def */*item*/, bool */*show_msgs*/)
+{
+    invalidate_agrid(true);
+}
+
+///////////////////////////////////////////////////
+static void _BRILLIANCE_equip(item_def */*item*/, bool */*show_msgs*/, bool /*unmeld*/)
+{
+    invalidate_agrid(true);
+}
+
+static void _BRILLIANCE_unequip(item_def */*item*/, bool */*show_msgs*/)
 {
     invalidate_agrid(true);
 }
@@ -747,25 +784,40 @@ static void _NIGHT_unequip(item_def */*item*/, bool *show_msgs)
 
 ///////////////////////////////////////////////////
 
-static void _PLUTONIUM_SWORD_melee_effects(item_def* /*weapon*/,
+static const vector<string> plutonium_player_msg = {
+};
+
+static void _PLUTONIUM_SWORD_melee_effects(item_def* weapon,
                                            actor* attacker, actor* defender,
-                                           bool mondied, int dam)
+                                           bool mondied, int /*dam*/)
 {
     if (!mondied && one_chance_in(5) && defender->can_mutate())
     {
-        mpr("Mutagenic energy flows through the plutonium sword!");
+        if (you.can_see(*attacker))
+        {
+            mprf("Mutagenic energy flows through %s!",
+                 weapon->name(DESC_THE, false, false, false).c_str());
+        }
 
         if (attacker->is_player())
             did_god_conduct(DID_CHAOS, 3);
 
         if (one_chance_in(10))
-            defender->polymorph(0); // Low duration if applied to the player.
+        {
+            defender->polymorph(random_range(7, 14)); // Low duration if applied to the player.
+            return;
+        }
+
+        if (defender->is_monster())
+            defender->malmutate(attacker, "the plutonium sword");
         else
         {
-            miscast_effect(*defender, attacker, {miscast_source::melee},
-                           spschool::transmutation, 5, random2(dam),
-                           "the plutonium sword");
+            mpr(random_choose("Your body deforms painfully.",
+                              "Your limbs ache and wobble like jelly.",
+                              "Your body is flooded with magical radiation."));
+            contaminate_player(random_range(3500, 6500));
         }
+        defender->hurt(attacker, random_range(5, 25));
     }
 }
 
@@ -775,10 +827,7 @@ static void _SNAKEBITE_melee_effects(item_def* /*weapon*/, actor* attacker,
                                      actor* defender, bool mondied, int /*dam*/)
 {
     if (!mondied && x_chance_in_y(2, 5))
-    {
-        curare_actor(attacker, defender, 2, "curare",
-                     attacker->name(DESC_PLAIN));
-    }
+        curare_actor(attacker, defender, "curare", attacker->name(DESC_PLAIN));
 }
 
 ///////////////////////////////////////////////////
@@ -791,7 +840,7 @@ static void _WOE_melee_effects(item_def* /*weapon*/, actor* attacker,
     {
     case 0: verb = "cleave", adv = " in twain"; break;
     case 1: verb = "pulverise", adv = " into a thin bloody mist"; break;
-    case 2: verb = "hew", adv = " savagely"; break;
+    case 2: verb = "hew", adv = " violently"; break;
     case 3: verb = "fatally mangle", adv = ""; break;
     case 4: verb = "dissect", adv = " like a pig carcass"; break;
     case 5: verb = "chop", adv = " into pieces"; break;
@@ -810,7 +859,7 @@ static void _WOE_melee_effects(item_def* /*weapon*/, actor* attacker,
     if (!mondied)
         defender->hurt(attacker, defender->stat_hp());
 
-    if (defender->as_monster()->can_bleed())
+    if (defender->as_monster()->has_blood())
     {
         blood_spray(defender->pos(), defender->as_monster()->type,
                     random_range(5, 10));
@@ -820,16 +869,10 @@ static void _WOE_melee_effects(item_def* /*weapon*/, actor* attacker,
 
 ///////////////////////////////////////////////////
 
-static setup_missile_type _DAMNATION_launch(item_def* /*item*/, bolt* beam,
-                                           string* ammo_name, bool* /*returning*/)
+static void _DAMNATION_launch(bolt* beam)
 {
-    ASSERT(beam->item
-           && beam->item->base_type == OBJ_MISSILES
-           && !is_artefact(*(beam->item)));
-    beam->item->props[DAMNATION_BOLT_KEY].get_bool() = true;
 
     beam->name    = "damnation bolt";
-    *ammo_name    = "a damnation bolt";
     beam->colour  = LIGHTRED;
     beam->glyph   = DCHAR_FIRED_ZAP;
 
@@ -838,9 +881,9 @@ static setup_missile_type _DAMNATION_launch(item_def* /*item*/, bolt* beam,
     expl->is_explosion = true;
     expl->damage = dice_def(2, 14);
     expl->name   = "damnation";
+    expl->tile_explode = TILE_BOLT_DAMNATION;
 
     beam->special_explosion = expl;
-    return SM_FINISHED;
 }
 
 ///////////////////////////////////////////////////
@@ -858,12 +901,16 @@ static setup_missile_type _DAMNATION_launch(item_def* /*item*/, bolt* beam,
 static int _calc_elemental_staff_damage(beam_type flavour,
                                         actor* defender)
 {
-    const int base_bonus_dam = 10 + random2(15);
+    int preac = 10 + random2(15);
 
-    if (flavour == BEAM_NONE) // earth
-        return defender->apply_ac(base_bonus_dam);
+    if (flavour == BEAM_FIRE || flavour == BEAM_COLD)
+        preac = div_rand_round(preac * 5, 4);
 
-    return resist_adjust_damage(defender, flavour, base_bonus_dam);
+    const ac_type ac_check = flavour == BEAM_ELECTRICITY ? ac_type::half
+                                                         : ac_type::normal;
+    const int postac = defender->apply_ac(preac, 0, ac_check);
+
+    return resist_adjust_damage(defender, flavour, postac);
 }
 
 static void _ELEMENTAL_STAFF_melee_effects(item_def*, actor* attacker,
@@ -892,10 +939,12 @@ static void _ELEMENTAL_STAFF_melee_effects(item_def*, actor* attacker,
         flavour = BEAM_ELECTRICITY;
         break;
     default:
+        // XXX TODO removeme
         dprf("Bad damage type for elemental staff; defaulting to earth");
         // fallthrough to earth
     case 3:
         verb = "crush";
+        flavour = BEAM_MMISSILE;
         break;
     }
 
@@ -914,7 +963,7 @@ static void _ELEMENTAL_STAFF_melee_effects(item_def*, actor* attacker,
     defender->hurt(attacker, bonus_dam, flavour);
 
     if (defender->alive() && flavour != BEAM_NONE)
-        defender->expose_to_element(flavour, 2);
+        defender->expose_to_element(flavour, 2, attacker);
 }
 
 ///////////////////////////////////////////////////
@@ -930,7 +979,7 @@ static void _ARC_BLADE_unequip(item_def */*item*/, bool *show_msgs)
 }
 
 static void _ARC_BLADE_melee_effects(item_def* /*weapon*/, actor* attacker,
-                                     actor* /*defender*/, bool /*mondied*/,
+                                     actor* defender, bool /*mondied*/,
                                      int /*dam*/)
 {
     if (one_chance_in(3))
@@ -942,7 +991,10 @@ static void _ARC_BLADE_melee_effects(item_def* /*weapon*/, actor* attacker,
         else
             mpr("You hear the crackle of electricity.");
 
-        cast_discharge(pow, *attacker, false, false);
+        if (attacker->pos().distance_from(defender->pos()) <= 1)
+            cast_discharge(pow, *attacker, false, false);
+        else
+            discharge_at_location(pow, *attacker, defender->pos());
     }
 }
 
@@ -1013,6 +1065,17 @@ static void _FIRESTARTER_melee_effects(item_def* /*weapon*/, actor* attacker,
     }
 }
 
+////////////////////////////////////////////////////
+static void _FORCE_LANCE_melee_effects(item_def* /*weapon*/, actor* attacker,
+                                       actor* defender, bool mondied, int dam)
+{
+    if (mondied || !dam || !one_chance_in(3)) return;
+    // max power on a !!! hit (ie 36+ damage), but try to make some damage
+    // quite likely to beat AC on any collision.
+    const int collide_damage = 7 + roll_dice(3, div_rand_round(min(36, dam), 4));
+    defender->knockback(*attacker, 1, collide_damage, "blow");
+}
+
 ///////////////////////////////////////////////////
 
 #if TAG_MAJOR_VERSION == 34
@@ -1072,10 +1135,10 @@ static void _FLAMING_DEATH_melee_effects(item_def* /*weapon*/, actor* attacker,
     if (!mondied && (dam > 2 && one_chance_in(3)))
     {
         if (defender->is_player())
-            napalm_player(random2avg(7, 3) + 1, attacker->name(DESC_A, true));
+            sticky_flame_player(5, 10, attacker->name(DESC_A, true));
         else
         {
-            napalm_monster(
+            sticky_flame_monster(
                 defender->as_monster(),
                 attacker,
                 min(4, 1 + random2(attacker->get_hit_dice())/2));
@@ -1118,15 +1181,10 @@ static int _octorings_worn()
 {
     int worn = 0;
 
-    for (int i = EQ_LEFT_RING; i < NUM_EQUIP; ++i)
-    {
-        if (you.melded[i] || you.equip[i] == -1)
-            continue;
-
-        item_def& ring = you.inv[you.equip[i]];
-        if (is_unrandom_artefact(ring, UNRAND_OCTOPUS_KING_RING))
+    vector<item_def*> rings = you.equipment.get_slot_items(SLOT_RING);
+    for (item_def* ring : rings)
+        if (is_unrandom_artefact(*ring, UNRAND_OCTOPUS_KING_RING))
             worn++;
-    }
 
     return worn;
 }
@@ -1266,20 +1324,11 @@ static void _FROSTBITE_melee_effects(item_def* /*weapon*/, actor* attacker,
 
 // Vampiric effect triggers on every hit, see attack::apply_damage_brand()
 
-static void _LEECH_equip(item_def */*item*/, bool *show_msgs, bool /*unmeld*/)
-{
-    if (!you.has_mutation(MUT_VAMPIRISM))
-        _equip_mpr(show_msgs, "You feel very empty.");
-    else if (you.vampire_alive)
-        _equip_mpr(show_msgs, "You feel a powerful hunger.");
-    // else let player-equip.cc handle message
-}
-
 // Big killing blows give a bloodsplosion effect sometimes
 static void _LEECH_melee_effects(item_def* /*item*/, actor* attacker,
                                  actor* defender, bool mondied, int dam)
 {
-    if (attacker->is_player() && defender->can_bleed()
+    if (attacker->is_player() && defender->has_blood()
         && mondied && x_chance_in_y(dam, 729))
     {
         simple_monster_message(*(defender->as_monster()),
@@ -1332,7 +1381,7 @@ static void _THERMIC_ENGINE_melee_effects(item_def* weapon, actor* attacker,
 
         defender->hurt(attacker, bonus_dam, BEAM_COLD);
         if (defender->alive())
-            defender->expose_to_element(BEAM_COLD, 2);
+            defender->expose_to_element(BEAM_COLD, 2, attacker);
     }
 }
 
@@ -1353,6 +1402,9 @@ static void _THERMIC_ENGINE_world_reacts(item_def *item)
 
 static void _ZHOR_world_reacts(item_def */*item*/)
 {
+    if (!you.time_taken)
+        return;
+
     if (there_are_monsters_nearby(true, false, false)
         && one_chance_in(7 * div_rand_round(BASELINE_DELAY, you.time_taken)))
     {
@@ -1361,9 +1413,6 @@ static void _ZHOR_world_reacts(item_def */*item*/)
 }
 
 ////////////////////////////////////////////////////
-
-// XXX: Staff of Battle giving a boost to conjuration spells is hardcoded in
-// player_spec_conj().
 
 static void _BATTLE_unequip(item_def */*item*/, bool */*show_msgs*/)
 {
@@ -1374,21 +1423,11 @@ static void _BATTLE_world_reacts(item_def */*item*/)
 {
     if (!find_battlesphere(&you)
         && there_are_monsters_nearby(true, true, false)
-        && stop_summoning_reason(MR_RES_POISON, M_FLIES).empty())
+        && you_can_see_habitable_spot_near(HT_FLYER, 2))
     {
-        cast_battlesphere(&you, calc_spell_power(SPELL_BATTLESPHERE, true),
-                          GOD_NO_GOD, false);
+        const int pow = div_rand_round(15 + you.skill(SK_CONJURATIONS, 15), 3);
+        cast_battlesphere(&you, pow, false);
         did_god_conduct(DID_WIZARDLY_ITEM, 10);
-    }
-}
-
-static void _BATTLE_melee_effects(item_def* /*weapon*/, actor* attacker,
-                                  actor* /*defender*/, bool /*mondied*/, int /*dam*/)
-{
-    if (attacker)
-    {
-        aim_battlesphere(attacker, SPELL_MAGIC_DART);
-        trigger_battlesphere(attacker);
     }
 }
 
@@ -1419,7 +1458,8 @@ static int _harvest_corpses()
         for (stack_iterator si(*ri, true); si; ++si)
         {
             item_def &item = *si;
-            if (item.base_type != OBJ_CORPSES)
+            // Don't encourage hoarding old skeletons. Full corpses only.
+            if (!item.is_type(OBJ_CORPSES, CORPSE_BODY))
                 continue;
 
             // forbid harvesting orcs under Beogh
@@ -1521,9 +1561,9 @@ static void _SALAMANDER_world_reacts(item_def * /* item */)
 
 ////////////////////////////////////////////////////
 
-static void _GUARD_unequip(item_def * /* item */, bool * show_msgs)
+static void _GUARD_unequip(item_def *item, bool * show_msgs)
 {
-    monster *spectral_weapon = find_spectral_weapon(&you);
+    monster *spectral_weapon = find_spectral_weapon(*item);
     if (spectral_weapon)
     {
         _equip_mpr(show_msgs, "Your spectral weapon disappears.");
@@ -1538,7 +1578,7 @@ static void _WUCAD_MU_equip(item_def */*item*/, bool *show_msgs,
 {
     if (you.has_mutation(MUT_HP_CASTING))
     {
-        _equip_mpr(show_msgs, "The staff is unable to connect with your "
+        _equip_mpr(show_msgs, "The crystal ball is unable to connect with your "
                               "magical essence.");
     }
 }
@@ -1594,6 +1634,8 @@ static void _POWER_GLOVES_unequip(item_def * /*item*/, bool *show_msgs)
         _equip_mpr(show_msgs, "The surge of magic dissipates.");
 }
 
+////////////////////////////////////////////////////
+
 static void _DREAMSHARD_NECKLACE_equip(item_def * /*item*/, bool *show_msgs,
                                       bool /*unmeld*/)
 {
@@ -1605,7 +1647,7 @@ static void _DREAMSHARD_NECKLACE_unequip(item_def * /* item */, bool * show_msgs
     _equip_mpr(show_msgs, "The world feels relentlessly logical and grey.");
 }
 
-//
+////////////////////////////////////////////////////
 
 static void _AUTUMN_KATANA_melee_effects(item_def* /*weapon*/, actor* attacker,
     actor* defender, bool /*mondied*/, int /*dam*/)
@@ -1613,64 +1655,246 @@ static void _AUTUMN_KATANA_melee_effects(item_def* /*weapon*/, actor* attacker,
     // HACK: yes this is in a header but it's only included once
     static bool _slicing = false;
 
-    if (!one_chance_in(5) || _slicing || !defender)
+    if (!one_chance_in(8) || _slicing || !defender)
         return;
 
     unwind_bool nonrecursive_space(_slicing, true);
 
-    vector<actor *> targets;
-    for (actor_near_iterator ai(attacker, LOS_NO_TRANS); ai; ++ai)
-    {
-        if (defender->pos() == ai->pos())
-            continue;
-
-        if (mons_aligned(attacker, *ai))
-            continue;
-        if (attacker->is_player()
-            && (ai->wont_attack()
-                || mons_attitude(*ai->as_monster()) == ATT_NEUTRAL))
-        {
-            continue;
-        }
-        if (ai->is_monster() && (mons_is_firewood(*ai->as_monster())
-                                 || mons_is_projectile(*ai->as_monster())))
-        {
-            continue;
-        }
-        targets.emplace_back(*ai);
-    }
-
-    if (targets.empty())
+    // If attempting to cast manifold assault would abort (likely because of no
+    // valid targets in range), do nothing
+    if (cast_manifold_assault(*attacker, 0, false, false, defender) == spret::abort)
         return;
 
     mprf("%s slice%s through the folds of space itself!",
          attacker->name(DESC_THE).c_str(),
          attacker->is_player() ? "" : "s");
 
-    // Save the time taken by the player before slicing, was set by the
-    // melee_attack that called us or left over from the player's previous turn
-    unwind_var<int> initial_time(you.time_taken);
+    // Casting with 100 power = up to 8 targets hit
+    cast_manifold_assault(*attacker, 100, false, true, defender);
+}
 
-    shuffle_array(targets);
-    const size_t max_targets = 4;
-    for (size_t i = 0; i < max_targets && i < targets.size(); i++)
+///////////////////////////////////////////////////
+
+static void _FINGER_AMULET_world_reacts(item_def */*item*/)
+{
+    did_god_conduct(DID_EVIL, 1);
+}
+
+///////////////////////////////////////////////////
+
+static void _reset_victory_stats(item_def *item)
+{
+    int &bonus_stats = item->props[VICTORY_STAT_KEY].get_int();
+    if (bonus_stats > 0)
     {
-        melee_attack atk(attacker, targets[i]);
-        atk.is_projected = true;
-        atk.attack();
+        bonus_stats = 0;
+        item->plus = get_unrand_entry(item->unrand_idx)->plus;
+        artefact_set_property(*item, ARTP_SLAYING, bonus_stats);
+        artefact_set_property(*item, ARTP_INTELLIGENCE, bonus_stats);
+        mprf(MSGCH_WARN, "%s stops glowing.", item->name(DESC_THE, false, true,
+                                                         false).c_str());
 
-        if (!attacker->alive())
-            break;
+        you.redraw_armour_class = true;
+        notify_stat_change();
+    }
+}
+
+static void _VICTORY_unequip(item_def *item, bool */*show_msgs*/)
+{
+    if (!you.unrand_equipped(UNRAND_VICTORY, true))
+        _reset_victory_stats(item);
+}
+
+#define VICTORY_STAT_CAP 7
+
+static void _VICTORY_death_effects(item_def *item, monster* mons,
+                                   killer_type killer)
+{
+    // No bonus for killing friendlies, neutrals, summons, etc.
+    if (killer != KILL_YOU && killer != KILL_YOU_MISSILE
+        || !mons_gives_xp(*mons, you))
+    {
+        return;
+    }
+
+    const mon_threat_level_type threat = mons_threat_level(*mons);
+
+    // Increased chance of victory bonus from more dangerous mons.
+    // Using threat for this is kludgy, but easily visible to players.
+    if (threat == MTHRT_NASTY || (threat == MTHRT_TOUGH && x_chance_in_y(1, 4)))
+    {
+        int &bonus_stats = item->props[VICTORY_STAT_KEY].get_int();
+        if (bonus_stats < VICTORY_STAT_CAP)
+        {
+            bonus_stats++;
+            item->plus = bonus_stats;
+            artefact_set_property(*item, ARTP_SLAYING, bonus_stats);
+            artefact_set_property(*item, ARTP_INTELLIGENCE, bonus_stats);
+            mprf(MSGCH_GOD, GOD_OKAWARU, "%s glows%s.",
+                 item->name(DESC_THE, false, true, false).c_str(),
+                 bonus_stats == VICTORY_STAT_CAP ? " brightly" : "");
+
+            you.redraw_armour_class = true;
+            notify_stat_change();
+        }
+    }
+}
+
+static void _VICTORY_world_reacts(item_def *item)
+{
+    if (you.props.exists(VICTORY_CONDUCT_KEY))
+    {
+        _reset_victory_stats(item);
+        you.props.erase(VICTORY_CONDUCT_KEY);
+    }
+}
+
+static void _VICTORY_equip(item_def *item, bool */*show_msgs*/, bool /*unmeld*/)
+{
+    _VICTORY_world_reacts(item);
+}
+
+////////////////////////////////////////////////////
+
+static void _ASMODEUS_melee_effects(item_def* /*weapon*/, actor* attacker,
+                                    actor* defender, bool /*mondied*/,
+                                    int /*dam*/)
+{
+    if (!attacker->is_player() || you.allies_forbidden())
+        return;
+
+    if (defender->is_peripheral() || defender->is_summoned())
+        return;
+
+    if (one_chance_in(10))
+    {
+        const monster_type demon = random_choose_weighted(
+                                       3, MONS_BALRUG,
+                                       2, MONS_HELLION,
+                                       1, MONS_BRIMSTONE_FIEND);
+
+        mgen_data mg(demon, BEH_FRIENDLY, you.pos(), MHITYOU,
+                     MG_FORCE_BEH | MG_AUTOFOE);
+        mg.set_summoned(&you, SPELL_FIRE_SUMMON, summ_dur(4));
+
+        if (create_monster(mg))
+        {
+            mpr("The sceptre summons one of its terrible servants.");
+            did_god_conduct(DID_EVIL, 3);
+        }
+    }
+}
+
+////////////////////////////////////////////////////
+
+static void _DOOM_KNIGHT_melee_effects(item_def* /*item*/, actor* attacker,
+                                        actor* defender, bool mondied, int /*dam*/)
+{
+    if (!mondied)
+    {
+        int bonus_dam = random2avg((1 + defender->stat_maxhp() / 10), 3);
+        mprf("%s %s%s",
+            defender->name(DESC_THE).c_str(),
+            defender->conj_verb("convulse").c_str(),
+            attack_strength_punctuation(bonus_dam).c_str());
+        defender->hurt(attacker, bonus_dam);
     }
 }
 
 ///////////////////////////////////////////////////
-static void _VITALITY_world_reacts(item_def */*item*/)
+static void _CHARLATANS_ORB_equip(item_def */*item*/, bool */*show_msgs*/, bool /*unmeld*/)
 {
-    // once it starts regenerating you, you're doin evil
-    if (you.props[MANA_REGEN_AMULET_ACTIVE].get_int() == 1
-        || you.activated[EQ_AMULET])
+    invalidate_agrid(true);
+    calc_hp(true);
+    calc_mp(true);
+}
+
+static void _CHARLATANS_ORB_unequip(item_def */*item*/, bool */*show_msgs*/)
+{
+    invalidate_agrid(true);
+    calc_hp(true);
+    calc_mp(true);
+}
+
+/////////////////////////////////////////////////////
+static void _SKULL_OF_ZONGULDROK_equip(item_def *item, bool *show_msgs, bool /*unmeld*/)
+{
+    const bool should_msg = !show_msgs || *show_msgs;
+    if (should_msg)
     {
-        did_god_conduct(DID_EVIL, 1);
+        const string key = !item->props.exists(ZONGULDROK_WELCOME_KEY)
+                                ? "zonguldrok greeting"
+                                : "zonguldrok reprise";
+
+        const string msg = "A voice whispers, \"" + getSpeakString(key) + "\"";
+        mprf(MSGCH_TALK, "%s", msg.c_str());
+        item->props[ZONGULDROK_WELCOME_KEY].get_bool() = true;
     }
+}
+
+static void _SKULL_OF_ZONGULDROK_unequip(item_def */*item*/, bool *show_msgs)
+{
+    const bool should_msg = !show_msgs || *show_msgs;
+    if (should_msg)
+    {
+        const string msg = "A voice whispers, \"" +
+                            getSpeakString("zonguldrok farewell") + "\"";
+        mprf(MSGCH_TALK, "%s", msg.c_str());
+    }
+}
+
+///////////////////////////////////////////////////
+static void _FISTICLOAK_equip(item_def */*item*/, bool *show_msgs, bool unmeld)
+{
+    if (!unmeld)
+    {
+        _equip_mpr(show_msgs, getSpeakString("fungus thoughts").c_str());
+
+        if (you_worship(GOD_FEDHAS))
+            god_speaks(GOD_FEDHAS, "Fedhas smiles on your commitment to the cycle of life.");
+    }
+}
+
+static void _FISTICLOAK_unequip(item_def */*item*/, bool *show_msgs)
+{
+    const bool should_msg = !show_msgs || *show_msgs;
+    if (should_msg)
+        mpr("Your thoughts feel a little more lonely.");
+}
+
+static void _FISTICLOAK_world_reacts(item_def */*item*/)
+{
+    // First, a chance of flavor message.
+    if (one_chance_in(1500))
+        mprf(MSGCH_TALK, "%s", getSpeakString("fungus thoughts").c_str());
+
+    // Now, the chance for our shroompunch
+    if (!one_chance_in(4))
+        return;
+
+    vector<monster*> targs;
+    for (adjacent_iterator ai(you.pos()); ai; ++ai)
+        if (monster* mon = monster_at(*ai))
+            if (you.can_see(*mon) && mon->temp_attitude() == ATT_HOSTILE && !mon->is_firewood())
+                targs.push_back(mon);
+
+    if (targs.empty())
+        return;
+
+    monster* targ = targs[random2(targs.size())];
+
+    melee_attack shred(&you, targ);
+    shred.player_do_aux_attack(UNAT_FUNGAL_FISTICLOAK);
+}
+
+///////////////////////////////////////////////////
+static void _VAINGLORY_equip(item_def */*item*/, bool *show_msgs, bool unmeld)
+{
+    if (!unmeld)
+        _equip_mpr(show_msgs, "You feel supremely confident.");
+}
+
+static void _VAINGLORY_unequip(item_def */*item*/, bool */*show_msgs*/)
+{
+    invalidate_agrid(true);
 }

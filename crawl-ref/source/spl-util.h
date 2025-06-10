@@ -20,14 +20,14 @@ enum class spschool
   hexes          = 1<<1,
   fire           = 1<<2,
   ice            = 1<<3,
-  transmutation  = 1<<4,
-  necromancy     = 1<<5,
-  summoning      = 1<<6,
-  translocation  = 1<<7,
-  poison         = 1<<8,
-  earth          = 1<<9,
-  air            = 1<<10,
-  LAST_SCHOOL    = spschool::air,
+  necromancy     = 1<<4,
+  summoning      = 1<<5,
+  translocation  = 1<<6,
+  alchemy        = 1<<7,
+  earth          = 1<<8,
+  air            = 1<<9,
+  forgecraft     = 1<<10,
+  LAST_SCHOOL    = spschool::forgecraft,
   random         = spschool::LAST_SCHOOL << 1,
 };
 DEF_BITFIELD(spschools_type, spschool, 10);
@@ -44,9 +44,9 @@ struct direction_chooser_args;
 enum spell_highlight_colours
 {
     COL_UNKNOWN      = LIGHTGRAY,   // spells for which no known brand applies.
-    COL_UNMEMORIZED  = LIGHTBLUE,   // spell hasn't been memorised (used reading spellbooks)
-    COL_MEMORIZED    = LIGHTGRAY,   // spell has been memorised
-    COL_USELESS      = DARKGRAY,    // ability would have no useful effect
+    COL_USEFUL_NOW   = LIGHTBLUE,   // spell not in library which you could use now
+    COL_USEFUL_IN_FUTURE = LIGHTGRAY,   // spell not in library, can't use now
+    COL_USELESS      = DARKGRAY,    // ability would have no useful effect / spell already in library
     COL_INAPPLICABLE = COL_USELESS, // ability cannot be meaningfully applied (e.g., no targets)
     COL_FORBIDDEN    = LIGHTRED,    // The player's god hates this ability
     COL_DANGEROUS    = LIGHTRED,    // ability/spell use could be dangerous
@@ -142,6 +142,11 @@ bool spell_no_hostile_in_range(spell_type spell);
 bool spell_is_soh_breath(spell_type spell);
 const vector<spell_type> *soh_breath_spells(spell_type spell);
 
-bool spell_removed(spell_type spell);
+bool spell_has_variable_range(spell_type spell);
 
-void end_wait_spells(bool quiet = false);
+bool spell_can_be_enkindled(spell_type spell);
+
+bool spell_removed(spell_type spell);
+#if TAG_MAJOR_VERSION == 34
+bool spell_was_form(spell_type spell);
+#endif

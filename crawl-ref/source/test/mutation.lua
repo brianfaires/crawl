@@ -58,7 +58,7 @@ local function test_basic_mutation_stuff()
     assert(you.get_base_mutation_level("cold resistance") == 2)
 
     ------------------
-    -- test some physiology conflicts interactions (see mutation.cc:physiology_mutation_conflict)
+    -- test some physiology conflicts interactions (see mutation.cc:mut_is_compatible)
     -- this isn't exhaustive
     assert(not you.mutate("spit poison", "basic mutation test")) -- only for nagas
     -- could add other species conditions here using you.change_species
@@ -108,7 +108,7 @@ local function test_potion(tries, iterations, premutate)
     sum = 0
     for i=1, tries do
         you.delete_all_mutations("mutation test")
-        assert(you.how_mutated(true, true, true) == 0,
+        assert(you.how_mutated(false, true, true) == 0,
                 "Clearing mutations failed, currently: " .. you.mutation_overview())
         for i=1, premutate do
             -- note: won't guarantee `premutate` mutations, because some will
@@ -132,7 +132,7 @@ end
 local function test_random_mutations(tries, iterations, chance_temporary, chance_clear)
     for i=1, tries do
         you.delete_all_mutations("mutation test")
-        assert(you.how_mutated(true, true, true) == 0,
+        assert(you.how_mutated(false, true, true) == 0,
                 "Clearing mutations failed, currently: " .. you.mutation_overview())
         for j=1, iterations do
             if crawl.x_chance_in_y(chance_clear, 100) then
@@ -151,8 +151,14 @@ local function test_random_mutations(tries, iterations, chance_temporary, chance
     end
 end
 
+local old_species = you.species()
+-- change to a species with no physiological mutations to conflict with tests
+assert(you.change_species("human"))
+
 test_basic_mutation_stuff()
 try_all_mutation_categories()
 test_potion(5, mut_iterations, 0)
 test_random_mutations(tries, mut_iterations, chance_temporary, chance_clear)
 you.delete_all_mutations("Mutation test")
+
+you.change_species(old_species)

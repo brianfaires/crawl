@@ -6,9 +6,6 @@
 #include <vector>
 
 #include "glwrapper.h"
-#ifdef __ANDROID__
-#include <GLES/gl.h>
-#endif
 
 using std::vector;
 
@@ -28,9 +25,6 @@ public:
     virtual void get_transform(GLW_3VF *trans, GLW_3VF *scale) override;
     virtual void set_scissor(int x, int y, unsigned int w, unsigned int h) override;
     virtual void reset_scissor() override;
-#ifdef __ANDROID__
-    virtual void fixup_gl_state() override;
-#endif
 
     // Texture-specific functinos
     virtual void delete_textures(size_t count, unsigned int *textures) override;
@@ -43,10 +37,12 @@ public:
     int device_to_logical(int n, bool round=true) const override;
 protected:
     GLState m_current_state;
-#ifdef __ANDROID__
-    GLint m_last_tex;
-#endif
     int m_window_height;
+    // optional, possibly nullptr function pointer to OpenGL 3+ function
+    // The function pointer type is often ifdef'd in annoying headers
+    // So we save the cast for the point where we use it, rather than
+    // cluttering this header.
+    void* m_mipmapFn = nullptr;
 
 private:
     bool glDebug(const char* msg) const;

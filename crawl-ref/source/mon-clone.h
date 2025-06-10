@@ -1,10 +1,11 @@
 #pragma once
 
+#include "coord-def.h"
 #include "mon-attitude-type.h"
 #include "spell-type.h"
 
-#define CLONE_MASTER_KEY "mcloneorig"
-#define CLONE_SLAVE_KEY "mclonedupe"
+#define CLONE_PRIMARY_KEY "mcloneorig"
+#define CLONE_REPLICA_KEY "mclonedupe"
 
 class actor;
 class monster;
@@ -15,10 +16,11 @@ monster *clone_mons(const monster* orig, bool quiet = false,
                     bool* obvious = nullptr);
 
 monster *clone_mons(const monster* orig, bool quiet,
-                    bool* obvious, mon_attitude_type mon_att);
+                    bool* obvious, mon_attitude_type mon_att,
+                    coord_def place = coord_def());
 
-void mons_summon_illusion_from(monster* mons, actor *foe,
+int mons_summon_illusion_from(monster* mons, actor *foe,
                                spell_type spell_cast = SPELL_NO_SPELL,
-                               int card_power = -1);
+                               int card_power = -1, bool xom = false);
 
 bool actor_is_illusion_cloneable(actor *target);

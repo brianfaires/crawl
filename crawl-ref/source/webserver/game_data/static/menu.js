@@ -21,7 +21,9 @@ function ($, comm, client, ui, enums, cr, util, options, scroller) {
 
     function item_colour(item)
     {
-        return item.colour || 7;
+        if (item.colour === undefined)
+            return 7;
+        return item.colour;
     }
 
     function menu_title_indent()
@@ -118,14 +120,15 @@ function ($, comm, client, ui, enums, cr, util, options, scroller) {
 
     function set_hovered(index, snap=true, from_mouse=false)
     {
-        if (index == menu.last_hovered)
+        if (index >= menu.items.length)
+            index = Math.max(0, menu.items.length - 1);
+        if (index == menu.last_hovered
+            && (index < 0 || item_selectable(menu.items[index])))
         {
             // just make sure the hover class is set correctly
             add_hover_class(menu.last_hovered);
             return;
         }
-        if (index >= menu.items.length)
-            index = Math.max(0, menu.items.length - 1);
         remove_hover_class(menu.last_hovered);
         if (index < 0 || item_selectable(menu.items[index]))
         {
@@ -324,9 +327,15 @@ function ($, comm, client, ui, enums, cr, util, options, scroller) {
                     text: new_item
                 };
             }
+            // Probably this could should simply replace item? But I'm nervous
+            // about changing it from extend...
             $.extend(item, new_item);
             if (new_item.colour === undefined)
                 delete item.colour;
+            if (new_item.tiles === undefined)
+                delete item.tiles;
+            if (new_item.hotkeys === undefined)
+                delete item.hotkeys;
 
             set_item_contents(item, item.elem);
         }
@@ -632,7 +641,8 @@ function ($, comm, client, ui, enums, cr, util, options, scroller) {
             update_server_scroll_timeout = null;
         }
 
-        if (!menu) return;
+        if (!menu || menu.type == "crt")
+            return;
 
         update_visible_indices();
         comm.send_message("menu_scroll", {
@@ -814,6 +824,8 @@ function ($, comm, client, ui, enums, cr, util, options, scroller) {
         {
             for (var i = old_length; i >= menu.total_items; --i)
                 delete menu.items[i];
+            // XX I don't really understand what `container` is doing here, but
+            // this code is required to shorten a menu
             var container = $("ol");
             container.empty();
             $.each(menu.items, function(i, item) {
@@ -860,13 +872,20 @@ function ($, comm, client, ui, enums, cr, util, options, scroller) {
 
     function handle_size_change()
     {
-        if (!menu) return;
+        if (!menu || menu.type == "crt")
+            return;
 
         if (menu.last_hovered > menu.items.length)
             menu.last_hovered = -1; // sanity check
-        // ensure hover class is properly set. Does it ever need to be removed
-        // when this is called?
-        set_hovered(menu.last_hovered);
+        // ensure hover class is properly set.
+        if (menu.last_hovered >= 0 && !item_selectable(menu.items[menu.last_hovered]))
+        {
+            // a mildly smarter behavior would find the first hoverable position
+            // ignoring headers
+            cycle_hover(false);
+        }
+        else
+            set_hovered(menu.last_hovered);
 
         if (menu.anchor_last)
             scroll_bottom_to_item(menu.last_visible, true);
@@ -1023,12 +1042,16 @@ function ($, comm, client, ui, enums, cr, util, options, scroller) {
                 break;
             // otherwise, fall through to pageup:
         case "<":
+            if (menu.tag == "travel")
+                break;
         case ";":
             paging(true);
             event.preventDefault();
             return false;
 
         case ">":
+            if (menu.tag == "travel")
+                break;
         case "+":
         case " ":
             paging();

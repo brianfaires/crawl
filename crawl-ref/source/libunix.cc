@@ -34,9 +34,11 @@
 #include "colour.h"
 #include "cio.h"
 #include "crash.h"
+#include "libutil.h"
 #include "state.h"
 #include "tiles-build-specific.h"
 #include "unicode.h"
+#include "version.h"
 #include "view.h"
 #include "ui.h"
 
@@ -49,6 +51,14 @@ static struct termios game_term;
 
 #include <time.h>
 
+// replace definitions from curses.h; not needed outside this file
+#define HEADLESS_LINES 24
+#define HEADLESS_COLS 80
+
+// for some reason we use 1 indexing internally
+static int headless_x = 1;
+static int headless_y = 1;
+
 // Its best if curses comes at the end (name conflicts with Solaris). -- bwr
 #ifndef CURSES_INCLUDE_FILE
     #ifndef _XOPEN_SOURCE_EXTENDED
@@ -59,6 +69,10 @@ static struct termios game_term;
 #else
     #include CURSES_INCLUDE_FILE
 #endif
+
+static bool _headless_mode = false;
+bool in_headless_mode() { return _headless_mode; }
+void enter_headless_mode() { _headless_mode = true; }
 
 // Globals holding current text/backg. colours
 // Note that these are internal colours, *not* curses colors.
@@ -302,6 +316,18 @@ static short translate_colour(COLOURS col);
  */
 static void write_char_at(int y, int x, const cchar_t &ch);
 
+/**
+ * @brief Terminal default aware version of pair_safe.
+ *
+ * @param pair
+ *   Pair identifier
+ * @param f
+ *   Foreground colour
+ * @param b
+ *   Background colour
+ */
+static void init_pair_safe(short pair, short f, short b);
+
 static bool cursor_is_enabled = true;
 
 static unsigned int convert_to_curses_style(int chattr)
@@ -383,6 +409,12 @@ static short translate_colour(COLOURS col)
  */
 static void setup_colour_pairs()
 {
+    // The init_pair routine accepts negative values of foreground and
+    // background color to support the use_default_colors extension, but only
+    // if that routine has been first invoked.
+    if (Options.use_terminal_default_colours)
+        use_default_colors();
+
     // Only generate pairs which we may need.
     short num_colors = curs_palette_size();
 
@@ -392,7 +424,7 @@ static void setup_colour_pairs()
         {
             short pair = curs_calc_pair_safe(j, i, COLOR_WHITE, COLOR_BLACK);
             if (pair > 0)
-                init_pair(pair, j, i);
+                init_pair_safe(pair, j, i);
         }
     }
 }
@@ -423,6 +455,8 @@ static void termio_init()
 void set_mouse_enabled(bool enabled)
 {
 #ifdef NCURSES_MOUSE_VERSION
+    if (_headless_mode)
+        return;
     const int mask = enabled ? ALL_MOUSE_EVENTS | REPORT_MOUSE_POSITION : 0;
     mmask_t oldmask = 0;
     mousemask(mask, &oldmask);
@@ -529,8 +563,54 @@ void set_getch_returns_resizes(bool rr)
     getch_returns_resizes = rr;
 }
 
+static int _headless_getchk()
+{
+#ifdef WATCHDOG
+    // If we have (or wait for) actual keyboard input, it's not an infinite
+    // loop.
+    watchdog();
+#endif
+
+    if (pending)
+    {
+        int c = pending;
+        pending = 0;
+        return c;
+    }
+
+
+#ifdef USE_TILE_WEB
+    wint_t c;
+    tiles.redraw();
+    tiles.await_input(c, true);
+
+    if (c != 0)
+        return c;
+#endif
+
+    return ESCAPE; // TODO: ??
+}
+
+static int _headless_getch_ck()
+{
+    int c;
+    do
+    {
+        c = _headless_getchk();
+        // TODO: release?
+        // XX this should possibly sleep
+    } while (
+             ((c == CK_MOUSE_MOVE || c == CK_MOUSE_CLICK)
+                 && !crawl_state.mouse_enabled));
+
+    return c;
+}
+
 int getch_ck()
 {
+    if (_headless_mode)
+        return _headless_getch_ck();
+
     while (true)
     {
         int c = _get_key_from_curses();
@@ -567,8 +647,7 @@ int getch_ck()
         }
 #endif
 
-        // TODO: what else should be added to this?
-        switch (c)
+        switch (-c)
         {
         case 127:
         // 127 is ASCII DEL, which some terminals (all mac, some linux) use for
@@ -579,35 +658,53 @@ int getch_ck()
         // reliably does get mapped to KEY_DC by ncurses. Some background:
         //     https://invisible-island.net/xterm/xterm.faq.html#xterm_erase
         // (I've never found documentation for the mac situation.)
-        case -KEY_BACKSPACE: return CK_BKSP;
-        case -KEY_DC:    return CK_DELETE;
-        case -KEY_HOME:  return CK_HOME;
-        case -KEY_PPAGE: return CK_PGUP;
-        case -KEY_END:   return CK_END;
-        case -KEY_NPAGE: return CK_PGDN;
-        case -KEY_UP:    return CK_UP;
-        case -KEY_DOWN:  return CK_DOWN;
-        case -KEY_LEFT:  return CK_LEFT;
-        case -KEY_RIGHT: return CK_RIGHT;
+        case KEY_BACKSPACE: return CK_BKSP;
+        case KEY_IC:        return CK_INSERT;
+        case KEY_DC:        return CK_DELETE;
+        case KEY_HOME:      return CK_HOME;
+        case KEY_END:       return CK_END;
+        case KEY_PPAGE:     return CK_PGUP;
+        case KEY_NPAGE:     return CK_PGDN;
+        case KEY_UP:        return CK_UP;
+        case KEY_DOWN:      return CK_DOWN;
+        case KEY_LEFT:      return CK_LEFT;
+        case KEY_RIGHT:     return CK_RIGHT;
+        case KEY_BEG:       return CK_CLEAR;
+
+        case KEY_BTAB:      return CK_SHIFT_TAB;
+        case KEY_SDC:       return CK_SHIFT_DELETE;
+        case KEY_SHOME:     return CK_SHIFT_HOME;
+        case KEY_SEND:      return CK_SHIFT_END;
+        case KEY_SPREVIOUS: return CK_SHIFT_PGUP;
+        case KEY_SNEXT:     return CK_SHIFT_PGDN;
+        case KEY_SR:        return CK_SHIFT_UP;
+        case KEY_SF:        return CK_SHIFT_DOWN;
+        case KEY_SLEFT:     return CK_SHIFT_LEFT;
+        case KEY_SRIGHT:    return CK_SHIFT_RIGHT;
+
+        case KEY_A1:        return CK_NUMPAD_7;
+        case KEY_A3:        return CK_NUMPAD_9;
+        case KEY_B2:        return CK_NUMPAD_5;
+        case KEY_C1:        return CK_NUMPAD_1;
+        case KEY_C3:        return CK_NUMPAD_3;
+
 #ifdef KEY_RESIZE
-        case -KEY_RESIZE: return CK_RESIZE;
-#endif
-        case -KEY_BTAB:  return CK_SHIFT_TAB;
-        case -KEY_SDC:   return CK_SHIFT_DELETE;
-#ifdef TARGET_OS_MACOSX
-        // not sure what's up with this, no ncurses constant? defining it only
-        // for mac to be cautious
-        case -515:       return CK_CTRL_DELETE;
+        case KEY_RESIZE:    return CK_RESIZE;
 #endif
 
-        // may or may not be defined depending on the terminal. Escape codes
-        // are the xterm convention, other terminals may do different things
-        // and ncurses may or may not handle them correctly.
-        case -KEY_SR:    return CK_SHIFT_UP;     // \033[1;2A
-        case -KEY_SLEFT: return CK_SHIFT_LEFT;   // \033[1;2D
-        case -KEY_SRIGHT: return CK_SHIFT_RIGHT; // \033[1;2C
-        case -KEY_SF:    return CK_SHIFT_DOWN;   // \033[1;2B
-        default:         return c;
+        // Undocumented ncurses control keycodes, here be dragons!!!
+        case 515:           return CK_CTRL_DELETE; // Mac
+        case 526:           return CK_CTRL_DELETE; // Linux
+        case 542:           return CK_CTRL_HOME;
+        case 537:           return CK_CTRL_END;
+        case 562:           return CK_CTRL_PGUP;
+        case 557:           return CK_CTRL_PGDN;
+        case 573:           return CK_CTRL_UP;
+        case 532:           return CK_CTRL_DOWN;
+        case 552:           return CK_CTRL_LEFT;
+        case 567:           return CK_CTRL_RIGHT;
+
+        default:            return c;
         }
     }
 }
@@ -671,7 +768,7 @@ static void unixcurses_defkeys()
     define_key("\033Oo", 1012); // / (may conflict with the above define?)
     define_key("\033OX", 1021); // =, at least on mac console
 
-#ifdef TARGET_OS_MACOSX
+# ifdef TARGET_OS_MACOSX
     // force some mappings for function keys that work on mac Terminal.app with
     // the default TERM value.
 
@@ -691,61 +788,10 @@ static void unixcurses_defkeys()
     check_define_key("\033b", -(CK_LEFT + CK_ALT_BASE));
     check_define_key("\033f", -(CK_RIGHT + CK_ALT_BASE));
     // (sadly, only left and right have modifiers by default on Terminal.app)
-#endif
+# endif
 #undef check_define_key
 
-    // variants. Ugly curses won't allow us to return the same code...
-    // TODO: the above comment seems to be wrong for current ncurses?
-    define_key("\033[1~", 1031); // Home
-    define_key("\033[4~", 1034); // End
-    define_key("\033[E",  1040); // center arrow
 #endif
-}
-
-int unixcurses_get_vi_key(int keyin)
-{
-    switch (-keyin)
-    {
-    // TODO: should use cio.h constants, but I'm too scared to change this
-    // function
-    // -1001..-1009: passed without change
-    case 1031: return -1007;
-    case 1034: return -1001;
-    case 1040: return -1005;
-
-    case KEY_HOME:   return -1007;
-    case KEY_END:    return -1001;
-    case KEY_DOWN:   return -1002;
-    case KEY_UP:     return -1008;
-    case KEY_LEFT:   return -1004;
-    case KEY_RIGHT:  return -1006;
-    case KEY_NPAGE:  return -1003;
-    case KEY_PPAGE:  return -1009;
-    case KEY_A1:     return -1007;
-    case KEY_A3:     return -1009;
-    case KEY_B2:     return -1005;
-    case KEY_C1:     return -1001;
-    case KEY_C3:     return -1003;
-    case KEY_SHOME:  return 'Y';
-    case KEY_SEND:   return 'B';
-    case KEY_SLEFT:  return 'H';
-    case KEY_SRIGHT: return 'L';
-    case KEY_BTAB:   return CK_SHIFT_TAB;
-    case KEY_BACKSPACE:
-        // If terminfo's entry for backspace (kbs) is ctrl-h, curses
-        // generates KEY_BACKSPACE for the ctrl-h key. Work around that by
-        // converting back to CK_BKSP.
-        // Note that this mangling occurs entirely on the machine Crawl runs
-        // on (and even within crawl's process) rather than where the user's
-        // terminal is, so this check is reliable.
-        static char kbskey[] = "kbs"; // tigetstr wants a non-const pointer :(
-        static const char * const kbs = tigetstr(kbskey);
-        static const int bskey = (kbs && kbs != (const char *) -1
-                                      && kbs == string("\010")) ? CK_BKSP
-                                                                : KEY_BACKSPACE;
-        return bskey;
-    }
-    return keyin;
 }
 
 // Certain terminals support vt100 keypad application mode only after some
@@ -753,8 +799,27 @@ int unixcurses_get_vi_key(int keyin)
 #define KPADAPP "\033[?1051l\033[?1052l\033[?1060l\033[?1061h"
 #define KPADCUR "\033[?1051l\033[?1052l\033[?1060l\033[?1061l"
 
+static void _headless_startup()
+{
+    // override the default behavior for SIGINT set in libutil.cc:init_signals.
+    // TODO: windows ctrl-c? should be able to add a handler on top of
+    // libutil.cc:console_handler
+#if defined(USE_UNIX_SIGNALS) && defined(SIGINT)
+    signal(SIGINT, handle_hangup);
+#endif
+
+#ifdef USE_TILE_WEB
+    tiles.resize();
+#endif
+}
+
 void console_startup()
 {
+    if (_headless_mode)
+    {
+        _headless_startup();
+        return;
+    }
     termio_init();
 
 #ifdef CURSES_USE_KEYPAD
@@ -781,13 +846,13 @@ void console_startup()
 #ifdef CURSES_USE_KEYPAD
     keypad(stdscr, TRUE);
 
-#ifdef CURSES_SET_ESCDELAY
-#ifdef NCURSES_REENTRANT
+# ifdef CURSES_SET_ESCDELAY
+#  ifdef NCURSES_REENTRANT
     set_escdelay(CURSES_SET_ESCDELAY);
-#else
+#  else
     ESCDELAY = CURSES_SET_ESCDELAY;
-#endif
-#endif
+#  endif
+# endif
 #endif
 
     meta(stdscr, TRUE);
@@ -804,8 +869,6 @@ void console_startup()
     refresh();
     crawl_view.init_geometry();
 
-    set_mouse_enabled(false);
-
     // TODO: how does this relate to what tiles.resize does?
     ui::resize(crawl_view.termsz.x, crawl_view.termsz.y);
 
@@ -816,6 +879,9 @@ void console_startup()
 
 void console_shutdown()
 {
+    if (_headless_mode)
+        return;
+
     // resetty();
     endwin();
 
@@ -847,17 +913,36 @@ void cprintf(const char *format, ...)
     while (int s = utf8towc(&c, bp))
     {
         bp += s;
+        // headless check handled in putwch
         putwch(c);
     }
 }
 
 void putwch(char32_t chr)
 {
-    wchar_t c = chr;
-    if (!c)
-        c = ' ';
-    // TODO: recognize unsupported characters and try to transliterate
-    addnwstr(&c, 1);
+    wchar_t c = chr; // ??
+    if (_headless_mode)
+    {
+        // simulate cursor movement and wrapping
+        headless_x += c ? wcwidth(chr) : 0;
+        if (headless_x >= HEADLESS_COLS && headless_y >= HEADLESS_LINES)
+        {
+            headless_x = HEADLESS_COLS;
+            headless_y = HEADLESS_LINES;
+        }
+        else if (headless_x > HEADLESS_COLS)
+        {
+            headless_y++;
+            headless_x = headless_x - HEADLESS_COLS;
+        }
+    }
+    else
+    {
+        if (!c)
+            c = ' ';
+        // TODO: recognize unsupported characters and try to transliterate
+        addnwstr(&c, 1);
+    }
 
 #ifdef USE_TILE_WEB
     char32_t buf[2];
@@ -876,6 +961,7 @@ void puttext(int x1, int y1, const crawl_view_buffer &vbuf)
         cgotoxy(x1, y1 + y);
         for (int x = 0; x < size.x; ++x)
         {
+            // headless check handled in putwch, which this calls
             put_colour_ch(cell->colour, cell->glyph);
             cell++;
         }
@@ -889,7 +975,7 @@ void puttext(int x1, int y1, const crawl_view_buffer &vbuf)
 // C++ string class.  -- bwr
 void update_screen()
 {
-    // In objstat and similar modes, there might not be a screen to update.
+    // In objstat, headless, and similar modes, there might not be a screen to update.
     if (stdscr)
     {
         // Refreshing the default colors helps keep colors synced in ttyrecs.
@@ -904,9 +990,12 @@ void update_screen()
 
 void clear_to_end_of_line()
 {
-    textcolour(LIGHTGREY);
-    textbackground(BLACK);
-    clrtoeol();
+    if (!_headless_mode)
+    {
+        textcolour(LIGHTGREY);
+        textbackground(BLACK);
+        clrtoeol(); // shouldn't move cursor pos
+    }
 
 #ifdef USE_TILE_WEB
     tiles.clear_to_end_of_line();
@@ -915,12 +1004,18 @@ void clear_to_end_of_line()
 
 int get_number_of_lines()
 {
-    return LINES;
+    if (_headless_mode)
+        return HEADLESS_LINES;
+    else
+        return LINES;
 }
 
 int get_number_of_cols()
 {
-    return COLS;
+    if (_headless_mode)
+        return HEADLESS_COLS;
+    else
+        return COLS;
 }
 
 int num_to_lines(int num)
@@ -948,6 +1043,13 @@ suppress_dgl_clrscr::~suppress_dgl_clrscr()
 
 void clrscr_sys()
 {
+    if (_headless_mode)
+    {
+        headless_x = 1;
+        headless_y = 1;
+        return;
+    }
+
     textcolour(LIGHTGREY);
     textbackground(BLACK);
     clear();
@@ -976,7 +1078,9 @@ bool is_cursor_enabled()
 
 static inline unsigned get_highlight(int col)
 {
-    return (col & COLFLAG_FRIENDLY_MONSTER) ? Options.friend_highlight :
+    return ((col & COLFLAG_UNUSUAL_MASK) == COLFLAG_UNUSUAL_MASK) ?
+                                              Options.unusual_highlight :
+           (col & COLFLAG_FRIENDLY_MONSTER) ? Options.friend_highlight :
            (col & COLFLAG_NEUTRAL_MONSTER)  ? Options.neutral_highlight :
            (col & COLFLAG_ITEM_HEAP)        ? Options.heap_highlight :
            (col & COLFLAG_WILLSTAB)         ? Options.stab_highlight :
@@ -1021,7 +1125,7 @@ static curses_style curs_attr(COLOURS fg, COLOURS bg, bool adjust_background)
         // curses typically uses WA_BOLD to give bright foreground colour,
         // but various termcaps may disagree
         if ((fg_curses & COLFLAG_CURSES_BRIGHTEN)
-            && (Options.bold_brightens_foreground != MB_FALSE
+            && (Options.bold_brightens_foreground != false
                 || Options.best_effort_brighten_foreground))
         {
             style.attr |= WA_BOLD;
@@ -1036,7 +1140,7 @@ static curses_style curs_attr(COLOURS fg, COLOURS bg, bool adjust_background)
             style.attr |= WA_BLINK;
         }
     }
-    else if (Options.bold_brightens_foreground == MB_TRUE
+    else if (bool(Options.bold_brightens_foreground)
                 && (fg_curses & COLFLAG_CURSES_BRIGHTEN))
     {
         style.attr |= WA_BOLD;
@@ -1192,19 +1296,11 @@ static bool curs_can_use_extended_colors()
 }
 
 lib_display_info::lib_display_info()
-    : type(
-#ifdef USE_TILE_WEB
-        "Console/Webtiles"
-#elif defined(USE_TILE_LOCAL)
-        "SDL Tiles"
-#else
-        "Console"
-#endif
-        ),
+    : type(CRAWL_BUILD_NAME),
     term(termname()),
     fg_colors(
         (curs_can_use_extended_colors()
-                || Options.bold_brightens_foreground != MB_FALSE)
+                || Options.bold_brightens_foreground != false)
         ? 16 : 8),
     bg_colors(
         (curs_can_use_extended_colors() || Options.blink_brightens_background)
@@ -1255,7 +1351,7 @@ static void curs_adjust_color_pair_to_non_identical(short &fg, short &bg,
     // sets one of these options.
     if (!curs_can_use_extended_colors())
     {
-        if (Options.bold_brightens_foreground == MB_FALSE)
+        if (!Options.bold_brightens_foreground)
         {
             fg_to_compare = fg & ~COLFLAG_CURSES_BRIGHTEN;
             fg_default_to_compare = fg_default & ~COLFLAG_CURSES_BRIGHTEN;
@@ -1396,7 +1492,9 @@ static void curs_set_default_colors()
     }
 
     // Assume new default colors.
-    if (curs_palette_size() == 0)
+    if (Options.use_terminal_default_colours)
+        default_colors_loaded = OK;
+    else if (curs_palette_size() == 0)
         default_colors_loaded = use_default_colors();
     else
     {
@@ -1424,7 +1522,7 @@ static void curs_set_default_colors()
         default_bg_prev_curses, COLOR_WHITE, COLOR_BLACK);
     if (prev_default_pair != 0)
     {
-        init_pair(prev_default_pair, default_fg_prev_curses,
+        init_pair_safe(prev_default_pair, default_fg_prev_curses,
             default_bg_prev_curses);
     }
 
@@ -1433,7 +1531,7 @@ static void curs_set_default_colors()
         COLOR_BLACK, translate_colour(default_fg),
         translate_colour(default_bg));
     if (new_default_default_pair != 0)
-        init_pair(new_default_default_pair, COLOR_WHITE, COLOR_BLACK);
+        init_pair_safe(new_default_default_pair, COLOR_WHITE, COLOR_BLACK);
 }
 
 // see declaration
@@ -1480,8 +1578,11 @@ static COLOURS curses_color_to_internal_colour(short col)
 
 void textcolour(int col)
 {
-    const auto style = curs_attr_fg(col);
-    attr_set(style.attr, style.color_pair, nullptr);
+    if (!_headless_mode)
+    {
+        const auto style = curs_attr_fg(col);
+        attr_set(style.attr, style.color_pair, nullptr);
+    }
 
 #ifdef USE_TILE_WEB
     tiles.textcolour(col);
@@ -1506,8 +1607,11 @@ COLOURS default_hover_colour()
 
 void textbackground(int col)
 {
-    const auto style = curs_attr_bg(col);
-    attr_set(style.attr, style.color_pair, nullptr);
+    if (!_headless_mode)
+    {
+        const auto style = curs_attr_bg(col);
+        attr_set(style.attr, style.color_pair, nullptr);
+    }
 
 #ifdef USE_TILE_WEB
     tiles.textbackground(col);
@@ -1516,7 +1620,13 @@ void textbackground(int col)
 
 void gotoxy_sys(int x, int y)
 {
-    move(y - 1, x - 1);
+    if (_headless_mode)
+    {
+        headless_x = x;
+        headless_y = y;
+    }
+    else
+        move(y - 1, x - 1);
 }
 
 static inline cchar_t character_at(int y, int x)
@@ -1557,6 +1667,18 @@ static void write_char_at(int y, int x, const cchar_t &ch)
 
     attr_set(attr, color_pair, nullptr);
     mvadd_wchnstr(y, x, &ch, 1);
+}
+
+static void init_pair_safe(short pair, short f, short b)
+{
+    if (Options.use_terminal_default_colours)
+    {
+        short _f = (f == COLOR_WHITE) ? -1 : f;
+        short _b = (b == COLOR_BLACK) ? -1 : b;
+        init_pair(pair, _f, _b);
+    }
+    else
+        init_pair(pair, f, b);
 }
 
 // see declaration
@@ -1636,7 +1758,7 @@ static curses_style flip_colour(curses_style style)
             // XX I don't *think* this logic should apply for
             // bold_brightens_foreground = force...
             if ((bg & COLFLAG_CURSES_BRIGHTEN)
-                && (Options.bold_brightens_foreground != MB_FALSE
+                && (Options.bold_brightens_foreground != false
                     || Options.best_effort_brighten_foreground))
             {
                 style.attr |= WA_BOLD;
@@ -1651,6 +1773,13 @@ static curses_style flip_colour(curses_style style)
 
 void fakecursorxy(int x, int y)
 {
+    if (_headless_mode)
+    {
+        gotoxy_sys(x, y);
+        set_cursor_region(GOTO_CRT);
+        return;
+    }
+
     int x_curses = x - 1;
     int y_curses = y - 1;
 
@@ -1665,12 +1794,18 @@ void fakecursorxy(int x, int y)
 
 int wherex()
 {
-    return getcurx(stdscr) + 1;
+    if (_headless_mode)
+        return headless_x;
+    else
+        return getcurx(stdscr) + 1;
 }
 
 int wherey()
 {
-    return getcury(stdscr) + 1;
+    if (_headless_mode)
+        return headless_y;
+    else
+        return getcury(stdscr) + 1;
 }
 
 void delay(unsigned int time)
@@ -1692,9 +1827,31 @@ void delay(unsigned int time)
         usleep(time * 1000);
 }
 
+static bool _headless_kbhit()
+{
+    // TODO: ??
+    if (pending)
+        return true;
+
+#ifdef USE_TILE_WEB
+    wint_t c;
+    bool result = tiles.await_input(c, false);
+
+    if (result && c != 0)
+        pending = c;
+
+    return result;
+#else
+    return false;
+#endif
+}
+
 /* This is Juho Snellman's modified kbhit, to work with macros */
 bool kbhit()
 {
+    if (_headless_mode)
+        return _headless_kbhit();
+
     if (pending)
         return true;
 

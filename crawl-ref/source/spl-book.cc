@@ -24,8 +24,9 @@
 #include "describe.h"
 #include "end.h"
 #include "god-conduct.h"
-#include "invent.h"
 #include "item-prop.h"
+#include "item-status-flag-type.h"
+#include "invent.h"
 #include "libutil.h"
 #include "message.h"
 #include "output.h"
@@ -33,6 +34,7 @@
 #include "random-pick.h"
 #include "religion.h"
 #include "spl-cast.h"
+#include "spl-summoning.h"
 #include "spl-util.h"
 #include "state.h"
 #include "stringutil.h"
@@ -99,6 +101,7 @@ static const map<wand_type, spell_type> _wand_spells =
     { WAND_QUICKSILVER, SPELL_QUICKSILVER_BOLT },
     { WAND_MINDBURST, SPELL_MINDBURST },
     { WAND_ROOTS, SPELL_FASTROOT },
+    { WAND_WARPING, SPELL_WARP_SPACE },
 };
 
 
@@ -231,12 +234,29 @@ static unordered_set<int> _player_nonbook_spells =
     // items
     SPELL_THUNDERBOLT,
     SPELL_PHANTOM_MIRROR, // this isn't cast directly, but the player code at
-                          // least uses the enum value
+                          // least uses the enum value.
+    SPELL_TREMORSTONE,    // not cast directly, but the spell type is used for
+                          // damage and noise display.
+    SPELL_GRAVITAS,
     SPELL_SONIC_WAVE,
     // religion
     SPELL_SMITING,
+    SPELL_UNLEASH_DESTRUCTION,
+    SPELL_HURL_TORCHLIGHT,
     // Ds powers
     SPELL_HURL_DAMNATION,
+    // Draconian breaths
+    SPELL_NOXIOUS_BREATH,
+    SPELL_COMBUSTION_BREATH,
+    SPELL_GLACIAL_BREATH,
+    SPELL_NULLIFYING_BREATH,
+    SPELL_STEAM_BREATH,
+    SPELL_CAUSTIC_BREATH,
+    SPELL_GALVANIC_BREATH,
+    SPELL_MUD_BREATH,
+    // Form spells
+    SPELL_RUST_BREATH,
+    SPELL_GOLDEN_BREATH,
 };
 
 bool is_player_spell(spell_type which_spell)
@@ -277,6 +297,13 @@ static void _list_available_spells(spell_set &available_spells)
     // Handle Vehumet gifts
     for (auto gift : you.vehumet_gifts)
         available_spells.insert(gift);
+}
+
+static bool _spell_available_to_memorize(spell_type which_spell)
+{
+    spell_set available_spells;
+    _list_available_spells(available_spells);
+    return available_spells.count(which_spell) > 0;
 }
 
 bool player_has_available_spells()
@@ -401,10 +428,9 @@ bool library_add_spells(vector<spell_type> spells, bool quiet)
         if (!you.spell_library[st])
         {
             you.spell_library.set(st, true);
-            bool memorise = you_can_memorise(st);
-            if (memorise)
+            if (you_can_memorise(st))
                 new_spells.push_back(st);
-            if (!memorise || Options.auto_hide_spells)
+            if (Options.auto_hide_spells)
                 you.hidden_spells.set(st, true);
         }
     }
@@ -496,17 +522,19 @@ vector<spell_type> get_sorted_spell_list(bool silent, bool memorise_only)
 class SpellLibraryMenu : public Menu
 {
 public:
-    enum class action { cast, memorise, describe, hide, unhide } current_action;
+    enum class action { cast, memorise, imbue, describe, hide, unhide };
+    action current_action, default_action;
 
 protected:
     virtual formatted_string calc_title() override
     {
         return formatted_string::parse_string(
-                    make_stringf("<w>Spells %s                 Type                          %sLevel",
+                    make_stringf("<w>Spells %s                   Type                      %sLevel",
                         current_action == action::cast ? "(Cast)    "
                         : current_action == action::memorise ? "(Memorise)"
                         : current_action == action::describe ? "(Describe)"
                         : current_action == action::hide ? "(Hide)    "
+                        : current_action == action::imbue ? "(Imbue)   "
                         : "(Show)    ",
                         you.divine_exegesis ? "         " : "Failure  "));
     }
@@ -560,13 +588,16 @@ private:
 
         desc << "\n";
 
-        const string act = you.divine_exegesis ? "Cast" : "Memorise";
+        const string act = default_action == action::memorise ? "Memorise"
+                           : default_action == action::imbue ? "Imbue" : "Cast";
         // line 2
         desc << menu_keyhelp_cmd(CMD_MENU_CYCLE_MODE) << " ";
         desc << ( current_action == action::cast
                             ? "<w>Cast</w>|Describe|Hide|Show"
                  : current_action == action::memorise
                             ? "<w>Memorise</w>|Describe|Hide|Show"
+                 : current_action == action::imbue
+                            ? "<w>Imbue</w>|Describe|Hide|Show"
                  : current_action == action::describe
                             ? act + "|<w>Describe</w>|Hide|Show"
                  : current_action == action::hide
@@ -576,7 +607,7 @@ private:
                 "   [<w>?</w>] help"; // XX hardcoded for this menu
 
         if (search_text.size())
-            return pad_more_with(desc.str(), "[<w>Esc</w>] clear"); // esc is harcoded for this case
+            return pad_more_with(desc.str(), "[<w>Esc</w>] clear"); // esc is hardcoded for this case
         else
             return pad_more_with_esc(desc.str());
     }
@@ -591,6 +622,7 @@ private:
             {
                 case action::cast:
                 case action::memorise:
+                case action::imbue:
                     current_action = action::describe;
                     entries_changed = true; // need to add hotkeys
                     break;
@@ -604,8 +636,7 @@ private:
                         last_hovered = 0;
                     break;
                 case action::unhide:
-                    current_action = you.divine_exegesis ? action::cast
-                                                          : action::memorise;
+                    current_action = default_action;
                     entries_changed = true;
                     if (last_hovered >= 0 && is_set(MF_ARROWS_SELECT))
                         last_hovered = 0;
@@ -618,14 +649,14 @@ private:
             {
                 case action::cast:
                 case action::memorise:
+                case action::imbue:
                     current_action = action::unhide;
                     entries_changed = true;
                     if (last_hovered >= 0 && is_set(MF_ARROWS_SELECT))
                         last_hovered = 0;
                     break;
                 case action::describe:
-                    current_action = you.divine_exegesis ? action::cast
-                                                         : action::memorise;
+                    current_action = default_action;
                     entries_changed = true; // may need to remove hotkeys
                     break;
                 case action::hide:
@@ -722,6 +753,7 @@ private:
         clear();
         hidden_count = 0;
         const bool show_hidden = current_action == action::unhide;
+        const bool show_enkindle = you.has_mutation(MUT_MNEMOPHAGE);
         menu_letter hotkey;
         text_pattern pat(search_text, true);
         for (auto& spell : spells)
@@ -758,20 +790,33 @@ private:
             desc << "<" << colour_to_str(colour) << ">";
 
             desc << left;
-            desc << chop_string(spell.name, 30);
+            desc << chop_string(spell.name, 32);
             desc << spell.school;
 
             int so_far = strwidth(desc.str()) - (colour_to_str(colour).length()+2);
-            if (so_far < 60)
-                desc << string(60 - so_far, ' ');
+            if (so_far < 58)
+                desc << string(58 - so_far, ' ');
             desc << "</" << colour_to_str(colour) << ">";
 
             if (you.divine_exegesis)
                 desc << string(9, ' ');
+            else if (show_enkindle && spell_can_be_enkindled(spell.spell))
+            {
+                const int enkindled_fail = failure_rate_to_int(raw_spell_fail(spell.spell, true));
+
+                const string fail_string = make_stringf("<%s>%d%%</%s><darkgrey> (%d%%)</darkgrey>",
+                                                            colour_to_str(spell.fail_rate_colour).c_str(),
+                                                            failure_rate_to_int(spell.raw_fail),
+                                                            colour_to_str(spell.fail_rate_colour).c_str(),
+                                                            enkindled_fail);
+
+                const int width = strwidth(formatted_string::parse_string(fail_string).tostring());
+                desc << fail_string << string(13 - width, ' ');
+            }
             else
             {
                 desc << "<" << colour_to_str(spell.fail_rate_colour) << ">";
-                desc << chop_string(failure_rate_to_string(spell.raw_fail), 9);
+                desc << chop_string(failure_rate_to_string(spell.raw_fail), show_enkindle ? 13 : 9);
                 desc << "</" << colour_to_str(spell.fail_rate_colour) << ">";
             }
 
@@ -799,12 +844,13 @@ private:
     }
 
 public:
-    SpellLibraryMenu(spell_list& list)
+    SpellLibraryMenu(spell_list& list, action _default_action)
         : Menu(MF_SINGLESELECT | MF_ALLOW_FORMATTING
                 | MF_ARROWS_SELECT | MF_INIT_HOVER | MF_SHOW_EMPTY
                 // To have the ctrl-f menu show up in webtiles
                 | MF_ALLOW_FILTER, "spell"),
-        current_action(you.divine_exegesis ? action::cast : action::memorise),
+        current_action(_default_action),
+        default_action(_default_action),
         spells(list),
         hidden_count(0)
     {
@@ -818,6 +864,8 @@ public:
                 "<lightgreen>Select a spell to cast with Divine Exegesis: %d MP available</lightgreen>",
                 you.magic_points);
         }
+        else if (default_action == action::imbue)
+            spell_levels_str = "<lightgreen>Select a spell to imbue your Spellspark Servitor with:</lightgreen>";
         else
         {
             spell_levels_str = make_stringf("<lightgreen>%d spell level%s"
@@ -855,6 +903,7 @@ public:
             {
             case action::memorise:
             case action::cast:
+            case action::imbue:
                 return false;
             case action::describe:
                 // n.b. skip superclass handling of ACT_EXAMINE, since we
@@ -881,7 +930,7 @@ static spell_type _choose_mem_spell(spell_list &spells)
     // If we've gotten this far, we know that at least one spell here is
     // memorisable, which is enough.
 
-    SpellLibraryMenu spell_menu(spells);
+    SpellLibraryMenu spell_menu(spells, SpellLibraryMenu::action::memorise);
 
     const vector<MenuEntry*> sel = spell_menu.show();
     if (!crawl_state.doing_prev_cmd_again)
@@ -898,13 +947,6 @@ static spell_type _choose_mem_spell(spell_list &spells)
 
 bool can_learn_spell(bool silent)
 {
-    if (you.duration[DUR_BRAINLESS])
-    {
-        if (!silent)
-            mpr("Your brain is not functional enough to learn spells.");
-        return false;
-    }
-
     if (you.confused())
     {
         if (!silent)
@@ -965,7 +1007,7 @@ static bool _learn_spell_checks(spell_type specspell, bool wizard = false)
 {
     if (spell_removed(specspell))
     {
-        mpr("Sorry, this spell is gone!");
+        mprf("Sorry, the spell '%s' is gone!", spell_title(specspell));
         return false;
     }
 
@@ -1002,6 +1044,12 @@ static bool _learn_spell_checks(spell_type specspell, bool wizard = false)
     if (player_spell_levels() < spell_levels_required(specspell) && !wizard)
     {
         mpr("You can't memorise that many levels of magic yet!");
+        return false;
+    }
+
+    if (!wizard && !_spell_available_to_memorize(specspell))
+    {
+        mpr("You haven't found that spell!");
         return false;
     }
 
@@ -1080,9 +1128,9 @@ bool book_has_title(const item_def &book)
     // No "A Great Wizards, Vol. II"
     if (book.sub_type == BOOK_BIOGRAPHIES_II
         || book.sub_type == BOOK_BIOGRAPHIES_VII
-        || book.sub_type == BOOK_OZOCUBU
         || book.sub_type == BOOK_MAXWELL
-        || book.sub_type == BOOK_UNRESTRAINED)
+        || book.sub_type == BOOK_UNRESTRAINED
+        || book.sub_type == BOOK_SWAMP_SOJOURN)
     {
         return true;
     }
@@ -1108,7 +1156,7 @@ spret divine_exegesis(bool fail)
     sort(spells.begin(), spells.end(), _sort_divine_spells);
     // If we've gotten this far, we know at least one useful spell.
 
-    SpellLibraryMenu spell_menu(spells);
+    SpellLibraryMenu spell_menu(spells, SpellLibraryMenu::action::cast);
 
     const vector<MenuEntry*> sel = spell_menu.show();
     if (!crawl_state.doing_prev_cmd_again)
@@ -1127,6 +1175,50 @@ spret divine_exegesis(bool fail)
     ASSERT(is_valid_spell(spell));
 
     return cast_a_spell(false, spell, nullptr, fail);
+}
+
+static spell_list _get_player_servitor_spells()
+{
+    spell_list spells;
+    for (const spell_type spell : you.spells)
+        if (spell_servitorable(spell) && failure_rate_to_int(raw_spell_fail(spell)) <= 20)
+            spells.push_back(spell);
+
+    return spells;
+}
+
+spret imbue_servitor()
+{
+    spell_list spells(_get_player_servitor_spells());
+    if (spells.empty())
+    {
+        mpr("You don't know any spells that your servitor could cast!");
+        return spret::abort;
+    }
+
+    SpellLibraryMenu spell_menu(spells, SpellLibraryMenu::action::imbue);
+
+    const vector<MenuEntry*> sel = spell_menu.show();
+    if (!crawl_state.doing_prev_cmd_again)
+    {
+        redraw_screen();
+        update_screen();
+    }
+
+    if (sel.empty())
+        return spret::abort;
+
+    const spell_type spell = *static_cast<spell_type*>(sel[0]->data);
+    if (spell == SPELL_NO_SPELL)
+        return spret::abort;
+
+    ASSERT(is_valid_spell(spell));
+
+    // Remove any servitors that currently exist and start imbuing.
+    remove_player_servitor();
+    start_delay<ImbueDelay>(5, spell);
+
+    return spret::success;
 }
 
 /// For a given dungeon depth (or item level), how much weight should we give

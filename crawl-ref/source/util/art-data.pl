@@ -16,6 +16,7 @@ my %found_funcs   = ();
 
 my %field_type = (
     AC       => "num",
+    ACROBAT  => "bool",
     ANGRY    => "num",
     APPEAR   => "str",
     ARCHMAGI => "bool",
@@ -30,10 +31,22 @@ my %field_type = (
     COLOUR   => "enum",
     CORRODE  => "bool",
     DBRAND   => "str",
+    DELETED  => "bool",
     DEX      => "num",
     DESCRIP  => "str",
     DRAIN    => "bool",
     ELEC     => "bool",
+    ENH_CONJ => "bool",
+    ENH_HEXES => "bool",
+    ENH_SUMM => "bool",
+    ENH_NECRO => "bool",
+    ENH_TLOC => "bool",
+    ENH_FIRE => "bool",
+    ENH_ICE  => "bool",
+    ENH_AIR  => "bool",
+    ENH_EARTH => "bool",
+    ENH_ALCH => "bool",
+    ENH_FORGE => "bool",
     EV       => "num",
     EVIL     => "bool",
     FOG      => "bool",
@@ -61,17 +74,19 @@ my %field_type = (
     RANDAPP  => "bool",
     RCORR    => "bool",
     REGEN    => "num",
+    REGEN_MP => "num",
     RMSL     => "bool",
     RMUT     => "bool",
-    RND_TELE => "bool",
     SEEINV   => "bool",
     SKIP_EGO => "bool",
     SH       => "num",
+    SILENCE  => "bool",
     SLAY     => "num",
     SPECIAL  => "bool",
     SLOW     => "bool",
     STEALTH  => "num",
     STR      => "num",
+    WIZ      => "bool",
     TYPE     => "str",
     UNIDED   => "bool",
     VALUE    => "num",
@@ -87,6 +102,7 @@ my %field_type = (
     world_reacts_func  => "func",
     melee_effects_func => "func",
     launch_func        => "func",
+    death_effects_func => "func",
 
     plus      => "num",
     plus2     => "num",
@@ -201,7 +217,7 @@ sub finish_art
         $funcs = {};
     }
 
-    foreach my $func_name (qw(equip unequip world_reacts melee_effects launch))
+    foreach my $func_name (qw(equip unequip world_reacts melee_effects launch death_effects))
     {
         my $val;
         if ($funcs->{$func_name})
@@ -256,8 +272,8 @@ sub finish_art
 
     my $flags = "";
     my $flag;
-    foreach $flag ("SPECIAL", "HOLY", "EVIL", "CHAOTIC", "NOGEN", "RANDAPP",
-                   "UNIDED", "SKIP_EGO")
+    foreach $flag ("SPECIAL", "HOLY", "EVIL", "CHAOTIC", "DELETED", "NOGEN",
+                   "RANDAPP", "UNIDED", "SKIP_EGO")
     {
         if ($artefact->{$flag})
         {
@@ -526,34 +542,40 @@ my @art_order = (
     "flags",
 
 # start TAG_MAJOR_VERSION == 34
-    # Remove five copies of "unused", when
+    # Remove six copies of "unused", when
     # it is no longer the case that TAG_MAJOR_VERSION == 34
     "{", "BRAND", "AC", "EV", "STR", "INT", "DEX", "\n",
     "FIRE", "COLD", "ELEC", "POISON", "LIFE", "WILL", "\n",
     "SEEINV", "INV", "FLY", "BLINK", "unused",  "NOISES", "\n",
-    "NOSPELL", "RND_TELE", "NOTELEP", "ANGRY", "unused", "\n",
+    "NOSPELL", "unused", "NOTELEP", "ANGRY", "unused", "\n",
     "MUTATE", "unused", "SLAY", "unused", "STEALTH", "MP", "\n",
     "BASE_DELAY", "HP", "CLARITY", "BASE_ACC", "BASE_DAM", "\n",
     "RMSL", "unused", "REGEN", "unused", "NO_UPGRADE", "RCORR", "\n",
     "RMUT", "unused", "CORRODE", "DRAIN", "SLOW", "FRAGILE", "\n",
-    "SH", "HARM", "RAMPAGE", "ARCHMAGI", "\n",
+    "SH", "HARM", "RAMPAGE", "ARCHMAGI", "ENH_CONJ", "ENH_HEXES", "\n",
+    "ENH_SUMM", "ENH_NECRO", "ENH_TLOC", "unused", "ENH_FIRE", "\n",
+    "ENH_ICE", "ENH_AIR", "ENH_EARTH", "ENH_ALCH", "\n",
+    "ACROBAT", "REGEN_MP", "WIZ", "ENH_FORGE", "SILENCE",
     "}",
 # end TAG_MAJOR_VERSION
 # start TAG_MAJOR_VERSION == 35
 #     "{", "BRAND", "AC", "EV", "STR", "INT", "DEX", "\n",
 #     "FIRE", "COLD", "ELEC", "POISON", "LIFE", "WILL", "\n",
 #     "SEEINV", "INV", "FLY", "BLINK", "NOISES", "\n",
-#     "NOSPELL", "RND_TELE", "NOTELEP", "ANGRY", "\n",
+#     "NOSPELL", "NOTELEP", "ANGRY", "\n",
 #     "MUTATE", "SLAY", "STEALTH", "MP", "\n",
 #     "BASE_DELAY", "HP", "CLARITY", "BASE_ACC", "BASE_DAM", "\n",
 #     "RMSL", "REGEN", "NO_UPGRADE", "RCORR", "\n",
 #     "RMUT", "CORRODE", "DRAIN", "SLOW", "FRAGILE", "\n",
-#     "SH", "HARM", "RAMPAGE", "ARCHMAGI", "\n",
+#     "SH", "HARM", "RAMPAGE", "ARCHMAGI", "ENH_CONJ", "ENH_HEXES", "\n",
+#     "ENH_SUMM", "ENH_NECRO", "ENH_TLOC", "ENH_FIRE", "\n",
+#     "ENH_ICE", "ENH_AIR", "ENH_EARTH", "ENH_ALCH", "\n",
+#     "ACROBAT", "REGEN_MP", "ENH_FORGE", "SILENCE",
 #     "}",
 # end TAG_MAJOR_VERSION
 
     "equip_func", "unequip_func", "world_reacts_func", "melee_effects_func",
-    "launch_func"
+    "launch_func", "death_effects_func"
 );
 
 sub art_to_str
@@ -884,7 +906,8 @@ HEADER_END
             next;
         }
         elsif ($artefact->{sub_type} =~ /_SHIELD/
-               || $artefact->{sub_type} =~ /_BUCKLER/)
+               || $artefact->{sub_type} =~ /_BUCKLER/
+               || $artefact->{sub_type} =~ /_ORB/)
         {
             $part = "HAND2";
         }
@@ -1038,6 +1061,7 @@ my %valid_func = (
     world_reacts  => 1,
     melee_effects => 1,
     launch        => 1,
+    death_effects => 1,
 );
 
 sub read_funcs
@@ -1091,7 +1115,7 @@ sub read_data
         # Strip comments.
         s/#.*//;
 
-        # Strip trailing whitspace; leading whitespace indicates the
+        # Strip trailing whitespace; leading whitespace indicates the
         # continuation of a string field.
         s/\s*$//;
 

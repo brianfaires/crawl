@@ -123,7 +123,7 @@ static void _do_wizard_command(int wiz_command)
     // case CONTROL('M'): break; // XXX do not use, menu command
 
     case 'n': wizard_set_zot_clock(); break;
-    // case 'N': break;
+    case 'N': wizard_get_god_tension(); break;
     // case CONTROL('N'): break;
 
     case 'o': wizard_create_spec_object(); break;
@@ -174,7 +174,7 @@ static void _do_wizard_command(int wiz_command)
     case CONTROL('Y'): wizard_suppress(); break;
 
     case 'z': wizard_cast_spec_spell(); break;
-    // case 'Z': break;
+    case 'Z': wizard_unobtain_runes_and_orb(); break;
     // case CONTROL('Z'): break;
 
     case '!': wizard_memorise_spec_spell(); break;
@@ -212,7 +212,16 @@ static void _do_wizard_command(int wiz_command)
 
     case '\\': debug_make_shop(); break;
     case '|': wizard_create_all_artefacts(true); break;
-    case CONTROL('\\'): wizard_create_all_artefacts(false); break;
+
+    case CONTROL('\\'):
+#ifdef USE_TILE_LOCAL
+    // Control-\ generates CONTROL(xxx) on console, but LC_CONTROL(xxx) on
+    // local tiles, as do all the non-letter control sequences that work on
+    // console.
+    case LC_CONTROL('\\'):
+#endif
+        wizard_create_all_artefacts(false);
+        break;
 
     case ';': wizard_list_levels(); break;
     case ':': wizard_list_branches(); break;
@@ -292,7 +301,7 @@ void handle_wizard_command()
             mprf(MSGCH_WARN, "If you continue, your game will not be scored!");
 #endif
 
-        if (!yes_or_no("Do you really want to enter wizard mode?"))
+        if (!confirm_prompt("wiz", "Do you really want to enter wizard mode?"))
         {
             canned_msg(MSG_OK);
             return;
@@ -364,10 +373,7 @@ void handle_wizard_command()
 void enter_explore_mode()
 {
     // WIZ_NEVER gives protection for those who have wiz compiles,
-    // and don't want to risk their characters. Also, and hackishly,
-    // it's used to prevent access for non-authorised users to wizard
-    // builds in dgamelaunch builds unless the game is started with the
-    // -wizard flag.
+    // and don't want to risk their characters.
     if (Options.explore_mode == WIZ_NEVER)
         return;
 
@@ -383,7 +389,7 @@ void enter_explore_mode()
         mprf(MSGCH_WARN, "If you continue, your game will not be scored!");
 #endif
 
-        if (!yes_or_no("Do you really want to enter explore mode?"))
+        if (!confirm_prompt("explore", "Do you really want to enter explore mode?"))
         {
             canned_msg(MSG_OK);
             return;
@@ -392,7 +398,8 @@ void enter_explore_mode()
         take_note(Note(NOTE_MESSAGE, 0, 0, "Entered explore mode."));
 
 #ifndef SCORE_WIZARD_CHARACTERS
-        _log_wizmode_entrance();
+        scorefile_entry se(INSTANT_DEATH, MID_NOBODY, KILLED_BY_EXPLORING, nullptr);
+        logfile_new_entry(se);
 #endif
 
         you.explore = true;
@@ -432,6 +439,7 @@ int list_wizard_commands(bool do_redraw_screen)
                        "<w>&</w>      list all divine followers\n"
                        "<w>=</w>      show info about skill points\n"
                        "<w>n</w>      set Zot clock to a value\n"
+                       "<w>N</w>      get current tension value\n"
                        "\n"
                        "<yellow>Dungeon features</yellow>\n"
                        "<w>T</w>      make a trap\n"
@@ -442,7 +450,7 @@ int list_wizard_commands(bool do_redraw_screen)
                        "<yellow>Builder debugging</yellow>\n"
                        "<w>L</w>      place a vault by name\n"
                        "<w>P</w>      create a level based on a vault\n"
-                       "<w>R</w> regenerate current level\n"
+                       "<w>R</w>      regenerate current level\n"
                        "<w>Ctrl-A</w> generate new Abyss area\n"
                        "<w>K</w>      mark all vaults as unused\n"
                        "<w>:</w>      find branches and overflow\n"
@@ -504,6 +512,7 @@ int list_wizard_commands(bool do_redraw_screen)
                        "<w>+</w>      make randart from item\n"
                        "<w>'</w>      list items\n"
                        "<w>J</w>      Jiyva off-level sacrifice\n"
+                       "<w>Z</w>      Unobtain runes and Orb of Zot\n"
                        "\n"
                        "<yellow>Debugging commands</yellow>\n"
                        "<w>f</w>      quick fight simulation\n"

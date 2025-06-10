@@ -325,6 +325,17 @@ rect_gray1
 rect_gray2
 rect_gray3
 
+%weight 10
+depthstone_floor0 FLOOR_DEPTHSTONE
+%weight 7
+depthstone_floor1
+depthstone_floor2
+%weight 3
+depthstone_floor3
+%weight 1
+depthstone_floor4
+
+%weight 10
 floor_vines0 FLOOR_VINES
 floor_vines1
 floor_vines2
@@ -893,6 +904,11 @@ frozen10
 frozen11
 frozen12
 
+seismorock0 FLOOR_SEISMOROCK
+seismorock1
+seismorock2
+seismorock3
+
 %lum 0 -5
 %weight 50
 demonic_red1 FLOOR_DEMONIC FLOOR_DEMONIC_RED
@@ -1003,6 +1019,19 @@ green_bones09
 green_bones10
 green_bones11
 green_bones12
+
+necropolis_squares_1 FLOOR_NECROPOLIS_SQUARES
+necropolis_squares_2
+necropolis_squares_3
+necropolis_squares_4
+necropolis_square_grass_1 FLOOR_NECROPOLIS_SQUARE_GRASS
+necropolis_square_grass_2
+necropolis_square_grass_3
+necropolis_square_grass_4
+necropolis_grass_1 FLOOR_NECROPOLIS_GRASS
+necropolis_grass_2
+necropolis_grass_3
+necropolis_grass_4
 
 woodground01 FLOOR_WOODGROUND
 woodground02
@@ -1129,6 +1158,24 @@ shallow_water_murky DNGN_SHALLOW_WATER_MURKY
 shallow_water_murky2
 shallow_water_murky_disturbance DNGN_SHALLOW_WATER_MURKY_DISTURBANCE
 shallow_water_murky_disturbance2
+%weight 120
+starwater_00 DNGN_STARWATER
+%weight 60
+starwater_01
+%weight 30
+starwater_02
+%weight 15
+starwater_03
+%weight 3
+starwater_04
+starwater_05
+starwater_06
+starwater_07
+%weight 1
+starwater_08
+starwater_09
+starwater_10
+starwater_11
 
 toxic_bog1 DNGN_TOXIC_BOG
 toxic_bog2

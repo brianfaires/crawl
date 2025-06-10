@@ -18,6 +18,7 @@
 #include "branch.h"
 #include "colour.h"
 #include "database.h"
+#include "english.h"
 #include "god-item.h"
 #include "item-name.h"
 #include "item-prop.h"
@@ -32,6 +33,7 @@
 #include "state.h"
 #include "stringutil.h"
 #include "tag-version.h"
+#include "transform.h" // form_for_talisman
 #include "unicode.h"
 
 // Putting this here since art-enum.h is generated.
@@ -72,13 +74,8 @@ static bool _god_fits_artefact(const god_type which_god, const item_def &item,
 
     if (is_evil_god(which_god) && brand == SPWPN_HOLY_WRATH)
         return false;
-    else if (is_good_god(which_god)
-             && (brand == SPWPN_DRAINING
-                 || brand == SPWPN_PAIN
-                 || brand == SPWPN_VAMPIRISM
-                 || brand == SPWPN_REAPING
-                 || brand == SPWPN_CHAOS
-                 || is_demonic(item)))
+    if (is_good_god(which_god)
+        && (is_evil_brand(brand) || is_demonic(item)))
     {
         return false;
     }
@@ -86,7 +83,10 @@ static bool _god_fits_artefact(const god_type which_god, const item_def &item,
     switch (which_god)
     {
     case GOD_ZIN:
-        // Lawful god: no mutagenics.
+        // Lawful god: no chaos or mutagenics.
+        if (brand == SPWPN_CHAOS)
+            return false;
+
         if (artefact_property(item, ARTP_CONTAM))
             return false;
         break;
@@ -122,7 +122,7 @@ static bool _god_fits_artefact(const god_type which_god, const item_def &item,
 
     case GOD_TROG:
         // Limited selection of brands.
-        if (brand != SPWPN_VORPAL
+        if (brand != SPWPN_HEAVY
             && brand != SPWPN_FLAMING
             && brand != SPWPN_ANTIMAGIC)
         {
@@ -154,6 +154,12 @@ static bool _god_fits_artefact(const god_type which_god, const item_def &item,
             return false;
         break;
 
+    case GOD_IGNIS:
+        // Fire god.
+        if (item.base_type == OBJ_WEAPONS && brand != SPWPN_FLAMING)
+            return false;
+        break;
+
     default:
         break;
     }
@@ -178,19 +184,20 @@ string replace_name_parts(const string &name_in, const item_def& item)
                                "@player_name@"
                                + getRandNameString("killer_name"));
             name = replace_all(name, "@player_doom@",
-                               "@player_name@'s "
+                               "@player_name_possessive@ "
                                + getRandNameString("death_or_doom"));
         }
         else
         {
             // Simply overwrite the name with one of type "God's Favour".
             name = "of ";
-            name += god_name(god_gift, false);
-            name += "'s ";
+            name += apostrophise(god_name(god_gift, false));
             name += getRandNameString("divine_esteem");
         }
     }
     name = replace_all(name, "@player_name@", you.your_name);
+    name = replace_all(name, "@player_name_possessive@",
+                       apostrophise(you.your_name));
 
     name = replace_all(name, "@player_species@",
                  species::name(you.species, species::SPNAME_GENUS));
@@ -205,7 +212,8 @@ string replace_name_parts(const string &name_in, const item_def& item)
     // Occasionally use long name for Xom (see religion.cc).
     name = replace_all(name, "@xom_name@", god_name(GOD_XOM, coinflip()));
 
-    if (name.find("@god_name@", 0) != string::npos)
+    if (name.find("@god_name@", 0) != string::npos
+        || name.find("@god_name_possessive@", 0) != string::npos)
     {
         god_type which_god;
 
@@ -222,6 +230,8 @@ string replace_name_parts(const string &name_in, const item_def& item)
         }
 
         name = replace_all(name, "@god_name@", god_name(which_god, false));
+        name = replace_all(name, "@god_name_possessive@",
+                           apostrophise(god_name(which_god, false)));
     }
 
     return name;
@@ -239,14 +249,6 @@ static const unrandart_entry unranddata[] =
 
 static const unrandart_entry *_seekunrandart(const item_def &item);
 
-bool is_known_artefact(const item_def &item)
-{
-    if (!item_type_known(item))
-        return false;
-
-    return is_artefact(item);
-}
-
 bool is_artefact(const item_def &item)
 {
     return item.flags & ISFLAG_ARTEFACT_MASK;
@@ -263,7 +265,7 @@ bool is_random_artefact(const item_def &item)
  *  @param item The item to be checked.
  *  @param which The unrand enum to be checked against (default 0).
  *  @returns true if item is an unrand, and if which is not 0, if it is the unrand
- *           specfied by enum in which.
+ *           specified by enum in which.
  */
 bool is_unrandom_artefact(const item_def &item, int which)
 {
@@ -275,17 +277,6 @@ bool is_special_unrandom_artefact(const item_def &item)
 {
     return item.flags & ISFLAG_UNRANDART
            && (_seekunrandart(item)->flags & UNRAND_FLAG_SPECIAL);
-}
-
-void autoid_unrand(item_def &item)
-{
-    if (!(item.flags & ISFLAG_UNRANDART) || item.flags & ISFLAG_KNOW_TYPE)
-        return;
-    const uint16_t uflags = _seekunrandart(item)->flags;
-    if (uflags & UNRAND_FLAG_UNIDED)
-        return;
-
-    set_ident_flags(item, ISFLAG_IDENT_MASK | ISFLAG_NOTED_ID);
 }
 
 unique_item_status_type get_unique_item_status(int art)
@@ -300,12 +291,13 @@ static void _set_unique_item_existence(int art, bool exists)
 
     const unique_item_status_type status = !exists
         ? UNIQ_NOT_EXISTS
-        : !crawl_state.generating_level
+        : !crawl_state.generating_level // acquirement, gozag shops, ...
                 // treat unrands that generate in these branches as if they
                 // were acquired. TODO: there's a potential bug here if every
-                // octopus king ring generates and the last is acquired. Also,
-                // I suspect that these getting lost in the abyss isn't handled
-                // right
+                // octopus king ring generates and the last is acquired.
+                // note that unrands that generate in the abyss and get left
+                // there will convert to UNIQ_LOST_IN_ABYSS, but they don't
+                // get this automatically.
                 || level_id::current().branch == BRANCH_TROVE
                 || level_id::current().branch == BRANCH_ABYSS
             ? UNIQ_EXISTS_NONLEVELGEN
@@ -343,20 +335,54 @@ static void _populate_armour_intrinsic_artps(const armour_type arm,
     proprt[ARTP_REGENERATION] += armour_type_prop(arm, ARMF_REGENERATION);
 }
 
-/// The artefact properties corresponding to a given piece of jewellery.
-struct jewellery_fake_artp
-{
-    /// The artp matching the jewellery (e.g. ARTP_AC for RING_PROTECTION)
-    artefact_prop_type  artp;
-    /// The value of the artp. (E.g. '9' for RING_MAGICAL_POWER.) If set to 0, uses item.plus instead.
-    int                 plus;
+static map<stave_type, artefact_prop_type> staff_resist_artps = {
+    { STAFF_FIRE,    ARTP_FIRE },
+    { STAFF_COLD,    ARTP_COLD },
+    { STAFF_ALCHEMY, ARTP_POISON },
+    { STAFF_DEATH,   ARTP_NEGATIVE_ENERGY },
+    { STAFF_AIR,     ARTP_ELECTRICITY },
+    // nothing for conj or earth
 };
 
-static map<jewellery_type, vector<jewellery_fake_artp>> jewellery_artps = {
+static map<stave_type, artefact_prop_type> staff_enhancer_artps = {
+    { STAFF_FIRE,           ARTP_ENHANCE_FIRE },
+    { STAFF_COLD,           ARTP_ENHANCE_ICE },
+    { STAFF_ALCHEMY,        ARTP_ENHANCE_ALCHEMY },
+    { STAFF_DEATH,          ARTP_ENHANCE_NECRO },
+    { STAFF_AIR,            ARTP_ENHANCE_AIR },
+    { STAFF_CONJURATION,    ARTP_ENHANCE_CONJ },
+    { STAFF_EARTH,          ARTP_ENHANCE_EARTH },
+};
+
+static void _populate_staff_intrinsic_artps(stave_type staff,
+                                            artefact_properties_t &proprt)
+{
+    artefact_prop_type *prop = map_find(staff_resist_artps, staff);
+    if (prop)
+        proprt[*prop] += 1;
+    prop = map_find(staff_enhancer_artps, staff);
+    if (prop)
+        proprt[*prop] = 1;
+}
+
+/// The artefact properties corresponding to a given base item.
+struct artp_value
+{
+    /// The artp matching the item (e.g. ARTP_AC for RING_PROTECTION)
+    artefact_prop_type  type;
+    /// The value of the artp. (E.g. '9' for RING_MAGICAL_POWER.) If set to 0,
+    /// uses item.plus instead.
+    int                 value;
+};
+
+static map<jewellery_type, vector<artp_value>> jewellery_artps = {
     { AMU_REGENERATION, { { ARTP_REGENERATION, 1 } } },
+    { AMU_MANA_REGENERATION, { { ARTP_MANA_REGENERATION, 1} } },
     { AMU_REFLECTION, { { ARTP_SHIELDING, AMU_REFLECT_SH / 2} } },
+    { AMU_ACROBAT, { { ARTP_ACROBAT, 1 } } },
 
     { RING_MAGICAL_POWER, { { ARTP_MAGICAL_POWER, 9 } } },
+    { RING_WIZARDRY, { { ARTP_WIZARDRY, 1} } },
     { RING_FLIGHT, { { ARTP_FLY, 1 } } },
     { RING_SEE_INVISIBLE, { { ARTP_SEE_INVISIBLE, 1 } } },
     { RING_STEALTH, { { ARTP_STEALTH, 1 } } },
@@ -364,12 +390,14 @@ static map<jewellery_type, vector<jewellery_fake_artp>> jewellery_artps = {
     { RING_PROTECTION_FROM_FIRE, { { ARTP_FIRE, 1 } } },
     { RING_PROTECTION_FROM_COLD, { { ARTP_COLD, 1 } } },
     { RING_POISON_RESISTANCE, { { ARTP_POISON, 1 } } },
-    { RING_LIFE_PROTECTION, { { ARTP_NEGATIVE_ENERGY, 1 } } },
+    { RING_POSITIVE_ENERGY, { { ARTP_NEGATIVE_ENERGY, 1 } } },
     { RING_WILLPOWER, { { ARTP_WILLPOWER, 1 } } },
     { RING_RESIST_CORROSION, { { ARTP_RCORR, 1 } } },
 
-    { RING_FIRE, { { ARTP_FIRE, 1 }, { ARTP_COLD, -1 } } },
-    { RING_ICE, { { ARTP_COLD, 1 }, { ARTP_FIRE, -1 } } },
+    { RING_FIRE, { { ARTP_FIRE, 1 }, { ARTP_COLD, -1 },
+                   { ARTP_ENHANCE_FIRE, 1} } },
+    { RING_ICE, { { ARTP_COLD, 1 }, { ARTP_FIRE, -1 },
+                  { ARTP_ENHANCE_ICE, 1} } },
 
     { RING_STRENGTH, { { ARTP_STRENGTH, 0 } } },
     { RING_INTELLIGENCE, { { ARTP_INTELLIGENCE, 0 } } },
@@ -383,58 +411,91 @@ static map<jewellery_type, vector<jewellery_fake_artp>> jewellery_artps = {
  * Fill out the inherent ARTPs corresponding to a given type of jewellery.
  *
  * @param arm           The jewellery in question.
- * @param proprt[out]   The properties list to be populated.
- * @param known[out]    The props which are known.
+ * @param props[out]   The properties list to be populated.
  */
 static void _populate_jewel_intrinsic_artps(const item_def &item,
-                                              artefact_properties_t &proprt,
-                                              artefact_known_props_t &known)
+                                            artefact_properties_t &props)
 {
     const jewellery_type jewel = (jewellery_type)item.sub_type;
-    vector<jewellery_fake_artp> *props = map_find(jewellery_artps, jewel);
-    if (!props)
+    vector<artp_value> *artps = map_find(jewellery_artps, jewel);
+    if (!artps)
         return;
 
-    const bool id_props = item_ident(item, ISFLAG_KNOW_PROPERTIES)
-                          || item_ident(item, ISFLAG_KNOW_TYPE);
-
-    for (const auto &fake_artp : *props)
-    {
-        proprt[fake_artp.artp] += fake_artp.plus ? fake_artp.plus : item.plus;
-        if (id_props)
-            known[fake_artp.artp] = true;
-    }
+    for (const auto &artp : *artps)
+        props[artp.type] += artp.value ? artp.value : item.plus;
 }
 
+// XXX: Building this directly from form data would be nice.
+// Note: Negative resistances are intentionally left off multiple forms so that
+//       it is possible to generate randarts that give that resistance, which
+//       I think is still an appropriate bonus.
+static map<talisman_type, vector<artp_value>> talisman_artps = {
+    { TALISMAN_INKWELL,     {{ARTP_POISON, 1}}},
+    { TALISMAN_RIMEHORN,    {{ARTP_COLD, 2}}},
+    { TALISMAN_SCARAB,      {{ARTP_FIRE, 2}}},
+    { TALISMAN_MEDUSA,      {{ARTP_POISON, 1}}},
+    { TALISMAN_SERPENT,     {{ARTP_POISON, 1}}},
+    { TALISMAN_SPIDER,      {{ARTP_RAMPAGING, 1}}},
+    { TALISMAN_STATUE,  {{ARTP_POISON, 1}, {ARTP_ELECTRICITY, 1},
+                         {ARTP_NEGATIVE_ENERGY, 1}}},
+    { TALISMAN_DRAGON,  {{ARTP_FIRE, 1}, {ARTP_COLD, 1}, {ARTP_POISON, 1}, {ARTP_FLY, 1}}},
+    { TALISMAN_SPHINX,  {{ARTP_FLY, 1}}},
+    { TALISMAN_STORM,   {{ARTP_POISON, 1}, {ARTP_ELECTRICITY, 1}, {ARTP_FLY, 1}}},
+    { TALISMAN_DEATH,   {{ARTP_POISON, 1}, {ARTP_NEGATIVE_ENERGY, 3},
+                        {ARTP_COLD, 1}}},
+    { TALISMAN_VAMPIRE, {{ARTP_COLD, 1}, {ARTP_NEGATIVE_ENERGY, 1}}},
+};
+
+/**
+ * Fill out the inherent ARTPs corresponding to a given type of talisman.
+ *
+ * @param arm           The talisman in question.
+ * @param props[out]    The properties list to be populated.
+ */
+static void _populate_talisman_intrinsic_artps(const item_def &item,
+                                               artefact_properties_t &props)
+{
+    const talisman_type talisman = (talisman_type)item.sub_type;
+    vector<artp_value> *artps = map_find(talisman_artps, talisman);
+    if (!artps)
+        return;
+
+    for (const auto &artp : *artps)
+        props[artp.type] += artp.value ? artp.value : item.plus;
+}
 
 /**
  * Fill out the inherent ARTPs corresponding to a given item.
  *
- * @param arm           The item in question.
- * @param proprt[out]   The properties list to be populated.
- * @param known[out]    The props which are known.
+ * @param arm          The item in question.
+ * @param props[out]   The properties list to be populated.
  */
 static void _populate_item_intrinsic_artps(const item_def &item,
-                                             artefact_properties_t &proprt,
-                                             artefact_known_props_t &known)
+                                           artefact_properties_t &props)
 {
     switch (item.base_type)
     {
         case OBJ_ARMOUR:
             _populate_armour_intrinsic_artps((armour_type)item.sub_type,
-                                             proprt);
+                                             props);
+            break;
+        case OBJ_STAVES:
+            _populate_staff_intrinsic_artps((stave_type)item.sub_type, props);
             break;
         case OBJ_JEWELLERY:
-            _populate_jewel_intrinsic_artps(item, proprt, known);
+            _populate_jewel_intrinsic_artps(item, props);
             break;
+        case OBJ_TALISMANS:
+            _populate_talisman_intrinsic_artps(item, props);
+            break;
+
         default:
             break;
     }
 }
 
 void artefact_desc_properties(const item_def &item,
-                              artefact_properties_t &proprt,
-                              artefact_known_props_t &known)
+                              artefact_properties_t &proprt)
 {
     // Randart books have no randart properties.
     if (item.base_type == OBJ_BOOKS)
@@ -442,10 +503,11 @@ void artefact_desc_properties(const item_def &item,
 
     // actual artefact properties
     artefact_properties(item, proprt);
-    artefact_known_properties(item, known);
 
-    // fake artefact properties (intrinsics)
-    _populate_item_intrinsic_artps(item, proprt, known);
+    // fake artefact properties (intrinsics). For talismans, we don't list
+    // "intrinsic" resists provided by the form.
+    if (item.base_type != OBJ_TALISMANS)
+        _populate_item_intrinsic_artps(item, proprt);
 }
 
 static void _add_randart_weapon_brand(const item_def &item,
@@ -459,16 +521,20 @@ static void _add_randart_weapon_brand(const item_def &item,
     if (item_props[ARTP_BRAND] != SPWPN_NORMAL)
         return;
 
-    if (is_range_weapon(item))
+    if (is_blessed_weapon_type(item.sub_type))
+        item_props[ARTP_BRAND] = SPWPN_HOLY_WRATH;
+    else if (is_range_weapon(item))
     {
         item_props[ARTP_BRAND] = random_choose_weighted(
-            2, SPWPN_SPEED,
-            2, SPWPN_ELECTROCUTION,
+            8, SPWPN_DRAINING,
+            8, SPWPN_HEAVY,
+            8, SPWPN_FLAMING,
+            8, SPWPN_FREEZING,
+            4, SPWPN_ELECTROCUTION,
+            3, SPWPN_SPEED,
             2, SPWPN_ANTIMAGIC,
-            4, SPWPN_DRAINING,
-            4, SPWPN_VORPAL,
-            4, SPWPN_FLAMING,
-            4, SPWPN_FREEZING);
+            2, SPWPN_CHAOS,
+            1, SPWPN_HOLY_WRATH);
 
         // Penetration is only allowed on crossbows.
         // This may change in future.
@@ -490,9 +556,9 @@ static void _add_randart_weapon_brand(const item_def &item,
     else
     {
         item_props[ARTP_BRAND] = random_choose_weighted(
-            73, SPWPN_VORPAL,
-            34, SPWPN_FLAMING,
-            34, SPWPN_FREEZING,
+            47, SPWPN_FLAMING,
+            47, SPWPN_FREEZING,
+            26, SPWPN_HEAVY,
             26, SPWPN_VENOM,
             26, SPWPN_DRAINING,
             13, SPWPN_HOLY_WRATH,
@@ -503,6 +569,7 @@ static void _add_randart_weapon_brand(const item_def &item,
             13, SPWPN_ANTIMAGIC,
             13, SPWPN_PROTECTION,
             13, SPWPN_SPECTRAL,
+             6, SPWPN_REAPING,
              3, SPWPN_DISTORTION,
              3, SPWPN_CHAOS);
     }
@@ -512,33 +579,60 @@ static void _add_randart_weapon_brand(const item_def &item,
         item_props[ARTP_BRAND] = SPWPN_NORMAL;
 }
 
+// Are any of the given set of artefact properties in the set of intrinsic and
+// extant artefact properties for an item?
+static bool _any_artps_in_item_props(const vector<artefact_prop_type> &artps,
+                                     const artefact_properties_t &intrinsic_props,
+                                     const artefact_properties_t &extant_props)
+{
+    for (auto prop: artps)
+        if (intrinsic_props[prop] || extant_props[prop])
+            return true;
+
+    return false;
+}
+
 /**
  * Can the given artefact property be placed on the given item?
+ * See also _randart_is_conflicting().
  *
- * @param prop          The artefact property in question (e.g. ARTP_BLINK).
- * @param item          The item in question.
- * @param extant_props  The properties already chosen for the artefact.
- * @return              True if the property doesn't conflict with any chosen
- *                      or intrinsic properties, and doesn't violate any other
- *                      special constraints (e.g. no slaying on weapons);
- *                      false otherwise.
+ * @param prop              The artefact property in question (e.g.
+ *                          ARTP_BLINK).
+ * @param prop_val          The artp value the property will have. This
+ *                          shouldn't include any part of the property value
+ *                          intrinsic to the item (i.e. in intrinsic_props).
+ * @param item              The item in question.
+ * @param intrinsic_props   The properties intrinsic to the item's base type.
+ * @param extant_props      The properties already chosen for the artefact.
+ * @return                  True if the property doesn't conflict with any
+ *                          chosen or intrinsic properties, and doesn't
+ *                          violate any other special constraints (e.g. no
+ *                          slaying on weapons); false otherwise.
  */
-static bool _artp_can_go_on_item(artefact_prop_type prop, const item_def &item,
+static bool _artp_can_go_on_item(artefact_prop_type prop, int prop_val,
+                                 const item_def &item,
+                                 const artefact_properties_t &intrinsic_props,
                                  const artefact_properties_t &extant_props)
 {
-    // see also _randart_is_conflicting
+    // We aren't changing anything.
+    if (!prop_val)
+        return true;
 
-    artefact_properties_t intrinsic_proprt;
-    intrinsic_proprt.init(0);
-    artefact_known_props_t _;
-    _populate_item_intrinsic_artps(item, intrinsic_proprt, _);
-    if (intrinsic_proprt[prop])
-        return false; // don't duplicate intrinsic props
+    // Make sure the new prop value is consistent with the intrinsic one: don't
+    // reduce any positive intrinsic value nor decrease any negative one.
+    const int intrinsic_val = intrinsic_props[prop];
+    if (intrinsic_val
+            && (intrinsic_val > 0 && prop_val < 0
+                || intrinsic_val < 0 && prop_val > 0))
+    {
+        return false;
+    }
 
     const object_class_type item_class = item.base_type;
     // Categorise items by whether they're quick to swap or not. Some artefact
     // properties aren't appropriate on easily swappable items.
     const bool non_swappable = item_class == OBJ_ARMOUR
+                               || item_class == OBJ_TALISMANS
                                || item_class == OBJ_JEWELLERY
                                   && jewellery_is_amulet(item);
 
@@ -546,50 +640,112 @@ static bool _artp_can_go_on_item(artefact_prop_type prop, const item_def &item,
     // get_weapon_brand; the `item` object is not fully set up.
     switch (prop)
     {
-        // weapons already have slaying
+        // weapons already have slaying. feels weird on staves
         case ARTP_SLAYING:
-            return item_class != OBJ_WEAPONS;
-        // prevent properties that barding-wearers already have
-        case ARTP_SEE_INVISIBLE:
-            return !item.is_type(OBJ_ARMOUR, ARM_BARDING);
-        case ARTP_RAMPAGING:
-            return non_swappable && !item.is_type(OBJ_ARMOUR, ARM_BARDING);
+            return item_class != OBJ_WEAPONS && item_class != OBJ_STAVES;
         // prevent properties that conflict with each other
         case ARTP_CORRODE:
-            return !extant_props[ARTP_RCORR] && !intrinsic_proprt[ARTP_RCORR];
+            return !_any_artps_in_item_props({ ARTP_RCORR }, intrinsic_props,
+                                             extant_props);
         case ARTP_RCORR:
-            return !extant_props[ARTP_CORRODE];
+            return !_any_artps_in_item_props({ ARTP_CORRODE }, intrinsic_props,
+                                             extant_props);
         case ARTP_MAGICAL_POWER:
-            return item_class != OBJ_WEAPONS
+            return item_class != OBJ_WEAPONS && item_class != OBJ_STAVES
                    || extant_props[ARTP_BRAND] != SPWPN_ANTIMAGIC;
         case ARTP_BLINK:
-            return !extant_props[ARTP_PREVENT_TELEPORTATION];
+            return !_any_artps_in_item_props({ ARTP_PREVENT_TELEPORTATION },
+                                             intrinsic_props, extant_props);
         case ARTP_PREVENT_TELEPORTATION:
-            return !extant_props[ARTP_BLINK] && non_swappable;
+            return non_swappable
+                   && !_any_artps_in_item_props({ ARTP_BLINK },
+                                                intrinsic_props, extant_props)
+                   && !item.is_type(OBJ_TALISMANS, TALISMAN_STORM);
         // only on melee weapons
         case ARTP_ANGRY:
         case ARTP_NOISE:
             return item_class == OBJ_WEAPONS && !is_range_weapon(item);
-        case ARTP_PREVENT_SPELLCASTING:
-            if (item.is_type(OBJ_JEWELLERY, AMU_MANA_REGENERATION))
-                return false;
-            // fallthrough
+        // could probably loosen artp conflict restrictions?
+        case ARTP_SILENCE:
+            return non_swappable
+                && !item.is_type(OBJ_JEWELLERY, AMU_MANA_REGENERATION)
+                && !_any_artps_in_item_props({ ARTP_ENHANCE_CONJ,
+                    ARTP_ENHANCE_HEXES, ARTP_ENHANCE_SUMM, ARTP_ENHANCE_NECRO,
+                    ARTP_ENHANCE_TLOC, ARTP_ENHANCE_FIRE, ARTP_ENHANCE_ICE,
+                    ARTP_ENHANCE_AIR, ARTP_ENHANCE_EARTH, ARTP_ENHANCE_ALCHEMY,
+                    ARTP_ENHANCE_FORGECRAFT }, intrinsic_props, extant_props);
         case ARTP_REGENERATION:
-        case ARTP_HARM:
+            // XXX: regen disabled on talismans because of an untransform crash
+            // related to talismans being slotless
+            return non_swappable && item_class != OBJ_TALISMANS;
         case ARTP_INVISIBLE:
+        case ARTP_HARM:
+        case ARTP_RAMPAGING:
             // only on items that can't be quickly swapped
             return non_swappable;
-        // prevent on armour (since it's swapped infrequently) and rings (since
-        // 2 slots reduces the pressure to swap)
+        // prevent on armour/talismans (since they're swapped infrequently) and
+        // rings (since 2 slots reduces the pressure to swap)
         case ARTP_FRAGILE:
             return item_class != OBJ_ARMOUR
+                   && item_class != OBJ_TALISMANS
                    && (item_class != OBJ_JEWELLERY
                        || jewellery_is_amulet(item));
+        case ARTP_DRAIN:
+        case ARTP_CONTAM:
+            return item_class != OBJ_TALISMANS; // TODO: support..?
         case ARTP_ARCHMAGI:
             return item.is_type(OBJ_ARMOUR, ARM_ROBE);
+        case ARTP_ENHANCE_CONJ:
+        case ARTP_ENHANCE_HEXES:
+        case ARTP_ENHANCE_SUMM:
+        case ARTP_ENHANCE_NECRO:
+        case ARTP_ENHANCE_TLOC:
+        case ARTP_ENHANCE_FIRE:
+        case ARTP_ENHANCE_ICE:
+        case ARTP_ENHANCE_AIR:
+        case ARTP_ENHANCE_EARTH:
+        case ARTP_ENHANCE_ALCHEMY:
+        case ARTP_ENHANCE_FORGECRAFT:
+            // Maybe we should allow these for robes, too?  And hats? And
+            // gloves and cloaks and scarves?
+            return (item.base_type == OBJ_STAVES
+                       || item.is_type(OBJ_ARMOUR, ARM_ORB))
+                   && !_any_artps_in_item_props({ ARTP_PREVENT_SPELLCASTING },
+                                             intrinsic_props, extant_props);
         default:
             return true;
     }
+}
+
+bool are_fixed_props_ok(item_def& item)
+{
+    if (!item.props.exists(FIXED_PROPS_KEY))
+        return true;
+
+    artefact_properties_t intrinsic_props;
+    intrinsic_props.init(0);
+    _populate_item_intrinsic_artps(item, intrinsic_props);
+
+    artefact_properties_t props;
+    props.init(0);
+
+    CrawlHashTable const *fixed_props;
+    fixed_props = &item.props[FIXED_PROPS_KEY].get_table();
+    for (auto const &kv : *fixed_props)
+    {
+        const auto prop = artp_type_from_name(kv.first);
+        const auto &final_val = kv.second.get_int();
+        const auto prop_val = final_val - intrinsic_props[prop];
+        if (!_artp_can_go_on_item(prop, prop_val, item, intrinsic_props,
+                                  props))
+        {
+            return false;
+        }
+
+        props[prop] = prop_val;
+    }
+
+    return true;
 }
 
 /// Generation info for a type of artefact property.
@@ -598,7 +754,7 @@ struct artefact_prop_data
     /// The name of the prop, as displayed on item annotations, etc.
     const char *name;
     /// The types of values this prop can have (e.g. bool, positive int, int)
-    artp_value_type value_types;
+    artefact_value_type value_types;
     /// Weight in randart selection (higher = more common)
     int weight;
     /// Randomly generate a 'good' value; null if this prop is never good
@@ -612,7 +768,7 @@ struct artefact_prop_data
 };
 
 /// Generate 'good' values for stat artps (e.g. ARTP_STRENGTH)
-static int _gen_good_stat_artp() { return 1 + random2(3); }
+static int _gen_good_stat_artp() { return 1 + coinflip() + one_chance_in(4); }
 
 /// Generate 'bad' values for stat artps (e.g. ARTP_STRENGTH)
 static int _gen_bad_stat_artp() { return -2 - random2(4); }
@@ -624,7 +780,9 @@ static int _gen_good_res_artp() { return 1; }
 static int _gen_bad_res_artp() { return -1; }
 
 /// Generate 'good' values for ARTP_HP/ARTP_MAGICAL_POWER
-static int _gen_good_hpmp_artp() { return 9; }
+static int _gen_good_hpmp_artp() { return random_range(4, 9) +
+                                          (one_chance_in(3) ? random_range(1, 3)
+                                                            : 0); }
 
 /// Generate 'bad' values for ARTP_HP/ARTP_MAGICAL_POWER
 static int _gen_bad_hpmp_artp() { return -_gen_good_hpmp_artp(); }
@@ -667,10 +825,12 @@ static const artefact_prop_data artp_data[] =
 #endif
     { "*Noise", ARTP_VAL_POS, 30,    // ARTP_NOISE,
         nullptr, []() { return 2; }, 0, 0 },
-    { "-Cast", ARTP_VAL_BOOL, 25,   // ARTP_PREVENT_SPELLCASTING,
+    { "-Cast", ARTP_VAL_BOOL, 0,   // ARTP_PREVENT_SPELLCASTING,
         nullptr, []() { return 1; }, 0, 0 },
+#if TAG_MAJOR_VERSION == 34
     { "*Tele", ARTP_VAL_BOOL,  0,   // ARTP_CAUSE_TELEPORTATION,
         nullptr, []() { return 1; }, 0, 0 },
+#endif
     { "-Tele", ARTP_VAL_BOOL, 25,   // ARTP_PREVENT_TELEPORTATION,
         nullptr, []() { return 1; }, 0, 0 },
     { "*Rage", ARTP_VAL_POS, 30,    // ARTP_ANGRY,
@@ -678,7 +838,7 @@ static const artefact_prop_data artp_data[] =
 #if TAG_MAJOR_VERSION == 34
     { "Hungry", ARTP_VAL_POS, 0, nullptr, nullptr, 0, 0 },// ARTP_METABOLISM,
 #endif
-    { "Contam", ARTP_VAL_POS, 20,   // ARTP_CONTAM
+    { "^Contam", ARTP_VAL_POS, 20,   // ARTP_CONTAM
         nullptr, []() { return 1; }, 0, 0 },
 #if TAG_MAJOR_VERSION == 34
     { "Acc", ARTP_VAL_ANY, 0, nullptr, nullptr, 0, 0 }, // ARTP_ACCURACY,
@@ -718,19 +878,54 @@ static const artefact_prop_data artp_data[] =
 #endif
     { "*Corrode", ARTP_VAL_BOOL, 25, // ARTP_CORRODE,
         nullptr, []() { return 1; }, 0, 0 },
-    { "Drain", ARTP_VAL_BOOL, 25, // ARTP_DRAIN,
+    { "^Drain", ARTP_VAL_BOOL, 25, // ARTP_DRAIN,
         nullptr, []() { return 1; }, 0, 0 },
     { "*Slow", ARTP_VAL_BOOL, 25, // ARTP_SLOW,
         nullptr, []() { return 1; }, 0, 0 },
-    { "Fragile", ARTP_VAL_BOOL, 30, // ARTP_FRAGILE,
+    { "^Fragile", ARTP_VAL_BOOL, 30, // ARTP_FRAGILE,
         nullptr, []() { return 1; }, 0, 0 },
     { "SH", ARTP_VAL_ANY, 0, nullptr, nullptr, 0, 0 }, // ARTP_SHIELDING,
     { "Harm", ARTP_VAL_BOOL, 25, // ARTP_HARM,
         []() {return 1;}, nullptr, 0, 0},
     { "Rampage", ARTP_VAL_BOOL, 25, // ARTP_RAMPAGING,
         []() {return 1;}, nullptr, 0, 0},
-    { "Archmagi", ARTP_VAL_BOOL, 25, // ARTP_ARCHMAGI,
+    { "Archmagi", ARTP_VAL_BOOL, 40, // ARTP_ARCHMAGI,
         []() {return 1;}, nullptr, 0, 0},
+    { "Conj", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_CONJ,
+        []() {return 1;}, nullptr, 0, 0},
+    { "Hexes", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_HEXES,
+        []() {return 1;}, nullptr, 0, 0},
+    { "Summ", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_SUMM,
+        []() {return 1;}, nullptr, 0, 0},
+    { "Necro", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_NECRO,
+        []() {return 1;}, nullptr, 0, 0},
+    { "Tloc", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_TLOC,
+        []() {return 1;}, nullptr, 0, 0},
+#if TAG_MAJOR_VERSION == 34
+    { "Tmut", ARTP_VAL_BOOL, 0, // ARTP_ENHANCE_TMUT,
+        []() {return 1;}, nullptr, 0, 0},
+#endif
+    { "Fire", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_FIRE,
+        []() {return 1;}, nullptr, 0, 0},
+    { "Ice", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_ICE,
+        []() {return 1;}, nullptr, 0, 0},
+    { "Air", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_AIR,
+        []() {return 1;}, nullptr, 0, 0},
+    { "Earth", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_EARTH,
+        []() {return 1;}, nullptr, 0, 0},
+    { "Alch", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_ALCHEMY,
+        []() {return 1;}, nullptr, 0, 0},
+
+    { "Acrobat", ARTP_VAL_BOOL, 0, // ARTP_ACROBAT,
+        []() {return 1;}, nullptr, 0, 0},
+    { "RegenMP", ARTP_VAL_BOOL, 0,   // ARTP_MANA_REGENERATION,
+        []() { return 1; }, nullptr, 0, 0 },
+    { "Wiz", ARTP_VAL_BOOL, 0,   // ARTP_WIZARDRY,
+        []() { return 1; }, nullptr, 0, 0 },
+    { "Forge", ARTP_VAL_BOOL, 20, // ARTP_ENHANCE_FORGECRAFT,
+        []() {return 1;}, nullptr, 0, 0},
+    { "*Silence", ARTP_VAL_BOOL, 25, // ARTP_SILENCE,
+        nullptr, []() { return 1; }, 0, 0 },
 };
 COMPILE_CHECK(ARRAYSZ(artp_data) == ARTP_NUM_PROPERTIES);
 // weights sum to 1000
@@ -765,19 +960,43 @@ bool artp_potentially_bad(artefact_prop_type prop)
 }
 
 /**
- * What type of values can this prop have?
- *
- * Positive, boolean (0 or 1), or any (integer).
+ * What type of value does this prop have?
  *
  * There should be a better way of expressing this...
  *
  * @param prop      The prop type in question.
- * @return          Possible value types for the prop.
+ * @return          An artefact_value_type describing that values the prop
+ *                  accepts.
  */
-artp_value_type artp_potential_value_types(artefact_prop_type prop)
+artefact_value_type artp_value_type(artefact_prop_type prop)
 {
     ASSERT_RANGE(prop, 0, ARRAYSZ(artp_data));
     return artp_data[prop].value_types;
+}
+
+/**
+ * Is the given value for the given prop in the range allowed for the prop
+ * across all item types? For the brand prop/value type, we can't check validity without
+ *
+ * @param prop      The prop type in question.
+ * @param value     The value in question.
+ * @return          True is the value is in the valid range for the prop, false
+ *                  otherwise.
+ */
+bool artp_value_is_valid(artefact_prop_type prop, int value)
+{
+    switch (artp_value_type(prop))
+    {
+    case ARTP_VAL_BOOL:
+        return value == 0 || value == 1;
+    case ARTP_VAL_POS:
+    case ARTP_VAL_BRAND:
+        return value >= 0;
+    case ARTP_VAL_ANY:
+        return true;
+    default:
+        die("Buggy artefact_value_type");
+    }
 }
 
 /**
@@ -793,26 +1012,59 @@ const char *artp_name(artefact_prop_type prop)
 }
 
 /**
- * Add a 'good' version of a given prop to the given set of item props.
+ * Return the property type for a given artefact property name.
  *
+ * @param name      The name of the artp.
+ * @return          The type of artp. The value ARTP_NUM_PROPERTIES is returned
+ *                  if there is no match.
+ */
+artefact_prop_type artp_type_from_name(const string &name)
+{
+    const auto prop_name = lowercase_string(name);
+    for (int i = 0; i < ARTP_NUM_PROPERTIES; ++i)
+    {
+        const auto prop = static_cast<artefact_prop_type>(i);
+        const string pname = artp_name(prop);
+        if (lowercase_string(pname) == prop_name)
+            return prop;
+    }
+
+    return ARTP_NUM_PROPERTIES;
+}
+
+/**
+ * Try to add a 'good' version of a given prop to the given set of item props.
  * The property may already exist in the set; if so, increase its value.
  *
  * @param prop[in]              The prop to be added.
+ * @param intrinsic_props[in]   The list props intrinsic to the item.
  * @param item_props[out]       The list of item props to be added to.
+ * @return bool                 True if the property could be added, false
+ *                              otherwise.
  */
-static void _add_good_randart_prop(artefact_prop_type prop,
+static bool _add_good_randart_prop(artefact_prop_type prop, const item_def &item,
+                                   const artefact_properties_t &intrinsic_props,
                                    artefact_properties_t &item_props)
 {
+    int prop_val = item_props[prop];
     // Add one to the starting value for stat bonuses.
     if ((prop == ARTP_STRENGTH
          || prop == ARTP_INTELLIGENCE
          || prop == ARTP_DEXTERITY)
-        && item_props[prop] == 0)
+        && prop_val == 0)
     {
-        item_props[prop]++;
+        prop_val++;
     }
 
-    item_props[prop] += artp_data[prop].gen_good_value();
+    prop_val += artp_data[prop].gen_good_value();
+    if (!_artp_can_go_on_item(prop, prop_val, item, intrinsic_props,
+                              item_props))
+    {
+        return false;
+    }
+
+    item_props[prop] = prop_val;
+    return true;
 }
 
 /**
@@ -830,35 +1082,74 @@ static void _add_good_randart_prop(artefact_prop_type prop,
  *
  * @param item          The item to apply properties to.
  * @param item_props    The properties of that item.
- * @param quality       How high quality the randart will be, measured in number
-                        of rolls for good property boosts.
- * @param max_bad_props The maximum number of bad properties this artefact can
-                        be given.
  */
 static void _get_randart_properties(const item_def &item,
-                                    artefact_properties_t &item_props,
-                                    int quality = 0,
-                                    const int max_bad_props = 2)
+                                    artefact_properties_t &item_props)
 {
     const object_class_type item_class = item.base_type;
+    artefact_properties_t intrinsic_props;
+    intrinsic_props.init(0);
+    _populate_item_intrinsic_artps(item, intrinsic_props);
 
-    // If we didn't receive a quality level, figure out how good we want the
-    // artefact to be. The default calculation range is 1 to 7.
-    if (quality < 1)
-        quality = max(1, binomial(7, 30));
+    // For any fixed properties, initialize our item with their values and
+    // count how many good and bad properties we've fixed to an increased
+    // value.
+    CrawlHashTable const *fixed_props = nullptr;
+    int fixed_bad = 0, fixed_good = 0;
+    if (item.props.exists(FIXED_PROPS_KEY))
+    {
+        fixed_props = &item.props[FIXED_PROPS_KEY].get_table();
+        for (auto const &kv : *fixed_props)
+        {
+            const auto prop = artp_type_from_name(kv.first);
+            const auto &final_val = kv.second.get_int();
+            const auto prop_val = final_val - intrinsic_props[prop];
+            if (!_artp_can_go_on_item(prop, prop_val, item, intrinsic_props,
+                                      item_props))
+            {
+                item_def item_copy = item;
+                item_copy.flags |= ISFLAG_IDENTIFIED;
+                mprf(MSGCH_ERROR, "Ignoring fixed artefact property %s with"
+                     " value %d that's incompatible with the item %s.",
+                     artp_name(prop), final_val,
+                     item_copy.name(DESC_PLAIN).c_str());
+                continue;
+            }
 
-    // then consider adding bad properties. the better the artefact, the more
-    // likely we add a bad property, up to a max of 2.
-    int bad = min(binomial(1 + div_rand_round(quality, 5), 30), max_bad_props);
-    // we start by assuming we'll allow one good property per quality level
-    // and an additional one for each bad property.
-    int good = quality + bad;
-    // but we want avoid generating more then 4-ish properties properties or
-    // things get spammy. Extra "good" properties will be used to enhance
-    // properties only, not to add more distinct properties. There is still a
-    // small chance of >4 properties.
+            const bool ever_good = artp_potentially_good(prop);
+            if (ever_good && prop_val > 0)
+                fixed_good += 1;
+            else if (artp_potentially_bad(prop)
+                    && (ever_good && prop_val < 0
+                        || !ever_good && prop_val > 0))
+                fixed_bad += 1;
+
+            item_props[prop] = prop_val;
+        }
+    }
+
+    // Each point of quality lets us add or enhance a good property.
+    const int max_quality = 7;
+    const int quality = 1 + binomial(max_quality - 1, 21);
+
+    // We'll potentially add up to 2 bad properties, also considering any fixed
+    // bad properties.
+    int bad = 0;
+    if (fixed_bad < 2)
+        bad = binomial(2 - fixed_bad,  21);
+
+    // For each point of quality and for each bad property added, we'll add or
+    // enhance one good property.
+    int good = max(quality + fixed_bad + bad - fixed_good, 0);
+
+    // We want to avoid generating more than 4-ish properties or things
+    // get spammy. Extra "good" properties will be used to enhance properties
+    // only, not to add more distinct properties. There's still a small chance
+    // of >4 properties.
     int max_properties = 4 + one_chance_in(20);
+    // sequence point
     max_properties += one_chance_in(40);
+
     int enhance = 0;
     if (good + bad > max_properties)
     {
@@ -866,22 +1157,31 @@ static void _get_randart_properties(const item_def &item,
         good = max_properties - bad;
     }
 
-    // initialize a vector of weighted artefact properties to pick from
+    // Initialize a vector of weighted artefact properties. Don't add any
+    // properties that are already fixed.
     vector<pair<artefact_prop_type, int>> art_prop_weights;
     for (int i = 0; i < ARTP_NUM_PROPERTIES; ++i)
     {
-        art_prop_weights.emplace_back(static_cast<artefact_prop_type>(i),
-                                      artp_data[i].weight);
+        const artefact_prop_type prop = static_cast<artefact_prop_type>(i);
+        const string prop_name = artp_name(prop);
+        if (!fixed_props || !fixed_props->exists(prop_name))
+            art_prop_weights.emplace_back(prop, artp_data[i].weight);
     }
-    item_props.init(0);
 
-    // make sure all weapons have a brand
+    // Make sure all weapons have a brand.
     if (item_class == OBJ_WEAPONS)
         _add_randart_weapon_brand(item, item_props);
+    else if (item_class == OBJ_ARMOUR
+             && item_always_has_ego(item)
+             && item_props[ARTP_BRAND] == SPARM_NORMAL)
+    {
+        item_props[ARTP_BRAND] =
+            choose_armour_ego(static_cast<armour_type>(item.sub_type));
+    }
 
-    // randomly pick properties from the list, choose an appropriate value,
-    // then subtract them from the good/bad/enhance count as needed
-    // the 'enhance' count is not guaranteed to be used.
+    // Randomly pick properties from the list, choose an appropriate value,
+    // then subtract them from the good/bad/enhance count as needed the
+    // 'enhance' count is not guaranteed to be used.
     while (good > 0 || bad > 0)
     {
         const artefact_prop_type *prop_ptr
@@ -890,41 +1190,65 @@ static void _get_randart_properties(const item_def &item,
                 (int) art_prop_weights.size());
         const artefact_prop_type prop = *prop_ptr;
 
-        if (!_artp_can_go_on_item(prop, item, item_props))
-            continue;
-
-        // should we try to generate a good or bad version of the prop?
-        const bool can_gen_good = good > 0 && artp_potentially_good(prop);
-        const bool can_gen_bad = bad > 0 && artp_potentially_bad(prop);
+        // Should we try to generate a good or bad version of the prop?
+        const bool can_gen_good = good > 0
+            && artp_potentially_good(prop)
+            // When assigning a good property, we don't ever want to increase
+            // the already negative level of an assigned bad property.
+            && item_props[prop] >= 0;
+        const bool can_gen_bad = bad > 0
+            && artp_potentially_bad(prop)
+            // When assigning a bad property, we don't ever want to:
+            //   1) lower the already negative level of an assigned bad property.
+            //   2) lower the already positive level of an assigned good property.
+            && item_props[prop] == 0;
         const bool gen_good = can_gen_good && (!can_gen_bad || coinflip());
 
         if (gen_good)
         {
-            // potentially increment the value of the property more than once,
-            // using up a good property each time.
-            // always do so if there's any 'enhance' left, if possible.
+            // Potentially increment the value of the property more than once,
+            // using up a good property each time. Always do so if there's any
+            // 'enhance' left, if possible.
+            bool bad_prop = false;
             for (int chance_denom = 1;
-                 item_props[prop] <= artp_data[prop].max_dup
-                    && (enhance > 0
-                        || good > 0 && one_chance_in(chance_denom));
+                 intrinsic_props[prop] + item_props[prop]
+                     <= artp_data[prop].max_dup
+                 && (enhance > 0
+                     || good > 0 && one_chance_in(chance_denom));
                  chance_denom += artp_data[prop].odds_inc)
             {
-                _add_good_randart_prop(prop, item_props);
+                if (!_add_good_randart_prop(prop, item, intrinsic_props,
+                                            item_props))
+                {
+                    bad_prop = true;
+                    break;
+                }
+
                 if (enhance > 0 && chance_denom > 1)
                     --enhance;
                 else
                     --good;
             }
+
+            if (bad_prop)
+                continue;
         }
         else if (can_gen_bad)
         {
-            item_props[prop] = artp_data[prop].gen_bad_value();
+            int prop_val = artp_data[prop].gen_bad_value();
+            if (!_artp_can_go_on_item(prop, prop_val, item, intrinsic_props,
+                        item_props))
+            {
+                continue;
+            }
+
+            item_props[prop] = prop_val;
             --bad;
         }
         else
             continue;
 
-        // don't choose the same prop twice
+        // Don't choose the same prop twice.
         const auto weight_tuple = make_pair(prop, artp_data[prop].weight);
         const auto old_end = art_prop_weights.end();
         const auto new_end = std::remove(art_prop_weights.begin(), old_end,
@@ -978,32 +1302,6 @@ static bool _init_artefact_properties(item_def &item)
     return true;
 }
 
-void artefact_known_properties(const item_def &item,
-                               artefact_known_props_t &known)
-{
-    ASSERT(is_artefact(item));
-    if (!item.props.exists(KNOWN_PROPS_KEY)) // randbooks
-        return;
-
-    const CrawlStoreValue &_val = item.props[KNOWN_PROPS_KEY];
-    ASSERT(_val.get_type() == SV_VEC);
-    const CrawlVector &known_vec = _val.get_vector();
-    ASSERT(known_vec.get_type()     == SV_BOOL);
-    ASSERT(known_vec.size()         == ART_PROPERTIES);
-    ASSERT(known_vec.get_max_size() == ART_PROPERTIES);
-
-    if (item_ident(item, ISFLAG_KNOW_PROPERTIES))
-    {
-        for (vec_size i = 0; i < ART_PROPERTIES; i++)
-            known[i] = static_cast<bool>(true);
-    }
-    else
-    {
-        for (vec_size i = 0; i < ART_PROPERTIES; i++)
-            known[i] = known_vec[i];
-    }
-}
-
 void artefact_properties(const item_def &item,
                          artefact_properties_t  &proprt)
 {
@@ -1050,34 +1348,6 @@ int artefact_property(const item_def &item, artefact_prop_type prop)
     }
 }
 
-/**
- * Check whether a particular property's value is known to the player.
- */
-bool artefact_property_known(const item_def &item, artefact_prop_type prop)
-{
-    ASSERT(is_artefact(item));
-    if (item_ident(item, ISFLAG_KNOW_PROPERTIES))
-        return true;
-
-    if (!item.props.exists(KNOWN_PROPS_KEY)) // randbooks
-        return false;
-
-    const CrawlVector &known_vec = item.props[KNOWN_PROPS_KEY].get_vector();
-    ASSERT(known_vec.get_type()     == SV_BOOL);
-    ASSERT(known_vec.size()         == ART_PROPERTIES);
-
-    return known_vec[prop].get_bool();
-}
-
-/**
- * check what the player knows about an a particular property.
- */
-int artefact_known_property(const item_def &item, artefact_prop_type prop)
-{
-    return artefact_property_known(item, prop) ? artefact_property(item, prop)
-                                               : 0;
-}
-
 static int _artefact_num_props(const artefact_properties_t &proprt)
 {
     int num = 0;
@@ -1090,23 +1360,6 @@ static int _artefact_num_props(const artefact_properties_t &proprt)
     return num;
 }
 
-void artefact_learn_prop(item_def &item, artefact_prop_type prop)
-{
-    ASSERT(is_artefact(item));
-    ASSERT(item.props.exists(KNOWN_PROPS_KEY));
-    CrawlStoreValue &_val = item.props[KNOWN_PROPS_KEY];
-    ASSERT(_val.get_type() == SV_VEC);
-    CrawlVector &known_vec = _val.get_vector();
-    ASSERT(known_vec.get_type()     == SV_BOOL);
-    ASSERT(known_vec.size()         == ART_PROPERTIES);
-    ASSERT(known_vec.get_max_size() == ART_PROPERTIES);
-
-    if (item_ident(item, ISFLAG_KNOW_PROPERTIES))
-        return;
-
-    known_vec[prop] = static_cast<bool>(true);
-}
-
 static string _get_artefact_type(const item_def &item, bool appear = false)
 {
     switch (item.base_type)
@@ -1114,13 +1367,12 @@ static string _get_artefact_type(const item_def &item, bool appear = false)
     case OBJ_BOOKS:
         return "book";
     case OBJ_WEAPONS:
+    case OBJ_STAVES: // XXX: consider a separate section?
         return "weapon";
     case OBJ_ARMOUR:
-        if (item.sub_type == ARM_ROBE)
-            return "robe";
-        if (get_item_slot(item) == EQ_BODY_ARMOUR)
-            return "body armour";
         return "armour";
+    case OBJ_TALISMANS:
+        return "talisman";
     case OBJ_JEWELLERY:
         // Distinguish between amulets and rings only in appearance.
         if (!appear)
@@ -1141,6 +1393,8 @@ static bool _pick_db_name(const item_def &item)
     {
     case OBJ_WEAPONS:
     case OBJ_ARMOUR:
+    case OBJ_STAVES:
+    case OBJ_TALISMANS:
         return coinflip();
     case OBJ_JEWELLERY:
         return one_chance_in(5);
@@ -1162,14 +1416,34 @@ static bool _artefact_name_lookup(string &result, const item_def &item,
     return !result.empty();
 }
 
+bool item_type_can_be_artefact(object_class_type typ)
+{
+    switch (typ)
+    {
+    case OBJ_WEAPONS:
+    case OBJ_STAVES:
+    case OBJ_ARMOUR:
+    case OBJ_JEWELLERY:
+    case OBJ_BOOKS:
+    case OBJ_TALISMANS:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static string _base_name(const item_def &item)
+{
+    if (item.is_type(OBJ_TALISMANS, TALISMAN_DEATH))
+        return "death talisman"; // no talismans of death of foo
+    return item_base_name(item);
+}
+
 string make_artefact_name(const item_def &item, bool appearance)
 {
     ASSERT(is_artefact(item));
 
-    ASSERT(item.base_type == OBJ_WEAPONS
-           || item.base_type == OBJ_ARMOUR
-           || item.base_type == OBJ_JEWELLERY
-           || item.base_type == OBJ_BOOKS);
+    ASSERT(item_type_can_be_artefact(item.base_type));
 
     if (is_unrandom_artefact(item))
     {
@@ -1205,6 +1479,7 @@ string make_artefact_name(const item_def &item, bool appearance)
     // get base type
     lookup += _get_artefact_type(item, appearance);
 
+    const string base_name = _base_name(item);
     if (appearance)
     {
         string appear = getRandNameString(lookup, " appearance");
@@ -1217,13 +1492,13 @@ string make_artefact_name(const item_def &item, bool appearance)
 
         result += appear;
         result += " ";
-        result += item_base_name(item);
+        result += base_name;
         return result;
     }
 
     if (_pick_db_name(item))
     {
-        result += item_base_name(item) + " ";
+        result += base_name + " ";
 
         int tries = 100;
         string name;
@@ -1252,7 +1527,7 @@ string make_artefact_name(const item_def &item, bool appearance)
     {
         // construct a unique name
         const string st_p = make_name();
-        result += item_base_name(item);
+        result += base_name;
 
         if (one_chance_in(3))
         {
@@ -1277,7 +1552,7 @@ static const unrandart_entry *_seekunrandart(const item_def &item)
 
 string get_artefact_base_name(const item_def &item, bool terse)
 {
-    string base_name = item_base_name(item);
+    string base_name = _base_name(item);
     const char* custom_type = _seekunrandart(item)->type_name;
     if (custom_type)
         base_name = custom_type;
@@ -1294,7 +1569,7 @@ string get_artefact_name(const item_def &item, bool force_known)
 {
     ASSERT(is_artefact(item));
 
-    if (item_type_known(item) || force_known)
+    if (item.is_identified() || force_known)
     {
         // print artefact's real name, if that's set
         if (item.props.exists(ARTEFACT_NAME_KEY))
@@ -1340,7 +1615,6 @@ static int _preferred_max_level(int unrand_index)
     case UNRAND_DELATRAS_GLOVES:
         return 6;
     case UNRAND_WOODCUTTERS_AXE:
-    case UNRAND_MORG:
     case UNRAND_THROATCUTTER:
     case UNRAND_HERMITS_PENDANT:
         return 9;
@@ -1353,6 +1627,8 @@ static int _preferred_max_level(int unrand_index)
     case UNRAND_MEEK:
     case UNRAND_ELEMENTAL_VULNERABILITY:
     case UNRAND_MISFORTUNE:
+    case UNRAND_FORCE_LANCE:
+    case UNRAND_VICTORY:
         return 11;
     default:
         return -1;
@@ -1391,20 +1667,31 @@ int find_okay_unrandart(uint8_t aclass, uint8_t atype, int item_level, bool in_a
         const unique_item_status_type status =
             get_unique_item_status(index);
 
-        if (in_abyss && status != UNIQ_LOST_IN_ABYSS
-            || !in_abyss && status != UNIQ_NOT_EXISTS
-               // for acquired items, ignore them in the random calculations
-               // here and let fallback artefacts replace them. This is needed
-               // for seed stability.
-               // TODO: abyss? double check trove
-               && status != UNIQ_EXISTS_NONLEVELGEN)
+        if ((!in_abyss || status != UNIQ_LOST_IN_ABYSS)
+            && status != UNIQ_NOT_EXISTS
+            // for previously acquired items, allow generation of the index
+            // here; a fallback artefact will replace them in later steps.
+            // This is needed for seed stability.
+            && status != UNIQ_EXISTS_NONLEVELGEN)
         {
             continue;
         }
 
-        // Never randomly generated until lost in the abyss.
+        if (in_abyss && status == UNIQ_LOST_IN_ABYSS
+            && index == UNRAND_OCTOPUS_KING_RING
+            && you.octopus_king_rings == 0xff)
+        {
+            // the last octopus ring is lost in the abyss. We don't have the
+            // machinery to bring back the correct one, and it doesn't seem
+            // worth implementing. So just skip it. (TODO: clear the flag for
+            // a lost octoring on losing it?)
+            continue;
+        }
+
+        // If an item does not generate randomly, we can only produce its index
+        // here if it was lost in the abyss
         if ((!in_abyss || status != UNIQ_LOST_IN_ABYSS)
-            && entry->flags & UNRAND_FLAG_NOGEN)
+            && entry->flags & (UNRAND_FLAG_NOGEN | UNRAND_FLAG_DELETED))
         {
             continue;
         }
@@ -1462,120 +1749,52 @@ int extant_unrandart_by_exact_name(string name)
         for (unsigned int i = 0; i < ARRAYSZ(unranddata); ++i)
         {
             const int id = UNRAND_START + i;
-            if (unranddata[i].flags & UNRAND_FLAG_NOGEN
-                && id != UNRAND_DRAGONSKIN /* ew */)
-            {
+            if (unranddata[i].flags & UNRAND_FLAG_DELETED)
                 continue;
-            }
             cache[lowercase_string(unranddata[i].name)] = id;
         }
     }
     return lookup(cache, lowercase(name), 0);
 }
 
-static bool _randart_is_redundant(const item_def &item,
-                                   artefact_properties_t &proprt)
+static bool _armour_ego_conflicts(artefact_properties_t &proprt)
 {
-    if (item.base_type != OBJ_JEWELLERY)
-        return false;
-
-    artefact_prop_type provides  = ARTP_NUM_PROPERTIES;
-
-    switch (item.sub_type)
+    switch (proprt[ARTP_BRAND])
     {
-    case RING_PROTECTION:
-        provides = ARTP_AC;
-        break;
+    // Opposite effect.
+    case SPARM_LIGHT:
+        return proprt[ARTP_INVISIBLE];
+    case SPARM_GUILE:
+        return proprt[ARTP_WILLPOWER];
+    case SPARM_ENERGY:
+        return proprt[ARTP_PREVENT_SPELLCASTING];
 
-    case RING_FIRE:
-    case RING_PROTECTION_FROM_FIRE:
-        provides = ARTP_FIRE;
-        break;
+    // Duplicate effect.
+    case SPARM_RAMPAGING:
+        return proprt[ARTP_RAMPAGING];
+    case SPARM_HARM:
+        return proprt[ARTP_HARM];
+    case SPARM_RESISTANCE:
+        return proprt[ARTP_FIRE] || proprt[ARTP_COLD];
+    case SPARM_RAGE:
+        return proprt[ARTP_ANGRY];
+    case SPARM_INVISIBILITY:
+        return proprt[ARTP_INVISIBLE];
 
-    case RING_POISON_RESISTANCE:
-        provides = ARTP_POISON;
-        break;
-
-    case RING_ICE:
-    case RING_PROTECTION_FROM_COLD:
-        provides = ARTP_COLD;
-        break;
-
-    case RING_STRENGTH:
-        provides = ARTP_STRENGTH;
-        break;
-
-    case RING_SLAYING:
-        provides = ARTP_SLAYING;
-        break;
-
-    case RING_SEE_INVISIBLE:
-        provides = ARTP_SEE_INVISIBLE;
-        break;
-
-    case RING_STEALTH:
-        provides = ARTP_STEALTH;
-        break;
-
-    case RING_EVASION:
-        provides = ARTP_EVASION;
-        break;
-
-    case RING_DEXTERITY:
-        provides = ARTP_DEXTERITY;
-        break;
-
-    case RING_INTELLIGENCE:
-        provides = ARTP_INTELLIGENCE;
-        break;
-
-    case RING_MAGICAL_POWER:
-        provides = ARTP_MAGICAL_POWER;
-        break;
-
-    case RING_FLIGHT:
-        provides = ARTP_FLY;
-        break;
-
-    case RING_LIFE_PROTECTION:
-        provides = ARTP_NEGATIVE_ENERGY;
-        break;
-
-    case RING_WILLPOWER:
-        provides = ARTP_WILLPOWER;
-        break;
-
-    case RING_RESIST_CORROSION:
-        provides = ARTP_RCORR;
-        break;
-
-    case AMU_REGENERATION:
-        provides = ARTP_REGENERATION;
-        break;
-
-    case AMU_REFLECTION:
-        provides = ARTP_SHIELDING;
-        break;
-    }
-
-    if (provides == ARTP_NUM_PROPERTIES)
+    default:
         return false;
-
-    if (proprt[provides] != 0)
-        return true;
-
-    return false;
+    }
 }
 
+// See also _artp_can_go_on_item
 static bool _randart_is_conflicting(const item_def &item,
                                      artefact_properties_t &proprt)
 {
-    // see also _artp_can_go_on_item
-
     if (proprt[ARTP_PREVENT_SPELLCASTING]
         && (proprt[ARTP_INTELLIGENCE] > 0
             || proprt[ARTP_MAGICAL_POWER] > 0
-            || proprt[ARTP_ARCHMAGI]))
+            || proprt[ARTP_ARCHMAGI]
+            || item.base_type == OBJ_STAVES))
     {
         return true;
     }
@@ -1592,6 +1811,9 @@ static bool _randart_is_conflicting(const item_def &item,
     {
         return true;
     }
+
+    if (item.base_type == OBJ_ARMOUR && _armour_ego_conflicts(proprt))
+        return true;
 
     return false;
 }
@@ -1612,8 +1834,7 @@ bool randart_is_bad(const item_def &item, artefact_properties_t &proprt)
         return true;
     }
 
-    return _randart_is_redundant(item, proprt)
-           || _randart_is_conflicting(item, proprt);
+    return _randart_is_conflicting(item, proprt);
 }
 
 bool randart_is_bad(const item_def &item)
@@ -1636,25 +1857,21 @@ static void _artefact_setup_prop_vectors(item_def &item)
 
     for (vec_size i = 0; i < ART_PROPERTIES; i++)
         rap[i].get_short() = 0;
-
-    if (!item.props.exists(KNOWN_PROPS_KEY))
-    {
-        props[KNOWN_PROPS_KEY].new_vector(SV_BOOL).resize(ART_PROPERTIES);
-        CrawlVector &known = item.props[KNOWN_PROPS_KEY].get_vector();
-        known.set_max_size(ART_PROPERTIES);
-        for (vec_size i = 0; i < ART_PROPERTIES; i++)
-            known[i] = static_cast<bool>(false);
-    }
 }
 
 // If force_mundane is true, normally mundane items are forced to
 // nevertheless become artefacts.
 bool make_item_randart(item_def &item, bool force_mundane)
 {
-    if (item.base_type != OBJ_WEAPONS
-        && item.base_type != OBJ_ARMOUR
-        && item.base_type != OBJ_JEWELLERY)
+    switch (item.base_type)
     {
+    case OBJ_WEAPONS:
+    case OBJ_ARMOUR:
+    case OBJ_JEWELLERY:
+    case OBJ_STAVES:
+    case OBJ_TALISMANS:
+        break;
+    default:
         return false;
     }
 
@@ -1684,7 +1901,6 @@ bool make_item_randart(item_def &item, bool force_mundane)
             // Something went wrong that no amount of rerolling will fix.
             item.unrand_idx = 0;
             item.props.erase(ARTEFACT_PROPS_KEY);
-            item.props.erase(KNOWN_PROPS_KEY);
             item.flags &= ~ISFLAG_RANDART;
             return false;
         }
@@ -1724,14 +1940,15 @@ static string _ashenzari_artefact_name(item_def &item)
 
     item.orig_monnum = old_orig;
 
-    return item_base_name(item) + " " + (name.empty() ? "of Ashenzari" : name);
+    return _base_name(item) + " " + (name.empty() ? "of Ashenzari" : name);
 }
 
 void make_ashenzari_randart(item_def &item)
 {
     if (item.base_type != OBJ_WEAPONS
         && item.base_type != OBJ_ARMOUR
-        && item.base_type != OBJ_JEWELLERY)
+        && item.base_type != OBJ_JEWELLERY
+        && item.base_type != OBJ_STAVES)
     {
         return;
     }
@@ -1752,7 +1969,7 @@ void make_ashenzari_randart(item_def &item)
     // Ash randarts get no props
     _artefact_setup_prop_vectors(item);
     item.flags |= ISFLAG_RANDART;
-    item.flags |= ISFLAG_KNOW_PROPERTIES;
+    item.flags |= ISFLAG_IDENTIFIED;
 
     if (brand != SPWPN_NORMAL)
         set_artefact_brand(item, brand);
@@ -1763,9 +1980,141 @@ void make_ashenzari_randart(item_def &item)
 
 }
 
+enum gizmo_prop_type
+{
+    GIZMO_REGEN,
+    GIZMO_REPEL,
+    GIZMO_RAMPAGE,
+    GIZMO_GADGETEER,
+    GIZMO_PARRYREV,
+    GIZMO_SPELLMOTOR,
+    GIZMO_AUTODAZZLE,
+    LAST_RARE_GIZMO = GIZMO_AUTODAZZLE,
+
+    GIZMO_RF,
+    GIZMO_RC,
+    GIZMO_RELEC,
+    GIZMO_RPOIS,
+    GIZMO_SLAY,
+    GIZMO_WIZ,
+
+    NUM_GIZMO_PROPS,
+};
+
+static void _apply_gizmo_prop(item_def& gizmo, gizmo_prop_type prop)
+{
+    switch (prop)
+    {
+        // Common props
+        case GIZMO_RF:
+            artefact_set_property(gizmo, ARTP_FIRE, 1);
+            break;
+
+        case GIZMO_RC:
+            artefact_set_property(gizmo, ARTP_COLD, 1);
+            break;
+
+        case GIZMO_RELEC:
+            artefact_set_property(gizmo, ARTP_ELECTRICITY, 1);
+            break;
+
+        case GIZMO_RPOIS:
+            artefact_set_property(gizmo, ARTP_POISON, 1);
+            artefact_set_property(gizmo, ARTP_RCORR, 1);
+            break;
+
+        case GIZMO_SLAY:
+            artefact_set_property(gizmo, ARTP_SLAYING, 3);
+            break;
+
+        case GIZMO_WIZ:
+            artefact_set_property(gizmo, ARTP_WIZARDRY, 1);
+            artefact_set_property(gizmo, ARTP_MAGICAL_POWER, 4);
+            break;
+
+        // Rare props
+        case GIZMO_REGEN:
+            artefact_set_property(gizmo, ARTP_REGENERATION, 1);
+            artefact_set_property(gizmo, ARTP_MANA_REGENERATION, 1);
+            break;
+
+        case GIZMO_REPEL:
+            artefact_set_property(gizmo, ARTP_RMSL, 1);
+            artefact_set_property(gizmo, ARTP_CLARITY, 1);
+            break;
+
+        case GIZMO_RAMPAGE:
+            artefact_set_property(gizmo, ARTP_RAMPAGING, 1);
+            artefact_set_property(gizmo, ARTP_ACROBAT, 1);
+            break;
+
+        case GIZMO_GADGETEER:
+            gizmo.brand = SPGIZMO_GADGETEER;
+            break;
+
+        case GIZMO_PARRYREV:
+            gizmo.brand = SPGIZMO_PARRYREV;
+            break;
+
+        case GIZMO_SPELLMOTOR:
+            gizmo.brand = SPGIZMO_SPELLMOTOR;
+            break;
+
+        case GIZMO_AUTODAZZLE:
+            gizmo.brand = SPGIZMO_AUTODAZZLE;
+            break;
+
+        default:
+            break;
+    }
+}
+
+// Takes a list of existing gizmos in a CrawlVector (having been created by
+// acquirement) and fills out their properties.
+void fill_gizmo_properties(CrawlVector& gizmos)
+{
+    // Shuffle all props
+    vector<gizmo_prop_type> rare_props;
+    for (int i = 0; i <= LAST_RARE_GIZMO; ++i)
+    {
+        const gizmo_prop_type ptype = static_cast<gizmo_prop_type>(i);
+
+        // Don't generate the gizmo prop for Chei worshippers, since the rampage
+        // will prevent them from using the entire thing.
+        if (you_worship(GOD_CHEIBRIADOS) && ptype == GIZMO_RAMPAGE)
+            continue;
+
+        rare_props.push_back(ptype);
+    }
+    shuffle_array(rare_props);
+
+    vector<gizmo_prop_type> common_props;
+    for (int i = LAST_RARE_GIZMO + 1; i < NUM_GIZMO_PROPS; ++i)
+        common_props.push_back(static_cast<gizmo_prop_type>(i));
+    shuffle_array(common_props);
+
+    int num = min(3, (int)gizmos.size());
+    for (int i = 0; i < num; ++i)
+    {
+        item_def& gizmo = gizmos[i].get_item();
+        _artefact_setup_prop_vectors(gizmo);
+        gizmo.flags |= ISFLAG_RANDART;
+
+        // Apply 1 rare prop and 2 common props to each gizmo.
+        // (We are gauranteed to see all common props each run, but only a few
+        // of the rare props)
+        _apply_gizmo_prop(gizmo, rare_props[i]);
+        _apply_gizmo_prop(gizmo, common_props[i * 2]);
+        _apply_gizmo_prop(gizmo, common_props[i * 2 + 1]);
+    }
+}
+
 static void _make_faerie_armour(item_def &item)
 {
     item_def doodad;
+
+    // Try 100 times to make an artefact dragon scales without *Silence,
+    // since they're on someone called "the Enchantress".
     for (int i=0; i<100; i++)
     {
         doodad.clear();
@@ -1773,20 +2122,21 @@ static void _make_faerie_armour(item_def &item)
         doodad.sub_type = item.sub_type;
         if (!make_item_randart(doodad))
         {
-            i--; // Forbidden props are not absolute, artefactness is.
+            i--;
             continue;
         }
 
-        // -Cast makes no sense on someone called "the Enchantress".
-        if (artefact_property(doodad, ARTP_PREVENT_SPELLCASTING))
+        if (artefact_property(doodad, ARTP_SILENCE))
             continue;
 
-        if (one_chance_in(20))
+        if (one_chance_in(10))
             artefact_set_property(doodad, ARTP_CLARITY, 1);
-        if (one_chance_in(20))
-            artefact_set_property(doodad, ARTP_MAGICAL_POWER, 1 + random2(10));
-        if (one_chance_in(20))
-            artefact_set_property(doodad, ARTP_HP, random2(16) - 5);
+        if (one_chance_in(10))
+            artefact_set_property(doodad, ARTP_MAGICAL_POWER, _gen_good_hpmp_artp());
+        if (one_chance_in(10))
+            artefact_set_property(doodad, ARTP_HP, _gen_good_hpmp_artp());
+        if (one_chance_in(10))
+            artefact_set_property(doodad, ARTP_INVISIBLE, 1);
 
         break;
     }
@@ -1798,24 +2148,27 @@ static void _make_faerie_armour(item_def &item)
     doodad.props.erase(ARTEFACT_NAME_KEY);
     item.props = doodad.props;
 
-    // On body armour, an enchantment of less than 0 is never viable.
-    int high_plus = random2(6) - 2;
-    high_plus += random2(6);
-    item.plus = max(high_plus, random2(2));
+    // Make the scales always stand out.
+    artefact_set_property(item, ARTP_ENHANCE_HEXES, 1);
+
+    // Try to give an enchantment a Depths visitor could ever care about.
+    item.plus = 2 + random2(4) + random2(4);
 }
 
 static jewellery_type octoring_types[8] =
 {
     RING_SEE_INVISIBLE, RING_PROTECTION_FROM_FIRE, RING_PROTECTION_FROM_COLD,
     RING_RESIST_CORROSION, RING_FLIGHT, RING_WIZARDRY, RING_MAGICAL_POWER,
-    RING_LIFE_PROTECTION
+    RING_POSITIVE_ENERGY
 };
 
 static void _make_octoring(item_def &item)
 {
     if (you.octopus_king_rings == 0xff)
     {
-        ASSERT(you.wizard || you.suppress_wizard || crawl_state.test);
+        // possible this is too narrow: if this causes unexpected wizmode
+        // crashes, just back off to asserting you.wizard.
+        ASSERT(crawl_state.prev_cmd == CMD_WIZARD);
         item.sub_type = octoring_types[random2(8)];
         return;
     }
@@ -1858,44 +2211,71 @@ bool make_item_unrandart(item_def &item, int unrand_index)
     else if (unrand_index == UNRAND_OCTOPUS_KING_RING)
         _make_octoring(item);
     else if (unrand_index == UNRAND_WOE && !you.has_mutation(MUT_NO_GRASPING)
-             && !you.could_wield(item, true, true))
+             && !can_equip_item(item))
     {
         // always wieldable, always 2-handed
         item.sub_type = WPN_BROAD_AXE;
     }
 
-    if (!(unrand->flags & UNRAND_FLAG_UNIDED)
-        && !strcmp(unrand->name, unrand->unid_name))
-    {
-        set_ident_flags(item, ISFLAG_IDENT_MASK | ISFLAG_NOTED_ID);
-    }
+    if (!(unrand->flags & UNRAND_FLAG_UNIDED))
+        item.flags |= ISFLAG_IDENTIFIED;
 
     return true;
 }
 
 void unrand_reacts()
 {
-    item_def*  weapon     = you.weapon();
-    const int  old_plus   = weapon ? weapon->plus : 0;
+    if (you.equipment.do_unrand_reacts == 0)
+        return;
 
-    for (int i = 0; i < NUM_EQUIP; i++)
+    int count = 0;
+    for (player_equip_entry& entry : you.equipment.items)
     {
-        if (you.unrand_reacts[i])
-        {
-            item_def&        item  = you.inv[you.equip[i]];
-            const unrandart_entry* entry = get_unrand_entry(item.unrand_idx);
+        if (entry.melded || entry.is_overflow)
+            continue;
 
-            entry->world_reacts_func(&item);
+        item_def& item = entry.get_item();
+        if (is_unrandom_artefact(item))
+        {
+            const unrandart_entry* uentry = get_unrand_entry(item.unrand_idx);
+
+            if (uentry->world_reacts_func)
+            {
+                uentry->world_reacts_func(&item);
+                if (++count == you.equipment.do_unrand_reacts)
+                    return;
+            }
         }
     }
-
-    if (weapon && (old_plus != weapon->plus))
-        you.wield_change = true;
 }
 
-void artefact_set_property(item_def          &item,
-                            artefact_prop_type prop,
-                            int                val)
+void unrand_death_effects(monster* mons, killer_type killer)
+{
+    if (you.equipment.do_unrand_death_effects == 0)
+        return;
+
+    int count = 0;
+    for (player_equip_entry& entry : you.equipment.items)
+    {
+        if (entry.melded || entry.is_overflow)
+            continue;
+
+        item_def& item = entry.get_item();
+        if (is_unrandom_artefact(item))
+        {
+            const unrandart_entry* uentry = get_unrand_entry(item.unrand_idx);
+
+            if (uentry->death_effects)
+            {
+                uentry->death_effects(&item, mons, killer);
+                if (++count == you.equipment.do_unrand_death_effects)
+                    return;
+            }
+        }
+    }
+}
+
+void artefact_set_property(item_def &item, artefact_prop_type prop, int val)
 {
     ASSERT(is_artefact(item));
     ASSERT(item.props.exists(ARTEFACT_PROPS_KEY));
@@ -1929,6 +2309,16 @@ void artefact_fixup_props(item_def &item)
     if (props.exists(ARTEFACT_PROPS_KEY))
         artefact_pad_store_vector(props[ARTEFACT_PROPS_KEY], short(0));
 
-    if (props.exists(KNOWN_PROPS_KEY))
-        artefact_pad_store_vector(props[KNOWN_PROPS_KEY], false);
+    // As of 0.30, it seems like there is some rare circumstance that can
+    // cause a Hepliaklqana ancestor's weapon to become a half-baked artefact -
+    // ISFLAG_RANDART set, but ARTEFACT_PROPS_KEY not. Until we understand
+    // what's happening, fix things here to salvage broken saves.
+    // (This seems to be related to
+    // https://crawl.develz.org/mantis/view.php?id=11756 - see also abyss.cc.
+    if (item.base_type == OBJ_WEAPONS
+        && (item.flags & (ISFLAG_SUMMONED | ISFLAG_RANDART))
+        && !item.props.exists(ARTEFACT_PROPS_KEY))
+    {
+        item.flags &= ~ISFLAG_RANDART;
+    }
 }

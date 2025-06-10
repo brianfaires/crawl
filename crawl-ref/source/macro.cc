@@ -589,10 +589,7 @@ void macro_buf_add_cmd(command_type cmd, bool reverse)
 {
     ASSERT_RANGE(cmd, CMD_NO_CMD + 1, CMD_MIN_SYNTHETIC);
 
-    // There should be plenty of room between the synthetic keys
-    // (KEY_MACRO_MORE_PROTECT == -10) and USERFUNCBASE (-10000) for
-    // command_type to fit (currently 1000 through 2069).
-    macro_buf_add(-((int) cmd), reverse, true);
+    macro_buf_add(encode_command_as_key(cmd), reverse, true);
 }
 
 /*
@@ -676,8 +673,6 @@ void macro_clear_buffers()
     SendKeysBuffer.clear();
     expanded_keys_left = 0;
     macro_keys_left = -1;
-
-    crawl_state.show_more_prompt = true;
 }
 
 bool is_processing_macro()
@@ -1322,7 +1317,8 @@ public:
                 add_entry(new MenuEntry("clear", 'c',
                     [this](const MenuEntry &)
                     {
-                        action.clear();
+                        //weirdly MSVC requires the use of `this->` here
+                        this->action.clear();
                         return false;
                     }));
             }
@@ -2268,9 +2264,6 @@ static bool _allow_rebinding(int key, KeymapContext context)
         CASE_ESCAPE
         case CK_MOUSE_CLICK:
         case CK_MOUSE_B2:
-#ifdef TOUCH_UI
-        case CK_TOUCH_DUMMY:
-#endif
             return false;
         default:
             break;

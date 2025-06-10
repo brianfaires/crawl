@@ -1,17 +1,23 @@
 %%%%
 Armataur
 
-Scaled mammals the size of horses, Armataurs are fast-rolling, well-protected,
-and great potion drinkers. They lack dexterity and scroll-reading speed.
+Scaled mammals the size of horses, Armataurs are fast-rolling and tenacious when
+pursuing enemies, but lack dexterity.
 %%%%
 Barachi
 
 Barachim are slow-moving, amphibious humanoids who can hop long distances.
 Their extended range of vision also allows them to be seen from further away.
 %%%%
+Coglin
+
+Coglins ride enchanted exoskeletons able to wield weapons in both hands,
+wrapping slow-revving metal around their puny goblinoid frames.
+%%%%
 Deep Elf
 
 Deep Elves have a strong affinity for all kinds of magic, but are very fragile.
+They regenerate magical power rapidly.
 %%%%
 Demigod
 
@@ -40,13 +46,7 @@ strong and they live in a state of permanent stasis.
 %%%%
 Felid
 
-Felids are many-lived cats possessing sentience. They are incapable of advanced
-item manipulation or the use of armour or weapons.
-%%%%
-Ghoul
-
-Ghouls are undead creatures, damned to rot eternally. They have sharp claws,
-and they heal from the death of the living.
+Felids are many-lived sentient cats. They cannot use armour or weapons.
 %%%%
 Gargoyle
 
@@ -58,19 +58,15 @@ Gnoll
 Gnolls are canine-like humanoids. They are unable to specialise in any single
 skill, but instead gradually become proficient in all skills at once.
 %%%%
-Hill Orc
-
-Hill Orcs are skilled in close combat, and often dabble in offensive magic. Only
-they may worship the Orc god Beogh.
-%%%%
 Human
 
-Humans advance quickly in levels and have equal abilities in most skills.
+Humans are natural explorers. Discovering new places refreshes and invigorates them.
+They are otherwise completely average.
 %%%%
 Tengu
 
 Tengu are bird-people who love to fight, both with weapons and spells. They are
-quite fragile, but they learn to fly swiftly later on.
+fragile but agile, and eventually learn to fly.
 %%%%
 Kobold
 
@@ -87,6 +83,11 @@ Minotaur
 Minotaurs are large muscular humans with bovine heads. They excel at all forms
 of close and ranged combat.
 %%%%
+Mountain Dwarf
+
+Mountain Dwarves are strong melee fighters and capable heavy-armoured casters.
+They can use scrolls to enchant even some artefacts.
+%%%%
 Mummy
 
 Compelled to walk by an ancient curse, Mummies have innate faith and are adept
@@ -102,30 +103,30 @@ Octopode
 Octopodes are a species of amphibious cephalopods. They can wear eight rings,
 but almost no armour fits them.
 %%%%
-Ogre
+Oni
 
-Large, strong, and extremely robust, Ogres are competent at all forms of melee.
-Not merely brutes, they are also quite capable spellcasters.
+Large, robust, and extremely fond of drinking, Oni make capable brawlers and
+spellcasters and gain extra benefits from healing potions.
+%%%%
+Poltergeist
+
+Formless ghosts who delight in hexing their enemies. They can equip many
+different hats, gloves, boots, or cloaks at once, but cannot wear body armour.
+%%%%
+Revenant
+
+Revenants are skeletal undead who are strong at melee combat and can empower
+damage-dealing spells by consuming memories they harvest from their victims.
 %%%%
 Spriggan
 
 Very small, very frail and very fast, Spriggans are highly competent stabbers
 and spellcasters.
 %%%%
-Meteoran
-
-A celestial being fallen to earth, brilliant and fearsome... but with little
-time before darkness snuffs them out.
-%%%%
 Troll
 
 Trolls are monstrous creatures with powerful claws. They regenerate health
 rapidly.
-%%%%
-Vampire
-
-Shifting between the states of life and undeath at will, Vampires are
-accomplished stabbers and casters.
 %%%%
 Vine Stalker
 

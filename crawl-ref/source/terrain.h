@@ -73,8 +73,9 @@ string feat_preposition(dungeon_feature_type feat, bool active = false,
                         const actor* who = nullptr);
 string stair_climb_verb(dungeon_feature_type feat);
 
+bool feat_is_deep_water(dungeon_feature_type feat);
+bool feat_is_shallow_water(dungeon_feature_type feat);
 bool feat_is_water(dungeon_feature_type feat);
-bool feat_is_watery(dungeon_feature_type feat);
 bool feat_is_lava(dungeon_feature_type feat);
 god_type feat_altar_god(dungeon_feature_type feat);
 dungeon_feature_type altar_for_god(god_type god);
@@ -89,7 +90,9 @@ bool feat_is_portal_entrance(dungeon_feature_type feat);
 bool feat_is_portal_exit(dungeon_feature_type feat);
 
 bool feat_is_bidirectional_portal(dungeon_feature_type feat);
+bool feat_is_descent_exitable(dungeon_feature_type feat);
 bool feat_is_fountain(dungeon_feature_type feat);
+bool feat_is_food(dungeon_feature_type feat);
 bool feat_is_reachable_past(dungeon_feature_type feat);
 
 bool feat_is_critical(dungeon_feature_type feat);
@@ -104,9 +107,12 @@ void find_connected_identical(const coord_def& d, set<coord_def>& out, bool know
 
 bool slime_wall_neighbour(const coord_def& c);
 int count_adjacent_slime_walls(const coord_def &pos);
+int slime_wall_corrosion(actor* act);
 void slime_wall_damage(actor* act, int delay);
 
 int count_adjacent_icy_walls(const coord_def &pos);
+
+bool near_visible_wall(coord_def observer_pos, coord_def cell);
 
 void get_door_description(int door_size, const char** adjective,
                           const char** noun);
@@ -120,7 +126,9 @@ void dungeon_terrain_changed(const coord_def &pos,
                              bool preserve_features = false,
                              bool preserve_items = false,
                              bool temporary = false,
-                             bool wizmode = false);
+                             bool wizmode = false,
+                             unsigned short flv_nfeat = 0,
+                             unsigned short flv_nfeat_idx = 0);
 
 // Moves everything on the level at src to dst.
 void dgn_move_entities_at(coord_def src,
@@ -154,7 +162,8 @@ dungeon_feature_type orig_terrain(coord_def pos);
 void temp_change_terrain(coord_def pos, dungeon_feature_type newfeat, int dur,
                          terrain_change_type type = TERRAIN_CHANGE_GENERIC,
                          int mid = MID_NOBODY);
-bool revert_terrain_change(coord_def pos, terrain_change_type ctype);
+bool revert_terrain_change(coord_def pos,
+                           terrain_change_type ctype = NUM_TERRAIN_CHANGE_TYPES);
 bool is_temp_terrain(coord_def pos);
 
 bool plant_forbidden_at(const coord_def &p, bool connectivity_only = false);
@@ -165,9 +174,14 @@ bool has_push_spaces(const coord_def& pos, bool push_actor,
                     const vector<coord_def>* excluded);
 bool push_items_from(const coord_def& pos, const vector<coord_def>* excluded);
 coord_def push_actor_from(const coord_def& pos, const vector<coord_def>* excluded, bool random);
+coord_def push_or_teleport_actor_from(const coord_def& pos);
 
 void dgn_close_door(const coord_def &dest);
 void dgn_open_door(const coord_def &dest);
 void dgn_break_door(const coord_def &dest);
 
 void ice_wall_damage(monster &victim, int delay);
+void frigid_walls_damage(int delay);
+
+void descent_crumble_stairs();
+void descent_reveal_stairs();

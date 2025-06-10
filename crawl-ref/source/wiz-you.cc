@@ -11,6 +11,7 @@
 #include <functional>
 
 #include "abyss.h"
+#include "acquire.h"
 #include "dbg-util.h"
 #include "god-abil.h"
 #include "god-wrath.h"
@@ -19,7 +20,6 @@
 #include "libutil.h"
 #include "macro.h"
 #include "message.h"
-#include "misc.h" // frombool
 #include "mutation.h"
 #include "output.h"
 #include "playable.h"
@@ -29,6 +29,7 @@
 #include "skills.h"
 #include "species.h"
 #include "spl-book.h"
+#include "spl-damage.h"
 #include "spl-util.h"
 #include "state.h"
 #include "status.h"
@@ -204,7 +205,7 @@ void wizard_heal(bool super_heal)
         // Clear more stuff.
         undrain_hp(9999);
         you.magic_contamination = 0;
-        you.duration[DUR_LIQUID_FLAMES] = 0;
+        you.duration[DUR_STICKY_FLAME] = 0;
         you.clear_beholders();
         you.duration[DUR_PETRIFIED] = 0;
         you.duration[DUR_PETRIFYING] = 0;
@@ -212,21 +213,51 @@ void wizard_heal(bool super_heal)
         you.duration[DUR_DOOM_HOWL] = 0;
         you.duration[DUR_WEAK] = 0;
         you.duration[DUR_NO_HOP] = 0;
-        you.duration[DUR_LOCKED_DOWN] = 0;
+        you.duration[DUR_DIMENSION_ANCHOR] = 0;
         you.duration[DUR_NO_MOMENTUM] = 0;
         you.props[CORROSION_KEY] = 0;
         you.duration[DUR_BARBS] = 0;
         you.attribute[ATTR_BARBS_POW] = 0;
         you.props.erase(BARBS_MOVE_KEY);
+        you.props.erase(CACOPHONY_XP_KEY);
+        you.props.erase(BATFORM_XP_KEY);
+        you.props.erase(WATERY_GRAVE_XP_KEY);
         you.duration[DUR_SICKNESS]  = 0;
         you.duration[DUR_EXHAUSTED] = 0;
         you.duration[DUR_BREATH_WEAPON] = 0;
         you.duration[DUR_BLINKBOLT_COOLDOWN] = 0;
+        you.duration[DUR_NO_CAST] = 0;
+        you.duration[DUR_NO_POTIONS] = 0;
+        you.duration[DUR_NO_SCROLLS] = 0;
+        you.duration[DUR_LOWERED_WL] = 0;
+        you.duration[DUR_VERTIGO] = 0;
+        you.duration[DUR_VITRIFIED] = 0;
+        you.duration[DUR_FROZEN] = 0;
+        you.duration[DUR_SAP_MAGIC] = 0;
+        you.duration[DUR_SLOW] = 0;
+        you.duration[DUR_BLIND] = 0;
+        you.duration[DUR_SIGN_OF_RUIN] = 0;
+        you.duration[DUR_SENTINEL_MARK] = 0;
+        you.duration[DUR_CANINE_FAMILIAR_DEAD] = 0;
+        you.duration[DUR_VORTEX_COOLDOWN] = 0;
+        you.duration[DUR_DRAGON_CALL_COOLDOWN] = 0;
+        you.duration[DUR_DEATHS_DOOR_COOLDOWN] = 0;
+        you.duration[DUR_BERSERK_COOLDOWN] = 0;
+        you.duration[DUR_BLINK_COOLDOWN] = 0;
+        you.duration[DUR_SIPHON_COOLDOWN] = 0;
+        you.duration[DUR_RECITE_COOLDOWN] = 0;
+        you.duration[DUR_GAVOTTE_COOLDOWN] = 0;
+        you.duration[DUR_WORD_OF_CHAOS_COOLDOWN] = 0;
+        you.duration[DUR_FIRE_VULN] = 0;
+        you.duration[DUR_POISON_VULN] = 0;
         delete_all_temp_mutations("Super heal");
-        you.stat_loss.init(0);
-        you.attribute[ATTR_STAT_LOSS_XP] = 0;
         decr_zot_clock();
         you.redraw_stats = true;
+        gain_draconian_breath_uses(MAX_DRACONIAN_BREATH);
+        gain_grave_claw_soul(true, true);
+        you.props[ENKINDLE_CHARGES_KEY].get_int() = enkindle_max_charges();
+
+        you.props.erase(COGLIN_GIZMO_KEY);
     }
     else
         mpr("Healing.");
@@ -239,9 +270,6 @@ void wizard_heal(bool super_heal)
     you.redraw_hit_points = true;
     you.redraw_armour_class = true;
     you.redraw_evasion = true;
-
-    for (int stat = 0; stat < NUM_STATS; stat++)
-        you.duration[stat_zero_duration(static_cast<stat_type> (stat))] = 0;
 }
 
 void wizard_set_piety_to(int newpiety, bool force)
@@ -459,7 +487,7 @@ void wizard_set_all_skills()
 
         // We're not updating skill cost here since XP hasn't changed.
 
-        calc_hp(true, false);
+        calc_hp(true);
         calc_mp();
 
         you.redraw_armour_class = true;
@@ -582,115 +610,87 @@ void wizard_set_stats()
     you.base_stats[STAT_STR] = debug_cap_stat(sstr);
     you.base_stats[STAT_INT] = debug_cap_stat(sint);
     you.base_stats[STAT_DEX] = debug_cap_stat(sdex);
-    you.stat_loss.init(0);
-    you.attribute[ATTR_STAT_LOSS_XP] = 0;
-    you.redraw_stats.init(true);
-    you.redraw_evasion = true;
+    notify_stat_change();
+}
+
+// Let the user type in a duration name.
+// Return true and set "choice" if one match is found.
+// If none, or more than one, is found, return false.
+static bool _wizard_enter_duration_name(duration_type &choice)
+{
+    char buf[80];
+    vector<string> match_names;
+
+    mprf(MSGCH_PROMPT, "Edit which duration (name)? ");
+
+    if (cancellable_get_line_autohist(buf, sizeof buf) || !*buf
+        || !strlcpy(buf, lowercase_string(trimmed_string(buf)).c_str(),
+                    sizeof(buf)))
+    {
+        canned_msg(MSG_OK);
+        return false;
+    }
+
+    for (int i = 0; i < NUM_DURATIONS; ++i)
+    {
+        const auto dur = static_cast<duration_type>(i);
+        if (strcmp(duration_name(dur), buf) == 0)
+        {
+            choice = dur;
+            return true;
+        }
+        if (strstr(duration_name(dur), buf) != nullptr)
+        {
+            choice = dur;
+            match_names.emplace_back(duration_name(dur));
+        }
+    }
+    if (match_names.size() == 1)
+        return true;
+    else if (match_names.empty())
+    {
+        mprf(MSGCH_PROMPT, "No durations matching '%s'.", buf);
+        return false;
+    }
+    else
+    {
+        string prefix = "No exact match for duration '";
+        prefix += buf;
+        prefix += "', possible matches are: ";
+
+        mpr_comma_separated_list(prefix, match_names, " and ", ", ",
+                                 MSGCH_DIAGNOSTICS);
+        return false;
+    }
 }
 
 void wizard_edit_durations()
 {
-    vector<duration_type> durs;
-    size_t max_len = 0;
+    vector<WizardEntry> active;
+    duration_type choice;
 
     for (int i = 0; i < NUM_DURATIONS; ++i)
     {
-        const duration_type dur = static_cast<duration_type>(i);
-
+        const auto d = static_cast<duration_type>(i);
         if (!you.duration[i])
             continue;
-
-        max_len = max(strlen(duration_name(dur)), max_len);
-        durs.push_back(dur);
+        auto text = make_stringf("%s : %d", duration_name(d), you.duration[i]);
+        active.emplace_back(WizardEntry(text, i));
     }
-
-    if (!durs.empty())
+    if (!active.empty())
     {
-        for (size_t i = 0; i < durs.size(); ++i)
-        {
-            const duration_type dur = durs[i];
-            const char ch = i >= 26 ? ' ' : 'a' + i;
-            mprf_nocap(MSGCH_PROMPT, "%c%c %-*s : %d",
-                 ch, ch == ' ' ? ' ' : ')',
-                 (int)max_len, duration_name(dur), you.duration[dur]);
-        }
-        mprf(MSGCH_PROMPT, "\nEdit which duration (letter or name)? ");
+        active.emplace_back('*', "other durations", NUM_DURATIONS);
+        auto menu = WizardMenu("Edit which duration (ESC to exit)?", active);
+        if (!menu.run(true))
+            return;
+        choice = static_cast<duration_type>(menu.result());
+        if (NUM_DURATIONS == choice && !_wizard_enter_duration_name(choice))
+            return;
     }
-    else
-        mprf(MSGCH_PROMPT, "Edit which duration (name)? ");
+    else if (!_wizard_enter_duration_name(choice))
+        return;
 
     char buf[80];
-
-    if (cancellable_get_line_autohist(buf, sizeof buf) || !*buf)
-    {
-        canned_msg(MSG_OK);
-        return;
-    }
-
-    if (!strlcpy(buf, lowercase_string(trimmed_string(buf)).c_str(), sizeof(buf)))
-    {
-        canned_msg(MSG_OK);
-        return;
-    }
-
-    duration_type choice = NUM_DURATIONS;
-
-    if (strlen(buf) == 1 && isalower(buf[0]))
-    {
-        if (durs.empty())
-        {
-            mprf(MSGCH_PROMPT, "No existing durations to choose from.");
-            return;
-        }
-        const int dchoice = buf[0] - 'a';
-
-        if (dchoice < 0 || dchoice >= (int) durs.size())
-        {
-            mprf(MSGCH_PROMPT, "Invalid choice.");
-            return;
-        }
-        choice = durs[dchoice];
-    }
-    else
-    {
-        vector<duration_type> matches;
-        vector<string> match_names;
-
-        for (int i = 0; i < NUM_DURATIONS; ++i)
-        {
-            const duration_type dur = static_cast<duration_type>(i);
-            if (strcmp(duration_name(dur), buf) == 0)
-            {
-                choice = dur;
-                break;
-            }
-            if (strstr(duration_name(dur), buf) != nullptr)
-            {
-                matches.push_back(dur);
-                match_names.emplace_back(duration_name(dur));
-            }
-        }
-        if (choice != NUM_DURATIONS)
-            ;
-        else if (matches.size() == 1)
-            choice = matches[0];
-        else if (matches.empty())
-        {
-            mprf(MSGCH_PROMPT, "No durations matching '%s'.", buf);
-            return;
-        }
-        else
-        {
-            string prefix = "No exact match for duration '";
-            prefix += buf;
-            prefix += "', possible matches are: ";
-
-            mpr_comma_separated_list(prefix, match_names, " and ", ", ",
-                                     MSGCH_DIAGNOSTICS);
-            return;
-        }
-    }
-
     snprintf(buf, sizeof(buf), "Set '%s' to: ", duration_name(choice));
     int num = prompt_for_int(buf, false);
 
@@ -851,12 +851,6 @@ void wizard_get_god_gift()
         return;
     }
 
-    if (you_worship(GOD_YREDELEMNUL))
-    {
-        give_yred_bonus_zombies(min(piety_rank() + 1, NUM_PIETY_STARS));
-        return;
-    }
-
     if (!do_god_gift(true))
         mpr("Nothing happens.");
 }
@@ -916,50 +910,43 @@ void wizard_god_mollify()
 
 void wizard_transform()
 {
-    transformation form;
-
-    while (true)
+    vector<pair<int, string>> form_names;
+    for (int i = 1; i < NUM_TRANSFORMS; ++i)
     {
-        string line;
-        for (int i = 0; i < NUM_TRANSFORMS; i++)
-        {
-            const auto tr = static_cast<transformation>(i);
+        const auto tr = static_cast<transformation>(i);
 #if TAG_MAJOR_VERSION == 34
-            if (tr == transformation::jelly || tr == transformation::porcupine)
-                continue;
-#endif
-            line += make_stringf("[%c] %-10s ", i + 'a', transform_name(tr));
-            if (i % 5 == 4 || i == NUM_TRANSFORMS - 1)
-            {
-                mprf(MSGCH_PROMPT, "%s", line.c_str());
-                line.clear();
-            }
-        }
-        mprf(MSGCH_PROMPT, "Which form (ESC to exit)? ");
-
-        int keyin = toalower(get_ch());
-
-        if (key_is_escape(keyin) || keyin == ' '
-            || keyin == '\r' || keyin == '\n')
+        if (tr == transformation::jelly || tr == transformation::porcupine
+            || tr == transformation::hydra || tr == transformation::appendage
+            || tr == transformation::shadow)
         {
-            canned_msg(MSG_OK);
-            return;
+            continue;
         }
-
-        if (keyin < 'a' || keyin > 'a' + NUM_TRANSFORMS - 1)
-            continue;
-
-        const auto k_tr = static_cast<transformation>(keyin - 'a');
-#if TAG_MAJOR_VERSION == 34
-        if (k_tr == transformation::jelly || k_tr == transformation::porcupine)
-            continue;
 #endif
-        form = k_tr;
-        break;
+        form_names.push_back({i, transform_name(tr)});
     }
+    sort(form_names.begin(), form_names.end(),
+            [](const pair<int, string>& a, const pair<int, string>& b)
+                {
+                    return a.second < b.second;
+                });
+
+    vector<WizardEntry> choices;
+    choices.emplace_back(WizardEntry(0, "None", 0));
+    for (size_t i = 0; i < form_names.size(); ++i)
+        choices.emplace_back(WizardEntry(0, form_names[i].second, i));
+
+    auto menu = WizardMenu("Which form (ESC to exit)?", choices);
+    if (!menu.run(true))
+        return;
+    auto form = static_cast<transformation>(form_names[menu.result()].first);
 
     you.transform_uncancellable = false;
-    if (!transform(200, form) && you.form != form)
+    if (you.default_form == you.form && you.form != transformation::none)
+    {
+        you.default_form = form; // ehhh
+        you.active_talisman.clear();
+    }
+    if (!transform(200, form, true) && you.form != form)
         mpr("Transformation failed.");
 }
 
@@ -990,6 +977,15 @@ void wizard_join_religion()
     }
 }
 
+void wizard_get_god_tension()
+{
+    mpr("(Tension uses a given god's perspective to check on their summons; use 'No God' to ignore this.)");
+    god_type god = choose_god(you.religion);
+    int tension = get_tension(god);
+    mprf("%s tension value: %d", !(god == GOD_NO_GOD) ? god_name(god).c_str()
+                                                      : "General", tension);
+}
+
 void wizard_xom_acts()
 {
     char specs[80];
@@ -1002,8 +998,8 @@ void wizard_xom_acts()
 
     if (specs[0] == '\0')
     {
-        const maybe_bool nice = you_worship(GOD_XOM) ? MB_MAYBE :
-                                frombool(coinflip());
+        const maybe_bool nice = you_worship(GOD_XOM) ? maybe_bool::maybe :
+                                coinflip();
         const xom_event_type result = xom_acts(severity, nice);
         dprf("Xom did '%s'.", xom_effect_to_name(result).c_str());
 #ifndef DEBUG_DIAGNOSTICS

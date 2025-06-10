@@ -3,12 +3,14 @@
 #include "enchant-type.h"
 #include "externs.h"
 #include "kill-category.h"
+#include "mon-aura.h"
 
 #define INFINITE_DURATION  30000
 #define MAX_ENCH_DEGREE_DEFAULT  4
 #define MAX_ENCH_DEGREE_ABJURATION  6
 
 #define SIMULACRUM_POWER_KEY "simulacrum power"
+#define FROZEN_IN_FEAR_KEY "mon_frozen_in_fear"
 
 class actor;
 class monster;
@@ -26,10 +28,13 @@ public:
     kill_category who;      // Source's alignment.
     mid_t         source;   // Who set this enchantment?
 
+    ench_aura_type  ench_is_aura; // Whether the source is a passive aura
+                                  // that needs regular checking.
+
 public:
     mon_enchant(enchant_type e = ENCH_NONE, int deg = 0,
                 const actor *whose = 0,
-                int dur = 0);
+                int dur = 0, ench_aura_type ench_is_aura = AURA_NO);
 
     killer_type killer() const;
     int kill_agent() const;
@@ -62,3 +67,4 @@ private:
 };
 
 enchant_type name_to_ench(const char *name);
+int summ_dur(int degree);

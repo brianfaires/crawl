@@ -293,6 +293,7 @@ bool gift_cards()
 {
     const int deal = random_range(MIN_GIFT_CARDS, MAX_GIFT_CARDS);
     bool dealt_cards = false;
+    set<deck_type> sufficiency;
 
     for (int i = 0; i < deal; i++)
     {
@@ -300,11 +301,26 @@ bool gift_cards()
                                         3, DECK_OF_DESTRUCTION,
                                         1, DECK_OF_SUMMONING,
                                         1, DECK_OF_ESCAPE);
-        if (deck_cards(choice) < all_decks[choice].deck_max)
+        if (deck_cards(choice) >= all_decks[choice].deck_max)
         {
-            you.props[deck_name(choice)]++;
-            dealt_cards = true;
+            sufficiency.insert(choice);
+            continue;
         }
+        you.props[deck_name(choice)]++;
+        dealt_cards = true;
+    }
+    if (!dealt_cards)
+    {
+        vector<string> deck_names;
+        for (deck_type deck : sufficiency)
+        {
+            const deck_type_data *deck_data = map_find(all_decks, deck);
+            deck_names.push_back(deck_data ? deck_data->name : "bugginess");
+        }
+        mprf(MSGCH_GOD, you.religion,
+             "%s goes to deal, but finds you have enough %s cards.",
+             god_name(you.religion).c_str(),
+             join_strings(deck_names.begin(), deck_names.end(), " and ").c_str());
     }
 
     return dealt_cards;
@@ -404,19 +420,19 @@ static void _describe_cards(CrawlVector& cards)
 #ifdef USE_TILE
         auto icon = make_shared<Image>();
         icon->set_tile(tile_def(TILEG_NEMELEX_CARD));
-        title_hbox->add_child(move(icon));
+        title_hbox->add_child(std::move(icon));
 #endif
         auto title = make_shared<Text>(formatted_string(name, WHITE));
         title->set_margin_for_sdl(0, 0, 0, 10);
-        title_hbox->add_child(move(title));
+        title_hbox->add_child(std::move(title));
         title_hbox->set_cross_alignment(Widget::CENTER);
         title_hbox->set_margin_for_crt(first ? 0 : 1, 0);
         title_hbox->set_margin_for_sdl(first ? 0 : 20, 0);
-        vbox->add_child(move(title_hbox));
+        vbox->add_child(std::move(title_hbox));
 
         auto text = make_shared<Text>(desc);
         text->set_wrap_text(true);
-        vbox->add_child(move(text));
+        vbox->add_child(std::move(text));
 
 #ifdef USE_TILE_WEB
         tiles.json_open_object();
@@ -431,7 +447,7 @@ static void _describe_cards(CrawlVector& cards)
     vbox->max_size().width = tiles.get_crt_font()->char_width()*80;
 #endif
 
-    scroller->set_child(move(vbox));
+    scroller->set_child(std::move(vbox));
     auto popup = make_shared<ui::Popup>(scroller);
 
     bool done = false;
@@ -446,7 +462,7 @@ static void _describe_cards(CrawlVector& cards)
     popup->on_layout_pop([](){ tiles.pop_ui_layout(); });
 #endif
 
-    ui::run_layout(move(popup), done);
+    ui::run_layout(std::move(popup), done);
 }
 
 string deck_status(deck_type deck)
@@ -1064,7 +1080,7 @@ static void _exile_card(int power)
     for (int i = 0; i < 1 + extra_targets; ++i)
     {
         // Pick a random monster nearby to banish.
-        monster* mon_to_banish = choose_random_nearby_monster(1);
+        monster* mon_to_banish = choose_random_nearby_monster();
 
         // Bonus banishments only banish monsters.
         if (i != 0 && !mon_to_banish)
@@ -1081,7 +1097,7 @@ static monster* _friendly(monster_type mt, int dur)
 {
     return create_monster(mgen_data(mt, BEH_FRIENDLY, you.pos(), MHITYOU,
                                     MG_AUTOFOE)
-                          .set_summoned(&you, dur, 0));
+                          .set_summoned(&you, 0, summ_dur(dur)));
 }
 
 static void _damaging_card(card_type card, int power,
@@ -1113,7 +1129,7 @@ static void _damaging_card(card_type card, int power,
                 return !mons.wont_attack()
                        && mons_is_threatening(mons)
                        && coinflip()
-                       && mons.corrode_equipment();
+                       && mons.corrode(&you);
             });
         }
         ztype = acidzaps[power_level];
@@ -1228,7 +1244,7 @@ static void _summon_demon_card(int power)
 
     if (!create_monster(mgen_data(dct, hostile ? BEH_HOSTILE : BEH_FRIENDLY,
                                   you.pos(), MHITYOU, MG_AUTOFOE)
-                        .set_summoned(&you, 5 - power_level, 0)))
+                        .set_summoned(&you, 0, summ_dur(5 - power_level))))
     {
         mpr("You see a puff of smoke.");
     }
@@ -1249,8 +1265,8 @@ static void _elements_card(int power)
     const monster_type element_list[][3] =
     {
         {MONS_RAIJU, MONS_WIND_DRAKE, MONS_SHOCK_SERPENT},
-        {MONS_BASILISK, MONS_CATOBLEPAS, MONS_IRON_GOLEM},
-        {MONS_FIRE_VORTEX, MONS_MOLTEN_GARGOYLE, MONS_FIRE_DRAGON},
+        {MONS_BASILISK, MONS_CATOBLEPAS, MONS_WAR_GARGOYLE},
+        {MONS_FIRE_BAT, MONS_MOLTEN_GARGOYLE, MONS_FIRE_DRAGON},
         {MONS_ICE_BEAST, MONS_POLAR_BEAR, MONS_ICE_DRAGON}
     };
 
@@ -1271,7 +1287,7 @@ static void _summon_dancing_weapon(int power)
     monster *mon =
         create_monster(
             mgen_data(MONS_DANCING_WEAPON, BEH_FRIENDLY, you.pos(), MHITYOU,
-                      MG_AUTOFOE).set_summoned(&you, power_level + 2, 0),
+                      MG_AUTOFOE).set_summoned(&you, 0, summ_dur(power_level + 2)),
             false);
 
     if (!mon)
@@ -1322,7 +1338,7 @@ static void _summon_dancing_weapon(int power)
     if (one_chance_in(3))
     {
         make_item_randart(wpn, true);
-        set_ident_flags(wpn, ISFLAG_KNOW_PROPERTIES| ISFLAG_KNOW_TYPE);
+        identify_item(wpn);
     }
 
     // Don't leave a trail of weapons behind. (Especially not randarts!)
@@ -1338,10 +1354,19 @@ static void _summon_dancing_weapon(int power)
 static void _summon_bee(int power)
 {
     const int power_level = _get_power_level(power);
-    const int how_many = 1 + random2((power_level + 1) * 3);
+    const int how_many = 1 + random2(3 + (power_level));
 
     for (int i = 0; i < how_many; ++i)
         _friendly(MONS_KILLER_BEE, 3);
+
+    if (power_level > 0)
+        _friendly(MONS_QUEEN_BEE, 3);
+
+    if (power_level > 1)
+    {
+        for (int i = 0; i < 3; ++i)
+            _friendly(MONS_MELIAI, 3);
+    }
 }
 
 static void _summon_rangers(int power)
@@ -1371,31 +1396,61 @@ static void _cloud_card(int power)
 {
     const int power_level = _get_power_level(power);
     bool something_happened = false;
+    cloud_type cloudy = CLOUD_DEBUGGING;
 
+    switch (power_level)
+    {
+    case 0:
+        cloudy = CLOUD_MEPHITIC;
+        break;
+    case 1:
+        cloudy = CLOUD_MIASMA;
+        break;
+    default:
+        cloudy = CLOUD_PETRIFY;
+    }
+
+    vector<coord_def> cloud_pos;
     for (radius_iterator di(you.pos(), LOS_NO_TRANS); di; ++di)
     {
         monster *mons = monster_at(*di);
-        cloud_type cloudy;
-        cloudy = CLOUD_BLACK_SMOKE;
 
         if (!mons || mons->wont_attack() || !mons_is_threatening(*mons))
             continue;
 
         for (adjacent_iterator ai(mons->pos(), false); ai; ++ai)
         {
-            if (env.grid(*ai) == DNGN_FLOOR && !cloud_at(*ai))
-            {
-                const int cloud_power = 5 + random2avg(power_level * 6, 2);
-                place_cloud(cloudy, *ai, cloud_power, &you);
+            // don't place clouds directly on the monsters
+            if (monster_at(*ai))
+                continue;
 
-                if (you.see_cell(*ai))
-                    something_happened = true;
-            }
+            if (!feat_is_solid(env.grid(*ai)) && !cloud_at(*ai))
+                cloud_pos.push_back(*ai);
         }
     }
 
+    bool cloud_under_player = false;
+    for (auto pos : cloud_pos)
+    {
+        const int cloud_power = 4 + random2avg(power_level * 2, 2);
+        place_cloud(cloudy, pos, cloud_power, &you);
+
+        if (you.see_cell(pos))
+            something_happened = true;
+
+        if (pos == you.pos())
+            cloud_under_player = true;
+    }
+
     if (something_happened)
-        mpr("Clouds appear around you!");
+    {
+        mpr("Clouds appear around your foes!");
+
+        // Make the player not be immediately affected by clouds that may have
+        // been created beneath them until they act again.
+        if (cloud_under_player)
+            you.duration[DUR_TEMP_CLOUD_IMMUNITY] = 1;
+    }
     else
         canned_msg(MSG_NOTHING_HAPPENS);
 }
@@ -1438,7 +1493,6 @@ static void _storm_card(int power)
     {
         bolt beam;
         beam.flavour           = BEAM_ELECTRICITY;
-        beam.is_tracer         = false;
         beam.is_explosion      = true;
         beam.glyph             = dchar_glyph(DCHAR_FIRED_BURST);
         beam.name              = "electrical discharge";
@@ -1508,7 +1562,7 @@ static void _degeneration_card(int power)
                if (mons.can_polymorph())
                {
                    mons.polymorph(PPT_LESS);
-                   mons.malmutate("");
+                   mons.malmutate(&you);
                }
                else
                {
@@ -1545,8 +1599,7 @@ static void _wild_magic_card(int power)
                                           spschool::ice,
                                           spschool::earth,
                                           spschool::air,
-                                          spschool::poison,
-                                          spschool::transmutation,
+                                          spschool::alchemy,
                                           spschool::hexes,
                                           spschool::necromancy);
 
@@ -1654,7 +1707,7 @@ void card_effect(card_type which_card,
         break;
 
     case CARD_SWINE:
-        if (transform(5 + power/10 + random2(power/10), transformation::pig, true))
+        if (transform(roll_dice(10, 10), transformation::pig, true))
             you.transform_uncancellable = true;
         else
             mpr("You feel a momentary urge to oink.");

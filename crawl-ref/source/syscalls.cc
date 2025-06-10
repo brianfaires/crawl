@@ -28,8 +28,9 @@
 #include "unicode.h"
 
 #ifdef __ANDROID__
+#define HAVE_STAT
+#include "player.h"
 #include <errno.h>
-
 #include <android/asset_manager.h>
 #include <android/asset_manager_jni.h>
 #include <jni.h>
@@ -40,6 +41,30 @@ extern "C"
 }
 
 AAssetManager *_android_asset_manager = nullptr; // XXX
+
+// Used to save the game on SDLActivity.onPause
+extern "C" JNIEXPORT void JNICALL
+Java_org_libsdl_app_SDLActivity_nativeSaveGame(
+    JNIEnv* env, jclass thiz)
+{
+    if (you.save)
+        save_game(false);
+}
+
+bool jni_keyboard_control(bool toggle)
+{
+    JNIEnv *env = Android_JNI_GetEnv();
+    jclass sdlClass = env->FindClass("org/libsdl/app/SDLActivity");
+
+    if (!sdlClass)
+        return false;
+
+    jmethodID mid =
+        env->GetStaticMethodID(sdlClass, "jniKeyboardControl", "(Z)Z");
+    jboolean shown = env->CallStaticBooleanMethod(sdlClass, mid, toggle);
+
+    return shown;
+}
 #endif
 
 bool lock_file(int fd, bool write, bool wait)
@@ -222,7 +247,7 @@ int fdatasync(int fd)
 
 // The old school way of doing short delays via low level I/O sync.
 // Good for systems like old versions of Solaris that don't have usleep.
-#ifdef NEED_USLEEP
+#ifndef CRAWL_HAVE_USLEEP
 
 # ifdef TARGET_OS_WINDOWS
 void usleep(unsigned long time)

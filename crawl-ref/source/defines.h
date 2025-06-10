@@ -161,6 +161,9 @@ const int INSTANT_DEATH = -9999;
 const int MAX_WPN_ENCHANT = 9;
 const int MAX_SEC_ENCHANT = 2;
 
+// Maximum evoker enchantment
+const int MAX_EVOKER_ENCHANT = 5;
+
 // formula for MP from a potion of magic
 #define POT_MAGIC_MP (10 + random2avg(28, 3))
 
@@ -234,6 +237,7 @@ typedef uint8_t colour_t;
 
 #define COLFLAG_FRIENDLY_MONSTER         0x0100
 #define COLFLAG_NEUTRAL_MONSTER          0x0200
+#define COLFLAG_UNUSUAL_MASK             0x0300
 #define COLFLAG_WILLSTAB                 0x0400
 #define COLFLAG_MAYSTAB                  0x0800
 #define COLFLAG_ITEM_HEAP                0x1000
@@ -306,23 +310,17 @@ const char * const THUNDERBOLT_AIM_KEY     = "thunderbolt_aim";
 #define SPECTRAL_WEAPON_KEY "spectral_weapon"
 #define FAKE_MON_KEY "fake"
 #define MMOV_KEY "mmov"
-#define MON_FOE_KEY "foe"
+#define BATTLESPHERE_KEY "battlesphere"
 #define FOE_APPROACHING_KEY "foe_approaching"
 #define FAUX_PAS_KEY "foe_pos"
 #define SWOOP_COOLDOWN_KEY "swoop_cooldown"
-#define VINE_AWAKENER_KEY "vine_awakener"
-#define VINES_AWAKENED_KEY "vines_awakened"
 #define OUTWARDS_KEY "outwards"
 #define INWARDS_KEY "inwards"
 #define BASE_POSITION_KEY "base_position"
 #define SUMMON_ID_KEY "summon_id"
-#define TRACKING_TARGET_KEY "tracking_target"
-#define BATTLESPHERE_KEY "battlesphere"
 #define FLAY_BLOOD_KEY "flay_blood"
 #define IDEAL_RANGE_KEY "ideal_range"
 #define LAST_POS_KEY "last_pos"
-#define IDLE_POINT_KEY "idle_point"
-#define IDLE_DEADLINE_KEY "idle_deadline"
 #define BLOCKED_DEADLINE_KEY "blocked_deadline"
 #define BROTHERS_KEY "brothers_count"
 #define OLD_HEADS_KEY "old_heads"
@@ -332,16 +330,25 @@ const char * const THUNDERBOLT_AIM_KEY     = "thunderbolt_aim";
 #define MERFOLK_AVATAR_CALL_KEY "merfolk_avatar_call"
 #define PIKEL_BAND_KEY "pikel_band"
 #define KIRKE_BAND_KEY "kirke_band"
-#define CHARMED_DEMON_KEY "charmed_demon"
 #define EMERGENCY_CLONE_KEY "emergency_clone"
+#define BINDING_SIGIL_DURATION_KEY "binding_sigil_duration"
+#define BULLSEYE_TARGET_KEY "bullseye_target"
+#define BOULDER_DIRECTION_KEY "boulder_direction"
+#define BOULDER_POWER_KEY "boulder_power"
+#define PROTEAN_TARGET_KEY "protean_target"
+#define PASSWALL_ARMOUR_KEY "passwall_armour"
+#define SOUL_SPLINTERED_KEY "soul_splintered"
 
 #define HELPLESS_KEY "helpless"
 #define POISONER_KEY "poisoner"
 #define POISON_AUX_KEY "poison_aux"
 #define STICKY_FLAMER_KEY "sticky_flame_source"
 #define STICKY_FLAME_AUX_KEY "sticky_flame_aux"
+#define STICKY_FLAME_POWER_KEY "sticky_flame_pow"
 #define WATER_HOLDER_KEY "water_holder"
 #define WATER_HOLD_SUBSTANCE_KEY "water_hold_substance"
+#define BLINKITIS_SOURCE_KEY "disjunctioner"
+#define BLINKITIS_AUX_KEY "disjunction_aux"
 #define CORROSION_KEY "corrosion_amount"
 #define CONFUSING_TOUCH_KEY "confusing touch power"
 #define NUM_SACRIFICES_KEY "num_sacrifice_muts"

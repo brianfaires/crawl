@@ -20,6 +20,7 @@
 #include "english.h"
 #include "env.h"
 #include "files.h"
+#include "god-wrath.h"
 #include "invent.h"
 #include "item-name.h"
 #include "item-prop.h"
@@ -48,9 +49,29 @@
 
 ShoppingList shopping_list;
 
+// Hack to make the cost of certain items (consumables) scale more severely with
+// depth. Currently applies to all potions, scrolls, and wands. I have set this
+// up for more complicated handling if we want to restrict to certain subtypes
+// later on. - hellmonk
+static bool _item_has_extra_greed(const item_def& item)
+{
+    switch (item.base_type)
+    {
+        case OBJ_POTIONS:
+        case OBJ_SCROLLS:
+        case OBJ_WANDS:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static int _shop_get_item_value(const item_def& item, int greed, bool id)
 {
     int result = (greed * item_value(item, id) / 10);
+
+    if (_item_has_extra_greed(item) && id)
+        result = max(result, result * (15 + greed) / 30);
 
     return max(result, 1);
 }
@@ -144,9 +165,6 @@ int artefact_value(const item_def &item)
     if (prop[ARTP_ANGRY])
         ret -= 3;
 
-    if (prop[ARTP_CAUSE_TELEPORTATION])
-        ret -= 3;
-
     if (prop[ARTP_NOISE])
         ret -= 5;
 
@@ -168,6 +186,9 @@ int artefact_value(const item_def &item)
     if (prop[ARTP_SLOW])
         ret -= 8;
 
+    if (prop[ARTP_SILENCE])
+        ret -= 8;
+
     if (prop[ARTP_FRAGILE])
         ret -= 8;
 
@@ -180,17 +201,31 @@ int artefact_value(const item_def &item)
     if (prop[ARTP_ARCHMAGI])
         ret += 20;
 
+    // Yuck!
+    for (int i = ARTP_ENHANCE_CONJ; i <= ARTP_ENHANCE_ALCHEMY; ++i)
+        if (prop[i])
+            ret += 8;
+
+    if (prop[ARTP_ENHANCE_FORGECRAFT])
+        ret += 8;
+
     return (ret > 0) ? ret : 0;
+}
+
+bool have_voucher()
+{
+    if (you.attribute[ATTR_VOUCHER] > 0)
+            return true;
+    return false;
 }
 
 unsigned int item_value(item_def item, bool ident)
 {
     // Note that we pass item in by value, since we want a local
     // copy to mangle as necessary.
-    item.flags = (ident) ? (item.flags | ISFLAG_IDENT_MASK) : (item.flags);
+    item.flags = (ident) ? (item.flags | ISFLAG_IDENTIFIED) : (item.flags);
 
-    if (is_unrandom_artefact(item)
-        && item_ident(item, ISFLAG_KNOW_PROPERTIES))
+    if (is_unrandom_artefact(item))
     {
         const unrandart_entry *entry = get_unrand_entry(item.unrand_idx);
         if (entry->value != 0)
@@ -204,7 +239,7 @@ unsigned int item_value(item_def item, bool ident)
     case OBJ_WEAPONS:
         valued += weapon_base_price((weapon_type)item.sub_type);
 
-        if (item_type_known(item))
+        if (item.is_identified())
         {
             switch (get_weapon_brand(item))
             {
@@ -223,6 +258,7 @@ unsigned int item_value(item_def item, bool ident)
             case SPWPN_ELECTROCUTION:
             case SPWPN_PAIN:
             case SPWPN_ACID: // Unrand-only.
+            case SPWPN_FOUL_FLAME: // Unrand only.
             case SPWPN_PENETRATION: // Unrand-only.
             case SPWPN_SPECTRAL:
                 valued *= 25;
@@ -232,12 +268,9 @@ unsigned int item_value(item_def item, bool ident)
             case SPWPN_DRAINING:
             case SPWPN_FLAMING:
             case SPWPN_FREEZING:
+            case SPWPN_HEAVY:
             case SPWPN_HOLY_WRATH:
                 valued *= 18;
-                break;
-
-            case SPWPN_VORPAL:
-                valued *= 15;
                 break;
 
             case SPWPN_PROTECTION:
@@ -249,63 +282,56 @@ unsigned int item_value(item_def item, bool ident)
             valued /= 10;
         }
 
-        if (item_ident(item, ISFLAG_KNOW_PLUSES))
+        if (item.is_identified())
             valued += 50 * item.plus;
 
         if (is_artefact(item))
         {
-            if (item_type_known(item))
+            if (item.is_identified())
                 valued += (7 * artefact_value(item));
             else
                 valued += 50;
         }
-        else if (item_type_known(item)
+        else if (item.is_identified()
                  && get_equip_desc(item) != 0) // ???
         {
             valued += 20;
         }
-        else if (!(item.flags & ISFLAG_IDENT_MASK)
-                 && (get_equip_desc(item) != 0))
-        {
+        else if (!item.is_identified() && (get_equip_desc(item) != 0))
             valued += 30; // un-id'd "glowing" - arbitrary added cost
-        }
 
         break;
 
     case OBJ_MISSILES:          // ammunition
         valued += missile_base_price((missile_type)item.sub_type);
 
-        if (item_type_known(item))
+        if (item.is_identified())
         {
             switch (get_ammo_brand(item))
             {
             case SPMSL_NORMAL:
             default:
-                valued *= 10;
                 break;
 
             case SPMSL_CHAOS:
-                valued *= 40;
+            case SPMSL_CURARE:
+                valued *= 4;
                 break;
 
-            case SPMSL_CURARE:
             case SPMSL_BLINDING:
+            case SPMSL_FRENZY:
             case SPMSL_SILVER:
+            case SPMSL_DISPERSAL:
+            case SPMSL_DISJUNCTION:
 #if TAG_MAJOR_VERSION == 34
             case SPMSL_PARALYSIS:
             case SPMSL_PENETRATION:
             case SPMSL_STEEL:
-#endif
-            case SPMSL_DISPERSAL:
-                valued *= 30;
-                break;
-
-#if TAG_MAJOR_VERSION == 34
             case SPMSL_FLAME:
             case SPMSL_FROST:
             case SPMSL_SLEEP:
             case SPMSL_CONFUSION:
-                valued *= 25;
+                valued *= 3;
                 break;
 #endif
 
@@ -316,19 +342,16 @@ unsigned int item_value(item_def item, bool ident)
             case SPMSL_SLOW:
             case SPMSL_SICKNESS:
 #endif
-            case SPMSL_FRENZY:
-                valued *= 20;
+                valued *= 2;
                 break;
             }
-
-            valued /= 10;
         }
         break;
 
     case OBJ_ARMOUR:
         valued += armour_base_price((armour_type)item.sub_type);
 
-        if (item_type_known(item))
+        if (item.is_identified())
         {
             const int sparm = get_armour_ego_type(item);
             switch (sparm)
@@ -377,28 +400,25 @@ unsigned int item_value(item_def item, bool ident)
             }
         }
 
-        if (item_ident(item, ISFLAG_KNOW_PLUSES))
+        if (item.is_identified())
             valued += 50 * item.plus;
 
         if (is_artefact(item))
         {
-            if (item_type_known(item))
+            if (item.is_identified())
                 valued += (7 * artefact_value(item));
             else
                 valued += 50;
         }
-        else if (item_type_known(item) && get_equip_desc(item) != 0)
+        else if (item.is_identified() && get_equip_desc(item) != 0)
             valued += 20;  // ???
-        else if (!(item.flags & ISFLAG_IDENT_MASK)
-                 && (get_equip_desc(item) != 0))
-        {
+        else if (!item.is_identified() && (get_equip_desc(item) != 0))
             valued += 30; // un-id'd "glowing" - arbitrary added cost
-        }
 
         break;
 
     case OBJ_WANDS:
-        if (!item_type_known(item))
+        if (!item.is_identified())
             valued += 40;
         else
         {
@@ -413,6 +433,7 @@ unsigned int item_value(item_def item, bool ident)
 
             case WAND_ICEBLAST:
             case WAND_ROOTS:
+            case WAND_WARPING:
             case WAND_CHARMING:
             case WAND_PARALYSIS:
                 valued += 24 * item.plus;
@@ -435,7 +456,7 @@ unsigned int item_value(item_def item, bool ident)
         break;
 
     case OBJ_POTIONS:
-        if (!item_type_known(item))
+        if (!item.is_identified())
             valued += 9;
         else
         {
@@ -453,13 +474,14 @@ unsigned int item_value(item_def item, bool ident)
             case POT_MAGIC:
             case POT_INVISIBILITY:
             case POT_CANCELLATION:
+            case POT_HEAL_WOUNDS:
             case POT_AMBROSIA:
             case POT_MUTATION:
                 valued += 80;
                 break;
 
             case POT_BERSERK_RAGE:
-            case POT_HEAL_WOUNDS:
+            case POT_ENLIGHTENMENT:
                 valued += 50;
                 break;
 
@@ -471,11 +493,10 @@ unsigned int item_value(item_def item, bool ident)
             case POT_CURING:
             case POT_LIGNIFY:
             case POT_ATTRACTION:
-            case POT_FLIGHT:
                 valued += 30;
                 break;
 
-            case POT_DEGENERATION:
+            case POT_MOONSHINE:
                 valued += 10;
                 break;
 
@@ -485,7 +506,7 @@ unsigned int item_value(item_def item, bool ident)
         break;
 
     case OBJ_SCROLLS:
-        if (!item_type_known(item))
+        if (!item.is_identified())
             valued += 10;
         else
         {
@@ -499,13 +520,14 @@ unsigned int item_value(item_def item, bool ident)
             case SCR_TORMENT:
             case SCR_SILENCE:
             case SCR_BRAND_WEAPON:
+            case SCR_BLINKING:
+            case SCR_BUTTERFLIES:
                 valued += 95;
                 break;
 
-            case SCR_BLINKING:
             case SCR_ENCHANT_ARMOUR:
             case SCR_ENCHANT_WEAPON:
-            case SCR_MAGIC_MAPPING:
+            case SCR_REVELATION:
                 valued += 75;
                 break;
 
@@ -515,7 +537,6 @@ unsigned int item_value(item_def item, bool ident)
             case SCR_POISON:
             case SCR_VULNERABILITY:
             case SCR_FOG:
-            case SCR_BUTTERFLIES:
                 valued += 40;
                 break;
 
@@ -541,25 +562,25 @@ unsigned int item_value(item_def item, bool ident)
         break;
 
     case OBJ_JEWELLERY:
-        if (!item_type_known(item))
+        if (!item.is_identified())
             valued += 50;
         else
         {
             // Variable-strength rings.
             if (jewellery_type_has_plusses(item.sub_type))
             {
-                // Formula: price = kn(n+1) / 2, where k is 40,
-                // n is the power. (The base variable is equal to 2n.)
+                // Formula: price = 5n(n+1)
+                // n is the power. (The base variable is equal to n.)
                 int base = 0;
 
                 switch (item.sub_type)
                 {
                 case RING_SLAYING:
-                    base = 3 * item.plus;
-                    break;
                 case RING_PROTECTION:
-                case RING_EVASION:
                     base = 2 * item.plus;
+                    break;
+                case RING_EVASION:
+                    base = 8 * item.plus / 5;
                     break;
                 case RING_STRENGTH:
                 case RING_DEXTERITY:
@@ -601,7 +622,7 @@ unsigned int item_value(item_def item, bool ident)
                     break;
 
                 case RING_MAGICAL_POWER:
-                case RING_LIFE_PROTECTION:
+                case RING_POSITIVE_ENERGY:
                 case RING_POISON_RESISTANCE:
                 case RING_RESIST_CORROSION:
                     valued += 200;
@@ -642,25 +663,80 @@ unsigned int item_value(item_def item, bool ident)
         {
         case MISC_HORN_OF_GERYON:
         case MISC_ZIGGURAT:
+        case MISC_SHOP_VOUCHER:
             valued += 5000;
             break;
 
         case MISC_PHIAL_OF_FLOODS:
         case MISC_TIN_OF_TREMORSTONES:
         case MISC_BOX_OF_BEASTS:
+        case MISC_SACK_OF_SPIDERS:
         case MISC_CONDENSER_VANE:
         case MISC_PHANTOM_MIRROR:
+        case MISC_LIGHTNING_ROD:
+        case MISC_GRAVITAMBOURINE:
             valued += 400;
             break;
 
-        case MISC_LIGHTNING_ROD:
-            valued += 300;
-            break;
-
-        case MISC_XOMS_CHESSBOARD:
         default:
             valued += 200;
         }
+        break;
+
+    case OBJ_TALISMANS:
+        // These are all pretty arbitrary.
+        switch (item.sub_type)
+        {
+        case TALISMAN_DEATH:
+        case TALISMAN_STORM:
+            valued += 800;
+            break;
+
+        case TALISMAN_DRAGON:
+        case TALISMAN_STATUE:
+        case TALISMAN_VAMPIRE:
+        case TALISMAN_HIVE:
+        case TALISMAN_SPHINX:
+            valued += 600;
+            break;
+
+        case TALISMAN_MAW:
+        case TALISMAN_SERPENT:
+        case TALISMAN_BLADE:
+        case TALISMAN_WEREWOLF:
+        case TALISMAN_FORTRESS:
+            valued += 300;
+            break;
+
+        case TALISMAN_RIMEHORN:
+        case TALISMAN_SPIDER:
+        case TALISMAN_AQUA:
+        case TALISMAN_SCARAB:
+        case TALISMAN_MEDUSA:
+            valued += 250;
+            break;
+
+        case TALISMAN_QUILL:
+        case TALISMAN_INKWELL:
+        case TALISMAN_PROTEAN:
+        default:
+            valued += 200;
+            break;
+        }
+        if (is_artefact(item))
+        {
+            // XXX placeholder
+            if (item.is_identified())
+                valued += artefact_value(item) * (valued / 10);
+            else
+                valued += valued / 16;
+        }
+
+        break;
+
+    // There's only one bauble type, for now...
+    case OBJ_BAUBLES:
+        valued += 25;
         break;
 
     case OBJ_BOOKS:
@@ -683,7 +759,15 @@ unsigned int item_value(item_def item, bool ident)
     }
 
     case OBJ_STAVES:
-        valued = item_type_known(item) ? 250 : 120;
+        valued = item.is_identified() ? 250 : 120;
+        if (is_artefact(item))
+        {
+            // XX placeholder
+            if (item.is_identified())
+                valued += (7 * artefact_value(item));
+            else
+                valued += 50;
+        }
         break;
 
     case OBJ_ORBS:
@@ -691,6 +775,7 @@ unsigned int item_value(item_def item, bool ident)
         break;
 
     case OBJ_RUNES:
+    case OBJ_GEMS:
         valued = 10000;
         break;
 
@@ -713,26 +798,14 @@ bool is_worthless_consumable(const item_def &item)
     case OBJ_POTIONS:
         switch (item.sub_type)
         {
-        // Blood potions are worthless because they are easy to make.
-        case POT_DEGENERATION:
+        case POT_MOONSHINE:
             return true;
         default:
             return false;
         CASE_REMOVED_POTIONS(item.sub_type)
         }
     case OBJ_SCROLLS:
-        switch (item.sub_type)
-        {
-#if TAG_MAJOR_VERSION == 34
-        case SCR_CURSE_ARMOUR:
-        case SCR_CURSE_WEAPON:
-        case SCR_CURSE_JEWELLERY:
-#endif
-        case SCR_NOISE:
-            return true;
-        default:
-            return false;
-        }
+        return item.sub_type == SCR_NOISE;
 
     // Only consumables are worthless.
     default:
@@ -755,12 +828,14 @@ static int _count_identical(const vector<item_def>& stock, const item_def& item)
  *  @param shop  the shop to purchase from.
  *  @param pos   where the shop is located
  *  @param index the index of the item to buy in shop.stock
+ *  @param cost  the price to deduct for this item
+ *  @param voucher use a voucher instead of paying the item cost
  *  @returns true if it went in your inventory, false otherwise.
  */
-static bool _purchase(shop_struct& shop, const level_pos& pos, int index)
+static bool _purchase(shop_struct& shop, const level_pos& pos, int index,
+                      int cost, bool voucher)
 {
     item_def item = shop.stock[index]; // intentional copy
-    const int cost = item_price(item, shop);
     shop.stock.erase(shop.stock.begin() + index);
 
     // Remove from shopping list if it's unique
@@ -781,20 +856,32 @@ static bool _purchase(shop_struct& shop, const level_pos& pos, int index)
     // But take no further similar notes.
     item.flags |= ISFLAG_NOTED_GET;
 
-    if (fully_identified(item))
+    if (item.is_identified())
         item.flags |= ISFLAG_NOTED_ID;
 
-    you.del_gold(cost);
+    // Record milestones for purchasing especially notable items (runes,
+    // gems, the Orb).
+    milestone_check(item);
+
+    if (!voucher)
+        you.del_gold(cost);
+    else
+        you.attribute[ATTR_VOUCHER]--;
 
     you.attribute[ATTR_PURCHASES] += cost;
 
     origin_purchased(item);
 
-    if (shoptype_identifies_stock(shop.type)
-        || item_type_is_equipment(item.base_type))
+    // Unidentified potions/scrolls are the only shop items that don't become
+    // auto-ID'd when the player purchases them. (But identified potions/scrolls
+    // should still be re-identified, so the player can potentially learn their
+    // type.)
+    if ((item.base_type != OBJ_POTIONS && item.base_type != OBJ_SCROLLS)
+         || item.is_identified())
+
     {
-        // Identify the item and its type.
-        // This also takes the ID note if necessary.
+        // (Re-)identify the item. This also takes the ID note if necessary.
+        item.flags &= ~ISFLAG_IDENTIFIED;
         identify_item(item);
     }
 
@@ -839,7 +926,11 @@ class ShopMenu : public InvMenu
     level_pos pos;
     bool can_purchase;
 
+    int outside_items;
+    vector<int> bought_indices;
+
     int selected_cost(bool use_shopping_list=false) const;
+    int max_cost() const;
 
     void init_entries();
     void update_help();
@@ -868,7 +959,6 @@ class ShopEntry : public InvEntry
 
     string get_text() const override
     {
-        const int cost = item_price(*item, menu.shop);
         const int total_cost = menu.selected_cost();
         const bool on_list = shopping_list.is_on_list(*item, &menu.pos);
         // Colour stock as follows:
@@ -888,7 +978,7 @@ class ShopEntry : public InvEntry
                                                   YELLOW;
         const string keystr = colour_to_str(keycol);
         const string itemstr =
-            colour_to_str(menu_colour(text, item_prefix(*item), tag));
+            colour_to_str(menu_colour(text, item_prefix(*item, false), tag, false));
         return make_stringf(" <%s>%c %c </%s><%s>%4d gold   %s%s</%s>",
                             keystr.c_str(),
                             hotkeys[0],
@@ -911,10 +1001,11 @@ class ShopEntry : public InvEntry
 public:
     ShopEntry(const item_def& i, ShopMenu& m)
         : InvEntry(i),
-          menu(m)
+          menu(m), cost(item_price(i, m.shop))
     {
         show_background = false;
     }
+    const int cost;
 };
 
 // XX why is this MF_QUIET_SELECT?
@@ -933,6 +1024,8 @@ ShopMenu::ShopMenu(shop_struct& _shop, const level_pos& _pos, bool _can_purchase
     init_entries();
     resort();
 
+    outside_items = 0;
+    bought_indices = {};
     update_help();
 
     set_title("Welcome to " + shop_name(shop) + "! What would you "
@@ -947,7 +1040,7 @@ void ShopMenu::init_entries()
         auto newentry = make_unique<ShopEntry>(item, *this);
         newentry->hotkeys.clear();
         newentry->add_hotkey(ckey++);
-        add_entry(move(newentry));
+        add_entry(std::move(newentry));
     }
 }
 
@@ -955,16 +1048,25 @@ int ShopMenu::selected_cost(bool use_shopping_list) const
 {
     int cost = 0;
     for (auto item : selected_entries())
-        cost += item_price(*dynamic_cast<ShopEntry*>(item)->item, shop);
+        cost += dynamic_cast<ShopEntry*>(item)->cost;
     if (use_shopping_list && cost == 0)
     {
         for (auto item : items)
         {
-            const item_def& it = *dynamic_cast<ShopEntry*>(item)->item;
-            if (shopping_list.is_on_list(it, &pos))
-                cost += item_price(it, shop);
+            auto e = dynamic_cast<ShopEntry*>(item);
+            if (shopping_list.is_on_list(*e->item, &pos))
+                cost += e->cost;
         }
     }
+    return cost;
+}
+
+int ShopMenu::max_cost() const
+{
+    int cost = 0;
+    for (auto item : selected_entries())
+        cost = max(cost, dynamic_cast<ShopEntry*>(item)->cost);
+
     return cost;
 }
 
@@ -981,12 +1083,25 @@ void ShopMenu::update_help()
     const int total_cost = !can_purchase ? 0 : selected_cost(true);
     if (total_cost > you.gold)
     {
-        top_line += "<lightred>";
-        top_line +=
-            make_stringf(" You are short %d gold piece%s for the purchase.",
-                         total_cost - you.gold,
-                         (total_cost - you.gold != 1) ? "s" : "");
-        top_line += "</lightred>";
+        int max = max_cost();
+        if (have_voucher() && total_cost - max <= you.gold)
+        {
+            top_line += "<lightred>";
+            top_line +=
+                make_stringf(" Purchasing will use your shop voucher and %d gold piece%s.",
+                             total_cost - max,
+                             (total_cost - max != 1) ? "s" : "");
+            top_line += "</lightred>";
+        }
+        else
+        {
+            top_line += "<lightred>";
+            top_line +=
+                make_stringf(" You are short %d gold piece%s for the purchase.",
+                             total_cost - you.gold,
+                             (total_cost - you.gold != 1) ? "s" : "");
+            top_line += "</lightred>";
+        }
     }
     else if (total_cost)
     {
@@ -1034,7 +1149,22 @@ void ShopMenu::update_help()
 
     m = pad_more_with(m, hyphenated_hotkey_letters(item_count(), 'A')
                                   + " put item on shopping list");
-    set_more(formatted_string::parse_string(top_line + m));
+
+
+    const string col = colour_to_str(channel_to_colour(MSGCH_PROMPT));
+    if (outside_items)
+    {
+        const formatted_string outside = formatted_string::parse_string(make_stringf(
+            "<%s>I'll put %s outside for you.</%s>\n",
+            col.c_str(),
+            bought_indices.size() == 1             ? "it" :
+      (int) bought_indices.size() == outside_items ? "them"
+                                                   : "some of them",
+            col.c_str()));
+        set_more(outside + formatted_string::parse_string(top_line + m));
+    }
+    else
+        set_more(formatted_string::parse_string(top_line + m));
 
     // set_more(formatted_string::parse_string(top_line
     //     + make_stringf(
@@ -1069,11 +1199,11 @@ void ShopMenu::purchase_selected()
         buying_from_list = true;
         for (auto item : items)
         {
-            const item_def& it = *dynamic_cast<ShopEntry*>(item)->item;
-            if (shopping_list.is_on_list(it, &pos))
+            auto e = dynamic_cast<ShopEntry*>(item);
+            if (shopping_list.is_on_list(*e->item, &pos))
             {
                 selected.push_back(item);
-                cost += item_price(it, shop);
+                cost += e->cost;
             }
         }
     }
@@ -1082,21 +1212,26 @@ void ShopMenu::purchase_selected()
     const string col = colour_to_str(channel_to_colour(MSGCH_PROMPT));
     update_help();
     const formatted_string old_more = more;
-    if (cost > you.gold)
+    const bool too_expensive = (cost > you.gold);
+    if (too_expensive)
     {
-        more = formatted_string::parse_string(make_stringf(
-                   "<%s>You don't have enough money.</%s>\n",
-                   col.c_str(),
-                   col.c_str()));
-        more += old_more;
-        update_more();
-        return;
+        if (!have_voucher() || cost - max_cost() > you.gold)
+        {
+            more = formatted_string::parse_string(make_stringf(
+                    "<%s>You don't have enough money.</%s>\n",
+                    col.c_str(),
+                    col.c_str()));
+            more += old_more;
+            update_more();
+            return;
+        }
     }
     more = formatted_string::parse_string(make_stringf(
-               "<%s>Purchase items%s for %d gold? (%s/N)</%s>\n",
+               "<%s>Purchase items%s for %d gold? %s (%s/N)</%s>\n",
                col.c_str(),
                buying_from_list ? " in shopping list" : "",
                cost,
+               too_expensive ? "This will use your shop voucher." : "",
                Options.easy_confirm == easy_confirm_type::none ? "Y" : "y",
                col.c_str()));
     more += old_more;
@@ -1112,13 +1247,16 @@ void ShopMenu::purchase_selected()
          {
              return a->data > b->data;
          });
-    vector<int> bought_indices;
-    int outside_items = 0;
+    bought_indices = {};
+    outside_items = 0;
 
     // Store last_pickup in case we need to restore it.
     // Then clear it to fill with items purchased.
     map<int,int> tmp_l_p = you.last_pickup;
     you.last_pickup.clear();
+
+    bool use_voucher = false;
+    int voucher_value = too_expensive ? max_cost() : 0;
 
     // Will iterate backwards through the shop (because of the earlier sort).
     // This means we can erase() from shop.stock (since it only invalidates
@@ -1127,12 +1265,18 @@ void ShopMenu::purchase_selected()
     {
         const int i = static_cast<item_def*>(entry->data) - shop.stock.data();
         item_def& item(shop.stock[i]);
+        const int price = dynamic_cast<ShopEntry*>(entry)->cost;
         // Can happen if the price changes due to id status
-        if (item_price(item, shop) > you.gold)
+        if (price > you.gold && price != voucher_value)
             continue;
+
+        use_voucher = price == voucher_value;
+        if (use_voucher)
+            voucher_value = 0;
+
         const int quant = item.quantity;
 
-        if (!_purchase(shop, pos, i))
+        if (!_purchase(shop, pos, i, price, use_voucher))
         {
             // The purchased item didn't fit into your
             // knapsack.
@@ -1152,23 +1296,7 @@ void ShopMenu::purchase_selected()
     init_entries();
     resort();
 
-    if (outside_items)
-    {
-        update_help();
-        const formatted_string next_more = more;
-        more = formatted_string::parse_string(make_stringf(
-            "<%s>I'll put %s outside for you.</%s>\n",
-            col.c_str(),
-            bought_indices.size() == 1             ? "it" :
-      (int) bought_indices.size() == outside_items ? "them"
-                                                   : "some of them",
-            col.c_str()));
-        more += next_more;
-        update_more();
-    }
-    else
-        update_help();
-
+    update_help();
     update_menu(true);
 }
 
@@ -1185,7 +1313,7 @@ void ShopMenu::resort()
         for (const auto entry : items)
         {
             const auto item = dynamic_cast<ShopEntry*>(entry)->item;
-            if (is_known_artefact(*item))
+            if (is_artefact(*item) && item->is_identified())
                 list.insert({item->name(DESC_QUALNAME, false, id), entry});
             else
             {
@@ -1200,10 +1328,10 @@ void ShopMenu::resort()
     }
     case ORDER_PRICE:
         sort(begin(items), end(items),
-             [this](MenuEntry* a, MenuEntry* b)
+             [](MenuEntry* a, MenuEntry* b)
              {
-                 return item_price(*dynamic_cast<ShopEntry*>(a)->item, shop)
-                        < item_price(*dynamic_cast<ShopEntry*>(b)->item, shop);
+                 return dynamic_cast<ShopEntry*>(a)->cost
+                        < dynamic_cast<ShopEntry*>(b)->cost;
              });
         break;
     case ORDER_ALPHABETICAL:
@@ -1227,14 +1355,14 @@ bool ShopMenu::examine_index(int i)
     ASSERT(i < static_cast<int>(items.size()));
     // A hack to make the description more useful.
     // The default copy constructor is non-const for item_def,
-    // so we need this violation of const hygene to tweak the flags
+    // so we need this violation of const hygiene to tweak the flags
     // to make the description more useful. The flags are copied by
     // value by the default copy constructor so this is safe.
     item_def& item(*const_cast<item_def*>(dynamic_cast<ShopEntry*>(
         items[i])->item));
     if (shoptype_identifies_stock(shop.type))
     {
-        item.flags |= (ISFLAG_IDENT_MASK | ISFLAG_NOTED_ID
+        item.flags |= (ISFLAG_IDENTIFIED | ISFLAG_NOTED_ID
                        | ISFLAG_NOTED_GET);
     }
     describe_item_popup(item);
@@ -1297,9 +1425,10 @@ bool ShopMenu::process_key(int keyin)
             for (auto entry : selected)
             {
                 const item_def& item = *dynamic_cast<ShopEntry*>(entry)->item;
+                auto cost = dynamic_cast<ShopEntry*>(entry)->cost;
                 entry->selected_qty = 0;
                 if (!shopping_list.is_on_list(item, &pos))
-                    shopping_list.add_thing(item, item_price(item, shop), &pos);
+                    shopping_list.add_thing(item, cost, &pos);
             }
         }
         else if (can_purchase)
@@ -1333,7 +1462,7 @@ bool ShopMenu::process_key(int keyin)
         if (shopping_list.is_on_list(item, &pos))
             shopping_list.del_thing(item, &pos);
         else
-            shopping_list.add_thing(item, item_price(item, shop), &pos);
+            shopping_list.add_thing(item, entry->cost, &pos);
         update_help();
         update_menu(true);
         return true;
@@ -1346,6 +1475,8 @@ bool ShopMenu::process_key(int keyin)
         // Update the footer to display the new $$$ info.
         update_help();
         update_menu(true);
+        // Next time, dismiss any message about leaving items outside.
+        outside_items = 0;
     }
     return ret;
 }
@@ -1532,11 +1663,13 @@ bool shoptype_identifies_stock(shop_type type)
            && type != SHOP_GENERAL_ANTIQUE;
 }
 
+// Returns whether the type of an identified item in a shop is otherwise
+// unknown to the player (and it should be marked "(unknown)").
 bool shop_item_unknown(const item_def &item)
 {
     return item_type_has_ids(item.base_type)
-           && item_type_known(item)
-           && !get_ident_type(item)
+           && !item_type_known(item)
+           && item.is_identified()
            && !is_artefact(item);
 }
 
@@ -1586,13 +1719,6 @@ const char *shoptype_to_str(shop_type type)
     return shop_types[type];
 }
 
-void list_shop_types()
-{
-    mpr_nojoin(MSGCH_PLAIN, "Available shop types: ");
-    for (const char *type : shop_types)
-        mprf_nocap("%s", type);
-}
-
 ////////////////////////////////////////////////////////////////////////
 
 // TODO:
@@ -1632,8 +1758,8 @@ bool ShoppingList::add_thing(const item_def &item, int cost,
 
     if (!find_thing(item, pos).empty()) // TODO: this check isn't working?
     {
-        mprf(MSGCH_ERROR, "%s is already on the shopping list.",
-             item.name(DESC_THE).c_str());
+        ui::error(make_stringf("%s is already on the shopping list.",
+             item.name(DESC_THE).c_str()));
         return false;
     }
 
@@ -1702,8 +1828,8 @@ bool ShoppingList::del_thing(const item_def &item,
 
     if (indices.empty())
     {
-        mprf(MSGCH_ERROR, "%s isn't on shopping list, can't delete it.",
-             item.name(DESC_THE).c_str());
+        ui::error(make_stringf("%s isn't on shopping list, can't delete it.",
+             item.name(DESC_THE).c_str()));
         return false;
     }
 
@@ -1719,8 +1845,8 @@ bool ShoppingList::del_thing(string desc, const level_pos* _pos)
 
     if (indices.empty())
     {
-        mprf(MSGCH_ERROR, "%s isn't on shopping list, can't delete it.",
-             desc.c_str());
+        ui::error(make_stringf("%s isn't on shopping list, can't delete it.",
+             desc.c_str()));
         return false;
     }
 
@@ -1757,18 +1883,19 @@ bool ShoppingList::cull_identical_items(const item_def& item, int cost)
     case OBJ_JEWELLERY:
     case OBJ_BOOKS:
     case OBJ_STAVES:
+    case OBJ_TALISMANS:
         // Only these are really interchangeable.
         break;
     case OBJ_MISCELLANY:
-        // ... and a few of these.
-        if (!is_xp_evoker(item))
+        // Evokers are useless to purchase at max charge, but useful otherwise.
+        if (!is_xp_evoker(item) || evoker_plus(item.sub_type) != MAX_EVOKER_ENCHANT)
             return 0;
         break;
     default:
         return 0;
     }
 
-    if (!item_type_known(item) || is_artefact(item))
+    if (!item.is_identified() || is_artefact(item))
         return 0;
 
     // Ignore stat-modification rings which reduce a stat, since they're
@@ -1806,7 +1933,7 @@ bool ShoppingList::cull_identical_items(const item_def& item, int cost)
             continue;
         }
 
-        if (!item_type_known(list_item) || is_artefact(list_item))
+        if (!item.is_identified() || is_artefact(list_item))
             continue;
 
         // Don't prompt to remove rings with strictly better pluses
@@ -1817,22 +1944,17 @@ bool ShoppingList::cull_identical_items(const item_def& item, int cost)
             const bool has_plus = jewellery_has_pluses(item);
             const int delta_p = item.plus - list_item.plus;
             if (has_plus
-                && item_ident(list_item, ISFLAG_KNOW_PLUSES)
-                && (!item_ident(item, ISFLAG_KNOW_PLUSES)
-                     || delta_p < 0))
+                && list_item.is_identified()
+                && (!item.is_identified() || delta_p < 0))
             {
                 continue;
             }
         }
 
-        // Don't prompt to remove known manuals when the new one is unknown
-        // or for a different skill.
-        if (item.is_type(OBJ_BOOKS, BOOK_MANUAL)
-            && item_type_known(list_item)
-            && (!item_type_known(item) || item.plus != list_item.plus))
-        {
+        // Don't prompt to remove known manuals when the new one is for a
+        // different skill.
+        if (item.is_type(OBJ_BOOKS, BOOK_MANUAL) && item.plus != list_item.plus)
             continue;
-        }
 
         list_pair listed(list_item, thing_pos(thing));
 
@@ -2004,12 +2126,22 @@ void ShoppingList::remove_dead_shops()
     // Only restore the excursion at the very end.
     level_excursion le;
 
+    // This is potentially a lot of excursions, it might be cleaner to do this
+    // by annotating the shopping list directly
     set<level_pos> shops_to_remove;
+    set<level_id> levels_seen;
 
     for (CrawlHashTable &thing : *list)
     {
         const level_pos place = thing_pos(thing);
-        le.go_to(place.id); // thereby running DACT_REMOVE_GOZAG_SHOPS
+        le.go_to(place.id);
+        if (!levels_seen.count(place.id))
+        {
+            // Alternatively, this could call catchup_dactions. But that might
+            // have other side effects.
+            gozag_abandon_shops_on_level();
+            levels_seen.insert(place.id);
+        }
         const shop_struct *shop = shop_at(place.pos);
 
         if (!shop)
@@ -2057,7 +2189,7 @@ void ShoppingList::move_things(const coord_def &_src, const coord_def &_dst)
         || crawl_state.obj_stat_gen
         || crawl_state.test)
     {
-        return; // Shopping list is unitialized and uneeded.
+        return; // Shopping list is initialized and unneeded.
     }
 
     const level_pos src(level_id::current(), _src);
@@ -2245,9 +2377,9 @@ void ShoppingList::fill_out_menu(Menu& shopmenu)
             // Colour shopping list item according to menu colours.
             const item_def &item = get_thing_item(thing);
 
-            const string colprf = item_prefix(item);
+            const string colprf = item_prefix(item, false);
             const int col = menu_colour(item.name(DESC_A),
-                                        colprf, "shop");
+                                        colprf, "shop", false);
 
             vector<tile_def> item_tiles;
             get_tiles_for_item(item, item_tiles, true);
@@ -2337,8 +2469,7 @@ void ShoppingList::display(bool view_only)
             const int index = shopmenu.get_entry_index(&sel);
             if (index == -1)
             {
-                mprf(MSGCH_ERROR, "ERROR: Unable to delete thing from shopping list!");
-                more();
+                ui::error("ERROR: Unable to delete thing from shopping list!");
                 return true;
             }
 

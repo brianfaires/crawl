@@ -247,10 +247,7 @@ static int l_mons_do_dismiss(lua_State *ls)
     monster* mons = clua_get_lightuserdata<monster>(ls, lua_upvalueindex(1));
 
     if (mons->alive())
-    {
-        mons->flags |= MF_HARD_RESET;
-        monster_die(*mons, KILL_DISMISSED, NON_MONSTER);
-    }
+        monster_die(*mons, KILL_RESET, NON_MONSTER);
     return 0;
 }
 MDEFN(dismiss, do_dismiss)
@@ -332,7 +329,7 @@ MDEFN(random_teleport, do_random_teleport)
 MDEF(experience)
 {
     ASSERT_DLUA;
-    PLUARET(number, exper_value(*mons));
+    PLUARET(number, exp_value(*mons));
 }
 
 static int l_mons_do_set_prop(lua_State *ls)

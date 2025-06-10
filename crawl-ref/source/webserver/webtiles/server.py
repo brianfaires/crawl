@@ -1,8 +1,7 @@
-from __future__ import absolute_import
-from __future__ import print_function
-
 import argparse
+import asyncio
 import errno
+import functools
 import logging
 import logging.handlers
 import os
@@ -13,15 +12,36 @@ import time
 
 import tornado.httpserver
 import tornado.ioloop
+import tornado.netutil
 import tornado.template
 import tornado.web
 from tornado.ioloop import IOLoop
+from tornado.netutil import bind_sockets
+# do not add tornado.platform here without changing do_chroot()
 
 import webtiles
 from webtiles import auth, load_games, process_handler, userdb, config
-from webtiles import game_data_handler, util, ws_handler
+from webtiles import game_data_handler, util, ws_handler, status
+
+
+servers = None
+https_port = None
+
+
+# port should already be formatted with a ":"
+class HTTPSRedirectHandler(tornado.web.RequestHandler):
+    def get(self):
+        global https_port
+        if https_port is None:
+            # this will probably break unless 80/443 are in use
+            https_port = ""
+        self.redirect(f"https://{self.request.host_name}{https_port}{self.request.uri}", permanent=True)
+
 
 class MainHandler(tornado.web.RequestHandler):
+    # async def _execute(self, transforms, *args, **kwargs):
+    #     await tornado.web.RequestHandler._execute(self, transforms, *args, **kwargs)
+
     def get(self):
         host = self.request.host
         if self.request.protocol == "https" or self.request.headers.get("x-forwarded-proto") == "https":
@@ -38,7 +58,8 @@ class MainHandler(tornado.web.RequestHandler):
             if recovery_token_error:
                 logging.warning("Recovery token error from %s", self.request.remote_ip)
 
-        self.render("client.html", socket_server = protocol + host + "/socket",
+        with util.SlowWarning("Slow IO: render client.html"):
+            self.render("client.html", socket_server = protocol + host + "/socket",
                     username = None,
                     config = config,
                     reset_token = recovery_token, reset_token_error = recovery_token_error)
@@ -48,6 +69,42 @@ class NoCacheHandler(tornado.web.StaticFileHandler):
         self.set_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.set_header("Pragma", "no-cache")
         self.set_header("Expires", "0")
+
+
+_crawl_version = "unknown"
+
+def load_version():
+    global _crawl_version
+    try:
+        # this is the "bad" way to do this. However, the supposedly good ways
+        # to do this are all insanely complicated in ways that are irrelevant
+        # to webtiles.
+        with open(os.path.join(os.path.dirname(__file__), 'version.txt')) as f:
+            _crawl_version = f.readline().strip()
+    except:
+        _crawl_version = "unknown"
+
+
+def version_data():
+    v = sys.version_info
+    supported = 8 # minimum version, see https://devguide.python.org/versions/
+    return dict(
+        webtiles=_crawl_version,
+        tornado=tornado.version,
+        python="%d.%d.%d" % (v[0], v[1], v[2]),
+        python_supported=v[0] >= 3 and v[1] >= supported)
+
+
+def version():
+    vdata = version_data()
+    # TODO convert to f string some day...
+    result = "Webtiles (%s) running with Tornado %s and Python %s" % (
+        vdata["webtiles"],
+        vdata["tornado"],
+        vdata["python"])
+    if not vdata['python_supported']:
+        result = result + "\nUnsupported Python version! Please use a supported version: https://devguide.python.org/versions/"
+    return result
 
 def err_exit(errmsg, exc_info=False):
     if exc_info or config.get('logging_config').get('filename'):
@@ -125,37 +182,89 @@ def shed_privileges():
     if config.get('uid') is not None:
         os.setuid(config.get('uid'))
 
-def stop_everything():
+
+def all_tasks_compat():
+    try:
+        # only present since py37; maybe safe to assume?
+        return asyncio.all_tasks()
+    except AttributeError:
+        # removed in py39
+        return asyncio.Task.all_tasks()
+
+
+def stop_everything(shutdown_event):
+    # prevent reload signals from interacting with shutdown
+    if config.get('hup_reloads_config'):
+        asyncio.get_event_loop().remove_signal_handler(signal.SIGHUP)
+    asyncio.get_event_loop().remove_signal_handler(signal.SIGUSR1)
+
+    global servers
+    # shut down servers first -- stop accepting new connections
     for server in servers:
         server.stop()
+    # shut down ongoing games
+    # XX any errors in this code will prevent shutdown, do something more?
     ws_handler.shutdown()
-    # TODO: shouldn't this actually wait for everything to close??
-    if len(ws_handler.sockets) == 0:
-        IOLoop.current().stop()
-    else:
-        IOLoop.current().add_timeout(time.time() + 2, IOLoop.current().stop)
 
-def signal_handler(signum, frame):
-    logging.info("Received signal %i, shutting down.", signum)
-    try:
-        IOLoop.current().add_callback_from_signal(stop_everything)
-    except AttributeError:
-        # This is for compatibility with ancient versions < Tornado 3. It
-        # probably won't shutdown correctly and is *definitely* incorrect for
-        # modern versions of Tornado; but this is how it was done on the
-        # original implementation of webtiles + Tornado 2.4 that was in use
-        # through about 2020.
-        stop_everything()
+    # an open question -- are there cases where even stronger measures might be
+    # needed for stuck processes? task.cancel() handled everything I could think
+    # of locally.
+    def do_stop(tries=0):
+        if len(ws_handler.sockets) == 0:
+            shutdown_event.set()
+        elif tries > 60: # 30s
+            # try something a bit stronger
+            logging.error("Stop failed after 30s, cancelling remaining tasks.")
+            logging.error("Remaining sockets: %s", ws_handler.describe_sockets(names=True))
+            for task in all_tasks_compat():
+                task.cancel()
+        else:
+            IOLoop.current().add_timeout(time.time() + 0.5,
+                functools.partial(do_stop, tries=tries + 1))
 
-def reload_signal_handler(signum, frame):
-    logging.info("Received signal %i, reloading config.", signum)
-    try:
-        IOLoop.current().add_callback_from_signal(config.reload)
-    except AttributeError:
-        logging.error("Incompatible Tornado version")
+    do_stop()
+
+def stop_handler(signum, shutdown_event):
+    logging.info("Received signal %i, beginning shutdown.", signum)
+    IOLoop.current().add_callback(functools.partial(stop_everything, shutdown_event))
 
 
-def bind_server():
+def reload_config_handler(signum):
+    logging.info("Received signal %i, reloading all config data.", signum)
+    IOLoop.current().add_callback(config.reload)
+
+
+def reload_games_handler(signum):
+    logging.info("Received signal %i, reloading game config data.", signum)
+    IOLoop.current().add_callback_from_signal(config.load_game_data)
+
+
+def bind_server_sockets():
+    nonsecure = []
+    secure = []
+    if config.get('bind_nonsecure'):
+        if config.get('bind_pairs'):
+            listens = config.get('bind_pairs')
+        else:
+            listens = ( (config.get('bind_address'), config.get('bind_port')), )
+        for (addr, port) in listens:
+            logging.info("Listening on http://%s:%d" % (addr, port))
+            nonsecure.append(bind_sockets(port, addr))
+
+    if config.get('ssl_options'):
+        if config.get('ssl_bind_pairs'):
+            listens = config.get('ssl_bind_pairs')
+        else:
+            listens = ( (config.get('ssl_address'), config.get('ssl_port')), )
+        global https_port
+        for (addr, port) in listens:
+            logging.info("Listening on https://%s:%d" % (addr, port))
+            if https_port is None:
+                https_port = f":{port}"
+            secure.append(bind_sockets(port, addr))
+    return nonsecure, secure
+
+def bind_server(nonsecure_sockets, secure_sockets):
     settings = {
         "static_path": config.get('static_path'),
         "template_loader": util.DynamicTemplateLoader.get(config.get('template_path')),
@@ -165,11 +274,16 @@ def bind_server():
     if config.get('no_cache', False):
         settings["static_handler_class"] = NoCacheHandler
 
-    application = tornado.web.Application([
+    handlers = [
             (r"/", MainHandler),
             (r"/socket", ws_handler.CrawlWebSocket),
-            (r"/gamedata/([0-9a-f]*\/.*)", game_data_handler.GameDataHandler)
-            ], gzip=config.get('use_gzip'), **settings)
+            (r"/gamedata/([0-9a-f]*\/.*)", game_data_handler.GameDataHandler),
+            (r"/status/lobby/", status.LobbyHandler),
+            (r"/status/version/", status.VersionHandler),
+            ]
+
+    application = tornado.web.Application(handlers,
+                                    gzip=config.get('use_gzip'), **settings)
 
     kwargs = {}
     if config.get('http_connection_timeout') is not None:
@@ -181,48 +295,30 @@ def bind_server():
     if config.get('http_xheaders', False):
         kwargs["xheaders"] = config.get('http_xheaders')
 
+    global servers
     servers = []
 
-    def server_wrap(**kwargs):
-        try:
-            return tornado.httpserver.HTTPServer(application, **kwargs)
-        except TypeError:
-            # Ugly backwards-compatibility hack. Removable once Tornado 3
-            # is out of the picture (if ever)
-            del kwargs["idle_connection_timeout"]
-            server = tornado.httpserver.HTTPServer(application, **kwargs)
-            logging.error(
-                    "Server configuration sets `idle_connection_timeout` "
-                    "but this is not available in your version of "
-                    "Tornado. Please upgrade to at least Tornado 4 for "
-                    "this to work.""")
-            return server
-
-    if config.get('bind_nonsecure'):
-        server = server_wrap(**kwargs)
-
-        if config.get('bind_pairs'):
-            listens = config.get('bind_pairs')
+    if nonsecure_sockets:
+        if config.get('bind_nonsecure') == "redirect":
+            http_app = tornado.web.Application([(r"/", HTTPSRedirectHandler)])
         else:
-            listens = ( (config.get('bind_address'), config.get('bind_port')), )
-        for (addr, port) in listens:
-            logging.info("Listening on %s:%d" % (addr, port))
-            server.listen(port, addr)
+            http_app = application
+        server = tornado.httpserver.HTTPServer(http_app, **kwargs)
+        for s in nonsecure_sockets:
+            server.add_sockets(s)
         servers.append(server)
 
-    if config.get('ssl_options'):
-        # TODO: allow different ssl_options per bind pair
-        server = server_wrap(ssl_options=config.get('ssl_options'), **kwargs)
-
-        if config.get('ssl_bind_pairs'):
-            listens = config.get('ssl_bind_pairs')
-        else:
-            listens = ( (config.get('ssl_address'), config.get('ssl_port')), )
-        for (addr, port) in listens:
-            logging.info("Listening on %s:%d" % (addr, port))
-            server.listen(port, addr)
+    if secure_sockets:
+        # TODO: allow different ssl_options per bind pair?
+        server = tornado.httpserver.HTTPServer(application,
+                            ssl_options=config.get('ssl_options'), **kwargs)
+        for s in secure_sockets:
+            server.add_sockets(s)
         servers.append(server)
 
+    if not servers:
+        # config validation should preempt this, but it's here for robustness
+        raise ValueError("No ports succesfully configured!")
     return servers
 
 
@@ -257,44 +353,12 @@ def init_logging(logging_config):
     logging.addLevelName(logging.WARNING, "WARN")
 
 
-def monkeypatch_tornado24():
-    # extremely ugly compatibility hack, to ease transition for servers running
-    # the ancient patched tornado 2.4.
-    IOLoop.current = staticmethod(IOLoop.instance)
-
-
-def ensure_tornado_current():
-    try:
-        tornado.ioloop.IOLoop.current()
-    except AttributeError:
-        monkeypatch_tornado24()
-        tornado.ioloop.IOLoop.current()
-        logging.error(
-            "You are running a deprecated version of tornado; please update"
-            " to at least version 4.")
-
-
-def usr1_handler(signum, frame):
-    assert signum == signal.SIGUSR1
-    logging.info("Received USR1, reloading config.")
-    try:
-        IOLoop.current().add_callback_from_signal(config.load_game_data)
-    except AttributeError:
-        # This is for compatibility with ancient versions < Tornado 3.
-        try:
-            config.load_game_data()
-        except Exception:
-            logging.exception("Failed to update games after USR1 signal.")
-    except Exception:
-        logging.exception("Failed to update games after USR1 signal.")
-
-
 def parse_args_main():
     parser = argparse.ArgumentParser(
         description='Dungeon Crawl webtiles server',
         epilog='Command line options will override config settings. See wtutil.py for database commands.')
     parser.add_argument('-p', '--port', type=int, help='A port to bind; disables SSL.')
-    # TODO: --ssl-port or something?
+    parser.add_argument('--ssl-port', type=int, help='An SSL port to bind. Requires configured `ssl_options`.')
     parser.add_argument('--logfile',
                         help='A logfile to write to; use "-" for stdout.')
     parser.add_argument('--daemon', action='store_true', default=None,
@@ -324,7 +388,13 @@ def parse_args_main():
 
 # override config with any arguments supplied on the command line
 def export_args_to_config(args):
+    if config.get('live_debug'):
+        config.server_config._load_override_file(os.path.join(
+                            config.get("server_path", ""), "debug-config.yml"))
+        config.do_early_logging() # sigh
     if args.port:
+        if args.ssl_port:
+            err_exit("Can't combine --port and --ssl-port.")
         config.set('bind_nonsecure', True)
         config.set('bind_address', "")  # TODO: ??
         config.set('bind_port', args.port)
@@ -334,6 +404,12 @@ def export_args_to_config(args):
         if config.get('ssl_options'):
             logging.info("    (Overrides config-specified SSL settings.)")
             config.set('ssl_options', None)
+    elif args.ssl_port:
+        config.set('bind_nonsecure', False)
+        config.set('ssl_bind_pairs', (('', args.ssl_port),))
+        if not config.get('ssl_options'):
+            err_exit("--ssl-port option requires configured `ssl_options`")
+        logging.info("Using command-line supplied ssl port: %d", args.ssl_port)
     if args.daemon is not None:
         logging.info("Command line override for daemonize: %r", args.daemon)
         config.set('daemon', args.daemon)
@@ -351,9 +427,10 @@ def reset_token_commands(args):
         username = args.reset
 
     user_info = userdb.get_user_info(username)
-
     if not user_info:
         err_exit("Reset/clear password failed; invalid user: %s" % username)
+
+    username = user_info.username # canonicalize
 
     # don't crash on the default config
     if config.get('lobby_url') is None:
@@ -371,10 +448,10 @@ def reset_token_commands(args):
         if not ok:
             err_exit("Error generating password reset token for %s: %s" % (username, msg))
         else:
-            if not user_info[1]:
+            if not user_info.email:
                 logging.warning("No email set for account '%s', use caution!" % username)
             print("Setting a password reset token on account '%s'." % username)
-            print("Email: %s\nMessage body to send to user:\n%s\n" % (user_info[1], msg))
+            print("Email: %s\nMessage body to send to user:\n%s\n" % (user_info.email, msg))
             return True
     return False
 
@@ -402,10 +479,10 @@ def show_flags(username):
     if not r:
         err_exit("Unknown user '%s'!" % username)
     # XX would be nice to normalize username
-    if not r[2]:
-        print("User '%s' (id %d) has no flags set." % (username, r[0]))
+    if not r.flags:
+        print("User '%s' (id %d) has no flags set." % (r.username, r.id))
     else:
-        print("Flags for '%s' (id %d): %s" % (username, r[0], userdb.flag_description(r[2])))
+        print("Flags for '%s' (id %d): %s" % (r.username, r.id, userdb.flag_description(r.flags)))
     return True
 
 
@@ -428,7 +505,7 @@ def flag_commands(args):
             print("No matching users.")
         else:
             print("Users with flag '%s': %s" %
-                (userdb.flag_description(flag), ", ".join([u[1] for u in l])))
+                (userdb.flag_description(flag), ", ".join([u.username for u in l])))
         return True
     elif args.set:
         r = userdb.set_flags(args.set, flag, mask=flag)
@@ -453,7 +530,7 @@ def ban_commands(args):
     if args.check_config_bans or args.run_config_bans:
         # potentially very heavy commands on old servers...
         all_users = userdb.get_all_users()
-        affected = [n[1] for n in all_users if not config.check_name(n[1])]
+        affected = [n.username for n in all_users if not config.check_name(n.username)]
         if not affected:
             print("No affected users.")
             return True
@@ -582,10 +659,28 @@ def parse_args_util():
     return result, help_fun
 
 
-def run_util():
-    args, help_fun = parse_args_util()
+def do_chroot():
     if config.get('chroot'):
         os.chroot(config.get('chroot'))
+        try:
+            # try to fail early, with an informative message, if this is not
+            # going to work
+            # the choice of tornado.platform is a bit heuristic, but it is
+            # currently where the webserver seems to fail on import after a chroot.
+            # If it is ever imported at the top of this file, something else would
+            # be needed.
+            import tornado.platform
+        except:
+            # no logging available yet
+            print("Error: can't import `tornado.platform` in chroot. Did you copy"
+                " the python library for this version of python into the chroot?",
+                file=sys.stderr)
+            raise
+
+
+def run_util():
+    args, help_fun = parse_args_util()
+    do_chroot()
 
     if config.source_file is None:
         sys.exit("No configuration provided!")
@@ -605,10 +700,7 @@ def run_util():
 
     init_logging(config.get('logging_config'))
 
-    if config.get('dgl_mode'):
-        userdb.ensure_user_db_exists()
-        userdb.upgrade_user_db()
-    userdb.ensure_settings_db_exists()
+    userdb.init_db_connections()
 
     mode_fun = None
 
@@ -624,12 +716,57 @@ def run_util():
         sys.exit(1)
 
 
+def init_signals(shutdown_event):
+    # if we can ensure >=py37 (probably?) this should be get_running_loop
+    loop = asyncio.get_event_loop()
+    stop_sigs = [signal.SIGTERM, signal.SIGINT]
+    reload_sigs = []
+    reload_game_sigs = [signal.SIGUSR1]
+
+    if config.get('hup_reloads_config'):
+        reload_sigs.append(signal.SIGHUP)
+    else:
+        stop_sigs.append(signal.SIGHUP)
+
+    for s in stop_sigs:
+        loop.add_signal_handler(s, functools.partial(stop_handler, s, shutdown_event))
+    for s in reload_sigs:
+        loop.add_signal_handler(s, functools.partial(reload_config_handler, s))
+    for s in reload_game_sigs:
+        loop.add_signal_handler(s, functools.partial(reload_games_handler, s))
+
+
+async def async_run_server(nonsecure_sockets, secure_sockets):
+    # is this ever set to False by anyone in practice?
+    dgl_mode = config.get('dgl_mode')
+    # XX possibly some of this should move into async_run
+    if dgl_mode:
+        ws_handler.status_file_timeout() # note: tornado coroutine
+        auth.purge_login_tokens_timeout()
+        ws_handler.start_reading_milestones()
+
+        if config.get('watch_socket_dirs'):
+            process_handler.watch_socket_dirs()
+
+    # set up various timeout loops
+    ws_handler.do_periodic_lobby_updates()
+    webtiles.config.init_config_timeouts()
+
+    bind_server(nonsecure_sockets, secure_sockets)
+
+    shutdown_event = tornado.locks.Event()
+    init_signals(shutdown_event)
+
+    logging.info("DCSS Webtiles server started! (PID: %s)" % os.getpid())
+    logging.info(version())
+    await shutdown_event.wait()
+
+
 # before running, this needs to have its config source set up. See
 # ../server.py in the official repository for an example.
 def run():
     args = parse_args_main()
-    if config.get('chroot'):
-        os.chroot(config.get('chroot'))
+    do_chroot()
 
     if config.source_file is None:
         # we could try to automatically figure this out from server_path, if
@@ -645,82 +782,71 @@ def run():
             config.get('logging_config')['filename'] = args.logfile
 
     init_logging(config.get('logging_config'))
-    logging.info("Loaded server configuration from: %s", config.source_file)
-    config.do_early_logging()
+    try:
+        logging.info("Loaded server configuration from: %s", config.source_file)
+        config.do_early_logging()
 
-    if config.get('live_debug'):
-        logging.info("Starting in live-debug mode.")
-        config.set('watch_socket_dirs', False)
+        if config.get('live_debug'):
+            logging.info("Starting in live-debug mode.")
+            config.set('watch_socket_dirs', False)
 
-    if args.logfile:
-        logging.info("Using command-line supplied logfile: '%s'", args.logfile)
+        if args.logfile:
+            logging.info("Using command-line supplied logfile: '%s'", args.logfile)
 
-    export_args_to_config(args)
+        export_args_to_config(args)
+
+        try:
+            config.load_game_data()
+            config.validate()
+        except:
+            err_exit("Errors in game data. Exiting.", exc_info=True)
+
+        if config.get('daemon', False):
+            daemonize()
+
+        if config.get('umask') is not None:
+            os.umask(config.get('umask'))
+        # bind sockets and shed privileges before starting up the ioloop
+        nonsecure_sockets, secure_sockets = bind_server_sockets()
+        # note -- shed_privileges cannot move later, or various files end up
+        # owned by root, breaking dgl-config installs! Particularly pidfile,
+        # but it's not the only one.
+        shed_privileges()
+
+    except SystemExit: # err_exit in the try blocks
+        # logging already done, hopefully
+        raise
+    except:
+        err_exit("Server startup failed!", exc_info=True)
 
     try:
-        config.load_game_data()
-        config.validate()
+        write_pidfile()
+        userdb.init_db_connections()
+        try:
+            # finally -- start things up for real
+            asyncio.run(async_run_server(nonsecure_sockets, secure_sockets))
+            logging.info("Bye!")
+        except asyncio.exceptions.CancelledError:
+            # triggered by the cancel case in stop_everything
+            err_exit("Normal server stop failed, some tasks were force-cancelled!")
+        except SystemExit:
+            raise
+        except:
+            err_exit("Server exited with error!", exc_info=True)
+
+    except SystemExit:
+        raise
     except:
-        err_exit("Errors in game data. Exiting.", exc_info=True)
+        err_exit("Server startup failed!", exc_info=True)
+    finally:
+        # warning: need to be careful what appears in this finally block, since
+        # it may be called by child processes on fork in terminal.py in the
+        # event of rare bad timing or bugs. (So any global state that may be
+        # used here should be reset in the child process...)
+        remove_pidfile()
 
-    if config.get('daemon', False):
-        daemonize()
 
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-    if (config.get('hup_reloads_config')):
-        signal.signal(signal.SIGHUP, reload_signal_handler)
-    else:
-        signal.signal(signal.SIGHUP, signal_handler)
-
-    if config.get('umask') is not None:
-        os.umask(config.get('umask'))
-
-    write_pidfile()
-
-    global servers
-    servers = bind_server()
-    ensure_tornado_current()
-
-    shed_privileges()
-
-    # is this ever set to False by anyone in practice?
-    dgl_mode = config.get('dgl_mode')
-
-    if dgl_mode:
-        userdb.ensure_user_db_exists()
-        userdb.upgrade_user_db()
-    userdb.ensure_settings_db_exists()
-
-    signal.signal(signal.SIGUSR1, usr1_handler)
-
-    try:
-        IOLoop.current().set_blocking_log_threshold(0.5) # type: ignore
-        logging.info("Blocking call timeout: 500ms.")
-    except:
-        # this is the new normal; still not sure of a way to deal with this.
-        logging.info("Webserver running without a blocking call timeout.")
-
-    if dgl_mode:
-        ws_handler.status_file_timeout()
-        auth.purge_login_tokens_timeout()
-        ws_handler.start_reading_milestones()
-
-        if config.get('watch_socket_dirs'):
-            process_handler.watch_socket_dirs()
-
-    # set up various timeout loops
-    ws_handler.do_periodic_lobby_updates()
-    webtiles.config.init_config_timeouts()
-
-    logging.info("DCSS Webtiles server started with Tornado %s! (PID: %s)" %
-                                                (tornado.version, os.getpid()))
-
-    IOLoop.current().start()
-
-    logging.info("Bye!")
-    remove_pidfile()
-
+load_version()
 
 # TODO: it might be nice to simply make this module runnable, but that would
 # need some way of specifying the config source and `config.server_path`.

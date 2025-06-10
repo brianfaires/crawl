@@ -20,8 +20,10 @@
 #include "directn.h"
 #include "env.h"
 #include "fprop.h"
+#include "god-abil.h"
 #include "god-passive.h"
 #include "monster.h"
+#include "mon-movetarget.h"
 #include "mon-pathfind.h"
 #include "mon-tentacle.h"
 #include "player.h"
@@ -44,7 +46,7 @@ static bool _mons_has_path_to_player(const monster* mon)
         return true;
 
     // Non-adjacent non-tentacle stationary monsters are only threatening
-    // because of any ranged attack they might posess, which is handled
+    // because of any ranged attack they might possess, which is handled
     // elsewhere in the safety checks. Presently all stationary monsters
     // have a ranged attack, but if a melee stationary monster is introduced
     // this will fail. Don't add a melee stationary monster it's not a good
@@ -69,6 +71,11 @@ static bool _mons_has_path_to_player(const monster* mon)
     {
         return false;
     }
+
+    // First do a *quick* check to see whether a straight path exists to the
+    // player before bothering with full pathfinding.
+    if (can_go_straight(mon, mon->pos(), you.pos()))
+        return true;
 
     // Try to find a path from monster to player, using the map as it's
     // known to the player and assuming unknown terrain to be traversable.
@@ -119,10 +126,11 @@ bool mons_can_hurt_player(const monster* mon)
 // of distance.
 static bool _mons_is_always_safe(const monster *mon)
 {
-    return (mon->wont_attack() && !mons_blows_up(*mon))
-           || mon->type == MONS_BUTTERFLY
-           || (mon->type == MONS_BALLISTOMYCETE
-               && !mons_is_active_ballisto(*mon));
+    return (mon->wont_attack() && (!mons_blows_up(*mon) || mon->type == MONS_SHADOW_PRISM))
+          || mon->type == MONS_BUTTERFLY
+          || (mon->type == MONS_BALLISTOMYCETE
+              && !mons_is_active_ballisto(*mon))
+          || mon->type == MONS_TRAINING_DUMMY && !mon->weapon();;
 }
 
 // HACK ALERT: In the following several functions, want_move is true if the
@@ -132,9 +140,8 @@ static bool _mons_is_always_safe(const monster *mon)
 bool mons_is_safe(const monster* mon, const bool want_move,
                   const bool consider_user_options, bool check_dist)
 {
-    // Short-circuit plants, some vaults have tons of those. Except for both
-    // active and inactive ballistos, players may still want these.
-    if (mons_is_firewood(*mon) && mon->type != MONS_BALLISTOMYCETE)
+    // Short-circuit plants, some vaults have tons of those.
+    if (mon->is_firewood())
         return true;
 
     int  dist    = grid_distance(you.pos(), mon->pos());
@@ -148,7 +155,10 @@ bool mons_is_safe(const monster* mon, const bool want_move,
                            // monsters capable of throwing or zapping wands.
                            || !mons_can_hurt_player(mon)));
 
-    if (consider_user_options)
+    // If is_safe is true, ch_mon_is_safe will always immediately return true
+    // anyway, so let's skip constructing another monster_info and handling lua
+    // dispatch entirely in that case.
+    if (consider_user_options && !is_safe)
     {
         bool moving = you_are_delayed()
                        && current_delay()->is_run()
@@ -158,9 +168,8 @@ bool mons_is_safe(const monster* mon, const bool want_move,
 
         bool result = is_safe;
 
-        monster_info mi(mon, MILEV_SKIP_SAFE);
-        if (clua.callfn("ch_mon_is_safe", "Ibbd>b",
-                        &mi, is_safe, moving, dist,
+        if (clua.callfn("ch_mon_is_safe", "sbbd>b",
+                        mon->name(DESC_PLAIN).c_str(), is_safe, moving, dist,
                         &result))
         {
             is_safe = result;
@@ -207,7 +216,7 @@ static void _announce_monsters(string announcement, vector<monster*> &visible)
 }
 
 // Return all nearby monsters in range (default: LOS) that the player
-// is able to recognise as being monsters (i.e. no submerged creatures.)
+// is able to recognise as being monsters.
 //
 // want_move       (??) Somehow affects what monsters are considered dangerous
 // just_check      Return zero or one monsters only
@@ -240,7 +249,6 @@ vector<monster* > get_nearby_monsters(bool want_move,
         {
             if (mon->alive()
                 && (!require_visible || mon->visible_to(&you))
-                && !mon->submerged()
                 && (!dangerous_only || !mons_is_safe(mon, want_move,
                                                      consider_user_options,
                                                      check_dist)))
@@ -267,31 +275,29 @@ bool i_feel_safe(bool announce, bool want_move, bool just_monsters,
             // Temporary immunity allows travelling through a cloud but not
             // resting in it.
             // Qazlal immunity will allow for it, however.
-            if (cloud_damages_over_time(type, want_move, cloud_is_yours_at(you.pos())))
+            bool your_fault = cloud_is_yours_at(you.pos());
+            if (cloud_damages_over_time(type, want_move, your_fault))
             {
                 if (announce)
                 {
-                    mprf(MSGCH_WARN, "You're standing in a cloud of %s!",
+                    mprf(MSGCH_WARN, "You are in a cloud of %s!",
                          cloud_type_name(type).c_str());
                 }
                 return false;
             }
         }
 
-        // No monster will attack you inside a sanctuary,
-        // so presence of monsters won't matter -- until it starts shrinking...
-        if (is_sanctuary(you.pos()) && env.sanctuary_time >= 5)
-            return true;
-
         if (poison_is_lethal())
         {
             if (announce)
-                mprf(MSGCH_WARN, "There is a lethal amount of poison in your body!");
-
+            {
+                mprf(MSGCH_WARN,
+                     "There is a lethal amount of poison in your body!");
+            }
             return false;
         }
 
-        if (you.duration[DUR_LIQUID_FLAMES])
+        if (you.duration[DUR_STICKY_FLAME])
         {
             if (announce)
                 mprf(MSGCH_WARN, "You are on fire!");
@@ -299,21 +305,20 @@ bool i_feel_safe(bool announce, bool want_move, bool just_monsters,
             return false;
         }
 
-        if (!actor_slime_wall_immune(&you) && count_adjacent_slime_walls(you.pos()) > 0)
-        {
-            if (announce)
-                mprf(MSGCH_WARN, "You're standing next to a slime covered wall!");
-
-            return false;
-        }
-
         if (you.props[EMERGENCY_FLIGHT_KEY])
         {
             if (announce)
-                mprf(MSGCH_WARN, "You are being drained by your emergency flight!");
-
+            {
+                mprf(MSGCH_WARN,
+                     "You are being drained by your emergency flight!");
+            }
             return false;
         }
+
+        // No monster will attack you inside a sanctuary,
+        // so presence of monsters won't matter -- until it starts shrinking...
+        if (is_sanctuary(you.pos()) && env.sanctuary_time >= 5)
+            return true;
     }
 
     // Monster check.
@@ -326,7 +331,8 @@ bool i_feel_safe(bool announce, bool want_move, bool just_monsters,
             [](const monster *mon){ return mon->visible_to(&you); });
     const bool sensed = any_of(monsters.begin(), monsters.end(),
                    [](const monster *mon){
-                       return env.map_knowledge(mon->pos()).flags & MAP_INVISIBLE_MONSTER;
+                       return env.map_knowledge(mon->pos()).flags
+                              & MAP_INVISIBLE_MONSTER;
                    });
 
     const string announcement = _seen_monsters_announcement(visible, sensed);
@@ -384,7 +390,7 @@ static void _monster_threat_values(double *general, double *highest,
         if (mi->friendly())
             continue;
 
-        const int xp = exper_value(**mi);
+        const int xp = exp_value(**mi);
         const double log_xp = log((double)xp);
         sum += log_xp;
         if (xp > highest_xp)
@@ -436,7 +442,6 @@ bool bring_to_safety()
             || cloud_at(pos)
             || monster_at(pos)
             || env.pgrid(pos) & FPROP_NO_TELE_INTO
-            || slime_wall_neighbour(pos)
             || crawl_state.game_is_sprint()
                && grid_distance(pos, you.pos()) > 8)
         {
@@ -467,20 +472,16 @@ bool bring_to_safety()
 // This includes ALL afflictions, unlike wizard/Xom revive.
 void revive()
 {
-    adjust_level(-1);
-    // Allow a spare after two levels (we just lost one); the exact value
-    // doesn't matter here.
+    // Allow a spare after a few levels; the exact value doesn't matter here.
     you.attribute[ATTR_LIFE_GAINED] = 0;
 
     you.magic_contamination = 0;
-    restore_stat(STAT_ALL, 0, true);
 
     clear_trapping_net();
     you.attribute[ATTR_DIVINE_VIGOUR] = 0;
     you.attribute[ATTR_DIVINE_STAMINA] = 0;
-    you.attribute[ATTR_DIVINE_SHIELD] = 0;
-    if (you.form != transformation::none)
-        untransform(true);
+    if (you.form != you.default_form)
+        return_to_default_form();
     you.clear_beholders();
     you.clear_fearmongers();
     you.attribute[ATTR_DIVINE_DEATH_CHANNEL] = 0;
@@ -489,7 +490,7 @@ void revive()
     you.los_noise_level = 0;
     you.los_noise_last_turn = 0; // silence in death
 
-    end_wait_spells(true);
+    stop_channelling_spells();
 
     if (you.duration[DUR_FROZEN_RAMPARTS])
         end_frozen_ramparts();
@@ -497,10 +498,27 @@ void revive()
     if (you.duration[DUR_HEAVENLY_STORM])
         wu_jian_end_heavenly_storm();
 
+    if (you.duration[DUR_FATHOMLESS_SHACKLES])
+        yred_end_blasphemy();
+
+    if (you.duration[DUR_BLOOD_FOR_BLOOD])
+        beogh_end_blood_for_blood();
+
     // TODO: this doesn't seem to call any duration end effects?
     for (int dur = 0; dur < NUM_DURATIONS; dur++)
-        if (dur != DUR_PIETY_POOL)
+    {
+        if (dur != DUR_PIETY_POOL
+            && dur != DUR_TRANSFORMATION
+            && dur != DUR_BEOGH_SEEKING_VENGEANCE
+            && dur != DUR_BEOGH_DIVINE_CHALLENGE
+            && dur != DUR_GRAVE_CLAW_RECHARGE)
+        {
             you.duration[dur] = 0;
+        }
+
+        if (dur == DUR_TELEPORT)
+            you.props.erase(SJ_TELEPORTITIS_SOURCE);
+    }
 
     update_vision_range(); // in case you had darkness cast before
     you.props[CORROSION_KEY] = 0;
@@ -518,6 +536,7 @@ void revive()
         you.lives = 0;
         mpr("You are too frail to live.");
         // possible only with an extreme abuse of Borgnjor's
+        // might be impossible now that felids don't level down on death?
         ouch(INSTANT_DEATH, KILLED_BY_DRAINING);
     }
 

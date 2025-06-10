@@ -30,27 +30,32 @@
 #include "target.h"
 #include "terrain.h"
 
-spret cast_dreadful_rot(int pow, bool fail)
+spret cast_putrefaction(monster* target, int pow, bool fail)
 {
-    if (cloud_at(you.pos()))
-    {
-        mpr("There's already a cloud here!");
-        return spret::abort;
-    }
-
     fail_check();
 
-    const int min_dur = 4;
-    const int max_dur = 7 + div_rand_round(pow, 10);
-    you.props[MIASMA_IMMUNE_KEY] = true;
-    place_cloud(CLOUD_MIASMA, you.pos(), random_range(min_dur, max_dur), &you);
-    mpr("A part of your flesh rots into a cloud of miasma!");
-    drain_player(65, true, true);
+    // Place one miasma cloud immediately beneath the target.
+    place_cloud(CLOUD_MIASMA, target->pos(), random_range(5, 9), &you);
+
+    // Then start a spread of fiant miasma that will become proper miasma a
+    // turn later.
+    map_cloud_spreader_marker *marker =
+    new map_cloud_spreader_marker(target->pos(), CLOUD_FAINT_MIASMA, 7,
+                                        random_range(18, 28), 5, 2, &you);
+
+    // Start the cloud at radius 1, regardless of the speed of the killing blow
+    marker->speed_increment -= you.time_taken - 7;
+    env.markers.add(marker);
+    env.markers.clear_need_activate();
+
+    mprf("Rot billows forth from %s wounds!", target->name(DESC_ITS).c_str());
+
+    drain_player(75 - div_rand_round(pow * 4, 10), true, true);
 
     return spret::success;
 }
 
-spret kindle_blastsparks(int pow, bool fail)
+spret kindle_blastmotes(int pow, bool fail)
 {
     if (cloud_at(you.pos()))
     {
@@ -61,24 +66,25 @@ spret kindle_blastsparks(int pow, bool fail)
     fail_check();
 
     // Really should be per-cloud, but skeptical people are changing power
-    // between successive blastspark casts that often.
-    you.props[BLASTSPARK_POWER_KEY] = pow;
+    // between successive blastmote casts that often.
+    you.props[BLASTMOTE_POWER_KEY] = pow;
     // Longish duration to support setting up silly traps.
-    place_cloud(CLOUD_BLASTSPARKS, you.pos(), random_range(20, 30), &you);
-    mpr("A cloud of volatile blastsparks flares up around you!");
+    you.props[BLASTMOTE_IMMUNE_KEY] = true;
+    place_cloud(CLOUD_BLASTMOTES, you.pos(), random_range(20, 30), &you);
+    mpr("A cloud of volatile blastmotes flares up around you! Run!");
 
     return spret::success;
 }
 
-void explode_blastsparks_at(coord_def p)
+void explode_blastmotes_at(coord_def p)
 {
-    // Assumes all blastsparks are created by the player.
+    // Assumes all blastmotes are created by the player.
     // We could fix this in future by checking the 'killer'
     // associated with the cloud being deleted.
     delete_cloud(p);
 
     bolt beam;
-    zappy(ZAP_BLASTSPARK, you.props[BLASTSPARK_POWER_KEY], false, beam);
+    zappy(ZAP_BLASTMOTE, you.props[BLASTMOTE_POWER_KEY], false, beam);
 
     beam.target        = p;
     beam.source        = p;
@@ -88,14 +94,26 @@ void explode_blastsparks_at(coord_def p)
     beam.is_explosion  = true;
     beam.ex_size       = 1;
 
-    const string boom  = "The cloud of blastsparks explodes!";
+    const string boom  = "The cloud of blastmotes explodes!";
     const string sanct = "By Zin's power, the fiery explosion is contained.";
     explosion_fineff::schedule(beam, boom, sanct, EXPLOSION_FINEFF_CONCUSSION,
-                               nullptr);
+                               nullptr, "");
+}
+
+cloud_type spell_to_cloud(spell_type spell)
+{
+    static map<spell_type, cloud_type> cloud_map =
+    {
+        { SPELL_POISONOUS_CLOUD, CLOUD_POISON },
+        { SPELL_FREEZING_CLOUD, CLOUD_COLD },
+        { SPELL_HOLY_BREATH, CLOUD_HOLY },
+    };
+
+    return lookup(cloud_map, spell, CLOUD_NONE);
 }
 
 spret cast_big_c(int pow, spell_type spl, const actor *caster, bolt &beam,
-                      bool fail)
+                 bool fail)
 {
     if (grid_distance(beam.target, you.pos()) > beam.range
         || !in_bounds(beam.target))
@@ -111,38 +129,46 @@ spret cast_big_c(int pow, spell_type spl, const actor *caster, bolt &beam,
         return spret::abort;
     }
 
-    cloud_type cty = CLOUD_NONE;
+    cloud_type cty = spell_to_cloud(spl);
+    if (is_sanctuary(beam.target) && !is_harmless_cloud(cty))
+    {
+        mpr("You can't place harmful clouds in a sanctuary.");
+        return spret::abort;
+    }
+
     //XXX: there should be a better way to specify beam cloud types
     switch (spl)
     {
         case SPELL_POISONOUS_CLOUD:
             beam.flavour = BEAM_POISON;
             beam.name = "blast of poison";
-            cty = CLOUD_POISON;
             break;
         case SPELL_HOLY_BREATH:
             beam.flavour = BEAM_HOLY;
             beam.origin_spell = SPELL_HOLY_BREATH;
-            cty = CLOUD_HOLY;
             break;
         case SPELL_FREEZING_CLOUD:
             beam.flavour = BEAM_COLD;
             beam.name = "freezing blast";
-            cty = CLOUD_COLD;
             break;
         default:
-            mpr("That kind of cloud doesn't exist!");
-            return spret::abort;
+            break;
+    }
+
+    if (cty == CLOUD_NONE)
+    {
+        mpr("That kind of cloud doesn't exist!");
+        return spret::abort;
     }
 
     beam.thrower           = KILL_YOU;
     beam.hit               = AUTOMATIC_HIT;
     beam.damage            = CONVENIENT_NONZERO_DAMAGE;
-    beam.is_tracer         = true;
     beam.use_target_as_pos = true;
     beam.origin_spell      = spl;
-    beam.affect_endpoint();
-    if (beam.beam_cancelled)
+    player_beam_tracer tracer;
+    beam.affect_endpoint(tracer);
+    if (cancel_beam_prompt(beam, tracer))
         return spret::abort;
 
     fail_check();
@@ -210,7 +236,6 @@ void holy_flames(monster* caster, actor* defender)
     for (adjacent_iterator ai(pos); ai; ++ai)
     {
         if (!in_bounds(*ai)
-            || cloud_at(*ai)
             || cell_is_solid(*ai)
             || is_sanctuary(*ai)
             || monster_at(*ai))

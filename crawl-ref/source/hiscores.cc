@@ -70,7 +70,7 @@ using namespace ui;
 // enough memory allocated to snarf in the scorefile entries
 static unique_ptr<scorefile_entry> hs_list[SCORE_FILE_ENTRIES];
 static int hs_list_size = 0;
-static bool hs_list_initalized = false;
+static bool hs_list_initialized = false;
 
 static FILE *_hs_open(const char *mode, const string &filename);
 static void  _hs_close(FILE *handle);
@@ -96,10 +96,11 @@ static string _score_file_name()
     return ret;
 }
 
-static string _log_file_name()
+static string _log_file_name(bool milestones=false)
 {
     return catpath(Options.shared_dir,
-        "logfile" + crawl_state.game_type_qualifier());
+        (milestones ? "milestones" : "logfile")
+        + crawl_state.game_type_qualifier());
 }
 
 int hiscores_new_entry(const scorefile_entry &ne)
@@ -138,7 +139,7 @@ int hiscores_new_entry(const scorefile_entry &ne)
             // Fixed a nasty overflow bug here -- Sharp
             if (i+1 < SCORE_FILE_ENTRIES)
             {
-                hs_list[i + 1] = move(hs_list[i]);
+                hs_list[i + 1] = std::move(hs_list[i]);
                 hs_list[i].reset(new scorefile_entry(ne));
                 i++;
             }
@@ -158,7 +159,7 @@ int hiscores_new_entry(const scorefile_entry &ne)
     }
 
     hs_list_size = i;
-    hs_list_initalized = true;
+    hs_list_initialized = true;
 
     // If we've still not inserted it, it's not a highscore.
     if (!inserted)
@@ -253,7 +254,7 @@ void hiscores_read_to_memory()
     }
 
     hs_list_size = i;
-    hs_list_initalized = true;
+    hs_list_initialized = true;
 
     //close off
     _hs_close(scores);
@@ -295,7 +296,7 @@ string hiscores_print_list(int display_count, int format, int newest_entry, int&
     string ret;
 
     // Additional check to preserve previous functionality
-    if (!hs_list_initalized)
+    if (!hs_list_initialized)
         hiscores_read_to_memory();
 
     int i, total_entries;
@@ -423,13 +424,13 @@ UIHiscoresMenu::UIHiscoresMenu()
 #ifdef USE_TILE
     auto tile = make_shared<Image>();
     tile->set_tile(tile_def(TILEG_STARTUP_HIGH_SCORES));
-    title_hbox->add_child(move(tile));
+    title_hbox->add_child(std::move(tile));
 #endif
 
     auto title = make_shared<Text>(formatted_string(
-                "Dungeon Crawl Stone Soup: High Scores", YELLOW));
+                CRAWL ": High Scores", YELLOW));
     title->set_margin_for_sdl(0, 0, 0, 16);
-    title_hbox->add_child(move(title));
+    title_hbox->add_child(std::move(title));
 
     title_hbox->set_main_alignment(Widget::CENTER);
     title_hbox->set_cross_alignment(Widget::CENTER);
@@ -440,7 +441,7 @@ UIHiscoresMenu::UIHiscoresMenu()
     nhsr = 0;
     _construct_hiscore_table();
 
-    m_root->add_child(move(title_hbox));
+    m_root->add_child(std::move(title_hbox));
     if (initial_focus)
     {
         m_root->add_child(m_description);
@@ -487,7 +488,7 @@ void UIHiscoresMenu::_add_hiscore_row(scorefile_entry& se, int id)
     tmp->set_text(hiscores_format_single(se));
     auto btn = make_shared<MenuButton>();
     tmp->set_margin_for_sdl(2);
-    btn->set_child(move(tmp));
+    btn->set_child(std::move(tmp));
     btn->on_activate_event([id](const ActivateEvent&) {
         _show_morgue(*hs_list[id]);
         return true;
@@ -495,13 +496,13 @@ void UIHiscoresMenu::_add_hiscore_row(scorefile_entry& se, int id)
     btn->on_focusin_event([this, se](const FocusEvent&) {
         formatted_string desc(hiscores_format_single_long(se, true));
         desc.cprintf(string(max(0, 9-count_linebreaks(desc)), '\n'));
-        m_description->set_text(move(desc));
+        m_description->set_text(std::move(desc));
         return false;
     });
 
     if (!initial_focus)
         initial_focus = btn.get();
-    m_score_entries->add_button(move(btn), 0, nhsr++);
+    m_score_entries->add_button(std::move(btn), 0, nhsr++);
 }
 
 void UIHiscoresMenu::_render()
@@ -534,7 +535,7 @@ void show_hiscore_table()
     unwind_var<string> sprintmap(crawl_state.map, crawl_state.sprint_map);
     auto hiscore_ui = make_shared<UIHiscoresMenu>();
     auto popup = make_shared<ui::Popup>(hiscore_ui);
-    ui::run_layout(move(popup), hiscore_ui->done);
+    ui::run_layout(std::move(popup), hiscore_ui->done);
 }
 
 // Trying to supply an appropriate verb for the attack type. -- bwr
@@ -611,7 +612,7 @@ static void _hs_close(FILE *handle)
 
 static bool _hs_read(FILE *scores, scorefile_entry &dest)
 {
-    char inbuf[1300];
+    char inbuf[1500];
     if (!scores || feof(scores))
         return false;
 
@@ -665,7 +666,8 @@ static const char *kill_method_names[] =
     "beogh_smiting", "divine_wrath", "bounce", "reflect", "self_aimed",
     "falling_through_gate", "disintegration", "headbutt", "rolling",
     "mirror_damage", "spines", "frailty", "barbs", "being_thrown",
-    "collision", "zot", "constriction",
+    "collision", "zot", "constriction", "exploremode", "blinking",
+    "death curse",
 };
 
 static const char *_kill_method_name(kill_method_type kmt)
@@ -778,6 +780,8 @@ void scorefile_entry::init_from(const scorefile_entry &se)
     num_aut            = se.num_aut;
     num_diff_runes     = se.num_diff_runes;
     num_runes          = se.num_runes;
+    gems_found         = se.gems_found;
+    gems_intact        = se.gems_intact;
     kills              = se.kills;
     maxed_skills       = se.maxed_skills;
     fifteen_skills     = se.fifteen_skills;
@@ -1092,6 +1096,8 @@ void scorefile_entry::init_with_fields()
 
     num_diff_runes = fields->int_field("urune");
     num_runes      = fields->int_field("nrune");
+    gems_found     = fields->int_field("fgem");
+    gems_intact    = fields->int_field("igem");
 
     kills = fields->int_field("kills");
     maxed_skills = fields->str_field("maxskills");
@@ -1189,6 +1195,11 @@ void scorefile_entry::set_base_xlog_fields() const
 
     if (num_runes)
         fields->add_field("nrune", "%d", num_runes);
+
+    if (gems_found)
+        fields->add_field("fgem", "%d", gems_found);
+    if (gems_intact)
+        fields->add_field("igem", "%d", gems_intact);
 
     fields->add_field("kills", "%d", kills);
     if (!maxed_skills.empty())
@@ -1335,7 +1346,10 @@ void scorefile_entry::init_death_cause(int dam, mid_t dsrc,
     death_type   = dtype;
     damage       = dam;
 
-    const monster *source_monster = monster_by_mid(death_source);
+    // Try searching for both a living monster and a dead-but-cached monster
+    const monster *source_monster = monster_by_mid(death_source)
+                                     ? monster_by_mid(death_source)
+                                     : cached_monster_copy_by_mid(death_source);
     if (source_monster)
         killer_map = source_monster->originating_map();
 
@@ -1365,9 +1379,9 @@ void scorefile_entry::init_death_cause(int dam, mid_t dsrc,
             || death_type == KILLED_BY_BEING_THROWN
             || death_type == KILLED_BY_COLLISION
             || death_type == KILLED_BY_CONSTRICTION)
-        && monster_by_mid(death_source))
+        && source_monster)
     {
-        const monster* mons = monster_by_mid(death_source);
+        const monster* mons = source_monster;
         ASSERT(mons);
 
         // Previously the weapon was only used for dancing weapons,
@@ -1381,15 +1395,16 @@ void scorefile_entry::init_death_cause(int dam, mid_t dsrc,
             // is alive (for notes), so make sure we don't reveal info we
             // shouldn't.
             if (you.hp <= 0)
-            {
-                set_ident_flags(env.item[mons->inv[MSLOT_WEAPON]],
-                                 ISFLAG_IDENT_MASK);
-            }
+                identify_item(env.item[mons->inv[MSLOT_WEAPON]]);
 
             // Setting this is redundant for dancing weapons, however
             // we do care about the above identification. -- bwr
             if (!mons_class_is_animated_weapon(mons->type))
+            {
                 auxkilldata = env.item[mons->inv[MSLOT_WEAPON]].name(DESC_A);
+                if (mons->has_ench(ENCH_ARMED))
+                    auxkilldata += " (from an undying armoury)";
+            }
         }
 
         const bool death = (you.hp <= 0 || death_type == KILLED_BY_DRAINING);
@@ -1402,8 +1417,7 @@ void scorefile_entry::init_death_cause(int dam, mid_t dsrc,
         if (death || you.can_see(*mons))
             death_source_name = mons->full_name(desc);
 
-        // Some shadows have names
-        if (mons_is_player_shadow(*mons) && mons->mname.empty())
+        if (mons_is_player_shadow(*mons))
             death_source_name = "their own shadow"; // heh
 
         if (mons->mid == MID_YOU_FAULTLESS)
@@ -1430,13 +1444,12 @@ void scorefile_entry::init_death_cause(int dam, mid_t dsrc,
             indirectkiller = blame[blame.size() - 1].get_string();
             _strip_to(indirectkiller, " by ");
             _strip_to(indirectkiller, "ed to "); // "attached to" and similar
+            _strip_to(indirectkiller, "ed from "); // "spawned from" and similar
 
-            killerpath = "";
-
+            vector<string> path_parts;
             for (const auto &bl : blame)
-                killerpath = killerpath + ":" + _xlog_escape(bl.get_string());
-
-            killerpath.erase(killerpath.begin());
+                path_parts.push_back(_xlog_escape(bl.get_string()));
+            killerpath = join_strings(path_parts.begin(), path_parts.end(), ":");
         }
         else
         {
@@ -1479,6 +1492,12 @@ void scorefile_entry::init_death_cause(int dam, mid_t dsrc,
     {
         death_source_name = you.props[STICKY_FLAMER_KEY].get_string();
         auxkilldata = you.props[STICKY_FLAME_AUX_KEY].get_string();
+    }
+
+    if (death_type == KILLED_BY_BLINKING)
+    {
+        death_source_name = you.props[BLINKITIS_SOURCE_KEY].get_string();
+        auxkilldata = you.props[BLINKITIS_AUX_KEY].get_string();
     }
 }
 
@@ -1538,6 +1557,8 @@ void scorefile_entry::reset()
     num_aut              = -1;
     num_diff_runes       = 0;
     num_runes            = 0;
+    gems_found           = 0;
+    gems_intact          = 0;
     kills                = 0;
     maxed_skills.clear();
     fifteen_skills.clear();
@@ -1648,15 +1669,17 @@ void scorefile_entry::init(time_t dt)
     if (dlua.callfn(nullptr, 1, 2))
         dlua.fnreturns(">db", &points, &base_score);
 
+    num_runes      = runes_in_pack();
+    num_diff_runes = num_runes;
+    gems_found     = ::gems_found();
+    gems_intact    = gems_found - gems_lost();
+
     // If calc_score didn't exist, or returned true as its second value,
     // use the default formula.
     if (base_score)
     {
         // sprint games could overflow a 32 bit value
         uint64_t pt = points + _award_modified_experience();
-
-        num_runes      = runes_in_pack();
-        num_diff_runes = num_runes;
 
         // There's no point in rewarding lugging artefacts. Thus, no points
         // for the value of the inventory. -- 1KB
@@ -1667,6 +1690,9 @@ void scorefile_entry::init(time_t dt)
             pt += ((uint64_t)250000) * 25000 * num_runes * num_runes
                 / (1+you.num_turns);
         }
+        // Add a little score for gems so that newer players who find one
+        // feel rewarded, but not so much that it impacts high score play.
+        pt += gems_found * 10000 * ((death_type == KILLED_BY_WINNING) ? 10 : 1);
         pt += num_runes * 10000;
         pt += num_runes * (num_runes + 2) * 1000;
 
@@ -1733,8 +1759,8 @@ void scorefile_entry::init(time_t dt)
     intel = you.stat(STAT_INT, false);
     dex   = you.stat(STAT_DEX, false);
 
-    ac    = you.armour_class();
-    ev    = you.evasion();
+    ac    = you.armour_class_scaled(1);
+    ev    = you.evasion_scaled(1);
     sh    = player_displayed_shield_class();
 
     god = you.religion;
@@ -1944,6 +1970,56 @@ static string _append_sentence_delimiter(const string &sentence,
     return sentence + delimiter;
 }
 
+string scorefile_entry::runes_gems_desc(bool semiverbose) const
+{
+    if (num_runes < 1 && gems_found < 1)
+        return "";
+
+    string desc = "";
+
+    bool extra = (death_type == KILLED_BY_WINNING);
+    if (num_runes >= 1)
+    {
+        desc += _hiscore_newline_string();
+        desc += make_stringf("... %s %d rune%s",
+                             extra ? "and" : "with",
+                             num_runes,
+                             (num_runes > 1) ? "s" : "");
+        extra = true;
+    }
+    if (gems_found >= 1)
+    {
+        desc += _hiscore_newline_string();
+        desc += make_stringf("... %s %d gem%s",
+                             extra ? "and" : "with",
+                             gems_found,
+                             (gems_found > 1) ? "s" : "");
+        // semiverbose is true here only when making the vmsg logfile field,
+        // so we always display all gem info when it is true
+        if (Options.more_gem_info || semiverbose)
+        {
+            if (gems_intact == 1 && gems_found == 1)
+                desc += " (intact)";
+            else if (gems_intact == 2 && gems_found == 2)
+                desc += " (both intact)";
+            else if (gems_intact == gems_found)
+                desc += " (all intact)";
+            else
+                desc += make_stringf(" (%d intact)", gems_intact);
+        }
+    }
+    if (!semiverbose
+        && death_time > 0
+        && !_hiscore_same_day(birth_time, death_time))
+    {
+        desc += " on ";
+        desc += _hiscore_date_string(death_time);
+    }
+
+    desc = _append_sentence_delimiter(desc, "!");
+    return desc + _hiscore_newline_string();
+}
+
 string
 scorefile_entry::character_description(death_desc_verbosity verbosity) const
 {
@@ -2032,6 +2108,19 @@ scorefile_entry::character_description(death_desc_verbosity verbosity) const
     return desc;
 }
 
+static bool _very_boring_death_type(int death_type)
+{
+    switch (death_type)
+    {
+    case KILLED_BY_QUITTING:
+    case KILLED_BY_WIZMODE:
+    case KILLED_BY_EXPLORING:
+        return true;
+    default:
+        return false;
+    }
+}
+
 string scorefile_entry::death_place(death_desc_verbosity verbosity) const
 {
     bool verbose = (verbosity == DDV_VERBOSE);
@@ -2043,7 +2132,7 @@ string scorefile_entry::death_place(death_desc_verbosity verbosity) const
     if (verbosity == DDV_ONELINE || verbosity == DDV_TERSE)
         return " (" + level_id(branch, dlvl).describe() + ")";
 
-    if (verbose && death_type != KILLED_BY_QUITTING && death_type != KILLED_BY_WIZMODE)
+    if (verbose && !_very_boring_death_type(death_type))
         place += "...";
 
     // where did we die?
@@ -2318,7 +2407,7 @@ string scorefile_entry::death_description(death_desc_verbosity verbosity) const
             desc += "left";
         else
         {
-            if (num_runes > 0)
+            if (num_runes > 0 || gems_found > 0)
                 desc += "Got out of the dungeon";
             else if (species::is_undead(static_cast<species_type>(race)))
                 desc += "Safely got out of the dungeon";
@@ -2329,7 +2418,7 @@ string scorefile_entry::death_description(death_desc_verbosity verbosity) const
 
     case KILLED_BY_WINNING:
         desc += terse? "escaped" : "Escaped with the Orb";
-        if (num_runes < 1)
+        if (num_runes < 1 && gems_found < 1)
             desc += "!";
         break;
 
@@ -2339,6 +2428,10 @@ string scorefile_entry::death_description(death_desc_verbosity verbosity) const
 
     case KILLED_BY_WIZMODE:
         desc += terse? "wizmode" : "Entered wizard mode";
+        break;
+
+    case KILLED_BY_EXPLORING:
+        desc += terse? "exploremode" : "Entered explore mode";
         break;
 
     case KILLED_BY_DRAINING:
@@ -2382,6 +2475,20 @@ string scorefile_entry::death_description(death_desc_verbosity verbosity) const
         }
         else
             desc += "Burnt to a crisp";
+
+        needs_damage = true;
+        break;
+
+    case KILLED_BY_BLINKING:     // disjunction darts
+        if (terse)
+            desc += "disjoined";
+        else if (!death_source_desc().empty())
+        {
+            desc += "Disjoined by " + death_source_desc();
+
+            if (!auxkilldata.empty())
+                needs_beam_cause_line = true;
+        }
 
         needs_damage = true;
         break;
@@ -2519,6 +2626,29 @@ string scorefile_entry::death_description(death_desc_verbosity verbosity) const
     case KILLED_BY_PETRIFICATION:
         desc += terse? "petrified" : "Turned to stone";
         break;
+
+    case KILLED_BY_DEATH_CURSE:
+    {
+        if (!auxkilldata.empty())
+        {
+            desc += (terse ? "" : "Slain by ") + auxkilldata;
+            if (!terse && !death_source_name.empty())
+                desc += "\n             ... wielded by " + death_source_name;
+        }
+        else if (terse)
+        {
+
+            desc += death_source_name.empty() ? "a death curse"
+                    : death_source_name + " death curse";
+        }
+        else
+        {
+            desc += "Slain by " + apostrophise(death_source_desc())
+                                + "'s death curse";
+        }
+        needs_damage = true;
+        break;
+    }
 
     case KILLED_BY_SOMETHING:
         if (!auxkilldata.empty())
@@ -2707,30 +2837,12 @@ string scorefile_entry::death_description(death_desc_verbosity verbosity) const
         if (death_type == KILLED_BY_LEAVING
             || death_type == KILLED_BY_WINNING)
         {
-            if (num_runes > 0)
-            {
-                desc += _hiscore_newline_string();
-
-                desc += make_stringf("... %s %d rune%s",
-                         (death_type == KILLED_BY_WINNING) ? "and" : "with",
-                          num_runes, (num_runes > 1) ? "s" : "");
-
-                if (!semiverbose
-                    && death_time > 0
-                    && !_hiscore_same_day(birth_time, death_time))
-                {
-                    desc += " on ";
-                    desc += _hiscore_date_string(death_time);
-                }
-
-                desc = _append_sentence_delimiter(desc, "!");
-                desc += _hiscore_newline_string();
-            }
-            else
+            if (num_runes < 1 && gems_found < 1)
                 desc = _append_sentence_delimiter(desc, ".");
+            else
+                desc += runes_gems_desc(semiverbose);
         }
-        else if (death_type != KILLED_BY_QUITTING
-                 && death_type != KILLED_BY_WIZMODE)
+        else if (!_very_boring_death_type(death_type))
         {
             desc += _hiscore_newline_string();
 
@@ -2767,7 +2879,7 @@ string scorefile_entry::death_description(death_desc_verbosity verbosity) const
             else if (needs_called_by_monster_line)
             {
                 desc += make_stringf("... %s by %s",
-                         death_type == KILLED_BY_COLLISION ? "caused" :
+                         death_type == KILLED_BY_COLLISION ? "after being knocked back" :
                          auxkilldata == "by angry trees"   ? "awakened" :
                          auxkilldata == "by Freeze"        ? "generated"
                                                            : "invoked",
@@ -2806,24 +2918,31 @@ string scorefile_entry::death_description(death_desc_verbosity verbosity) const
                 if (you.duration[DUR_PARALYSIS])
                 {
                     desc += "... while paralysed";
-                    if (you.props.exists(PARALYSED_BY_KEY))
-                    {
-                        desc += " by "
-                                + you.props[PARALYSED_BY_KEY].get_string();
-                    }
+                    if (you.props.exists(DISABLED_BY_KEY))
+                        desc += " by " + you.props[DISABLED_BY_KEY].get_string();
+
                     desc += _hiscore_newline_string();
                 }
                 else if (you.duration[DUR_PETRIFIED])
                 {
                     desc += "... while petrified";
-                    if (you.props.exists(PETRIFIED_BY_KEY))
-                    {
-                        desc += " by "
-                                + you.props[PETRIFIED_BY_KEY].get_string();
-                    }
+                    if (you.props.exists(DISABLED_BY_KEY))
+                        desc += " by " + you.props[DISABLED_BY_KEY].get_string();
+
                     desc += _hiscore_newline_string();
                 }
-
+                else if (you.duration[DUR_SLEEP])
+                {
+                    desc += "... while put to sleep";
+                    if (you.props.exists(DISABLED_BY_KEY))
+                        desc += " by " + you.props[DISABLED_BY_KEY].get_string();
+                }
+                else if (you.duration[DUR_VEXED])
+                {
+                    desc += "... while vexed";
+                    if (you.props.exists(DISABLED_BY_KEY))
+                        desc += " by " + you.props[DISABLED_BY_KEY].get_string();
+                }
             }
         }
     }
@@ -2836,8 +2955,9 @@ string scorefile_entry::death_description(death_desc_verbosity verbosity) const
             // TODO: strcat "after reaching level %d"; for LEAVING
             if (verbosity == DDV_NORMAL)
             {
+                const bool cool = num_runes > 0 || gems_found > 0;
                 desc = _append_sentence_delimiter(desc,
-                                                  num_runes > 0? "!" : ".");
+                                                  cool ? "!" : ".");
             }
             desc += _hiscore_newline_string();
         }
@@ -3049,7 +3169,7 @@ void mark_milestone(const string &type, const string &milestone,
     lastmilestone = milestone;
     lastturn      = you.num_turns;
 
-    const scorefile_entry se(0, MID_NOBODY, KILL_MISC, nullptr);
+    const scorefile_entry se(0, MID_NOBODY, KILL_NON_ACTOR, nullptr);
     se.set_base_xlog_fields();
     xlog_fields xl = se.get_fields();
     if (!origin_level.empty())
@@ -3079,8 +3199,8 @@ void mark_milestone(const string &type, const string &milestone,
 #endif
 
     const string xlog_line = xl.xlog_line();
-    const string milestone_file = catpath(
-        Options.save_dir, "milestones" + crawl_state.game_type_qualifier());
+    const string milestone_file = _log_file_name(true);
+
     if (FILE *fp = lk_open("a", milestone_file))
     {
         fprintf(fp, "%s\n", xlog_line.c_str());
@@ -3095,7 +3215,7 @@ void mark_milestone(const string &type, const string &milestone,
 #if defined(USE_TILE_WEB) || defined(DGL_WHEREIS)
 static xlog_fields _xlog_status(const char *status)
 {
-    const scorefile_entry se(0, MID_NOBODY, KILL_MISC, nullptr);
+    const scorefile_entry se(0, MID_NOBODY, KILL_NON_ACTOR, nullptr);
     se.set_base_xlog_fields();
     xlog_fields xl = se.get_fields();
     xl.add_field("time", "%s", make_date_string(time(nullptr)).c_str());
